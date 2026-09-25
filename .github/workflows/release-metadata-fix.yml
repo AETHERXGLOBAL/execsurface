@@ -72,5 +72,6 @@ jobs:
         run: |
           set -euo pipefail
           body="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
-          grep -F "Source commit: `$SOURCE_COMMIT`" <<<"$body"
-          grep -F "Release archive digest: `sha256:" <<<"$body"
+          grep -F "$SOURCE_COMMIT" <<<"$body"
+          grep -F "Release archive digest:" <<<"$body"
+          grep -F "sha256:" <<<"$body"
