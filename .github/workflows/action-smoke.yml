@@ -17,14 +17,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Build baseline learner
+        run: cargo build --locked -p execsurface-cli --bin execsurface
+
       - name: Learn wrapped baseline
-        run: cargo run --locked -p execsurface-cli -- learn --output m6-pass.lock.json -- /bin/bash -lc true
+        run: ./target/debug/execsurface learn --output m6-pass.lock.json -- /bin/bash -lc 'echo hello-from-target'
 
       - name: Run local Action
         id: execsurface
         uses: ./
         with:
-          command: "true"
+          command: "echo hello-from-target"
           baseline: m6-pass.lock.json
           upload-artifact: "true"
           artifact-name: m6-pass-${{ github.run_id }}-${{ github.run_attempt }}
@@ -46,8 +49,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Build baseline learner
+        run: cargo build --locked -p execsurface-cli --bin execsurface
+
       - name: Learn wrapped baseline
-        run: cargo run --locked -p execsurface-cli -- learn --output m6-review.lock.json -- /bin/bash -lc true
+        run: ./target/debug/execsurface learn --output m6-review.lock.json -- /bin/bash -lc true
 
       - name: Run local Action
         id: execsurface
@@ -72,8 +78,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Build baseline learner
+        run: cargo build --locked -p execsurface-cli --bin execsurface
+
       - name: Learn wrapped baseline
-        run: cargo run --locked -p execsurface-cli -- learn --output m6-block.lock.json -- /bin/bash -lc true
+        run: ./target/debug/execsurface learn --output m6-block.lock.json -- /bin/bash -lc true
 
       - name: Create blocking policy
         run: |
