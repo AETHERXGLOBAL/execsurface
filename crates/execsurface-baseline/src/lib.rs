@@ -476,5 +476,4 @@ mod tests {
             Err(BaselineError::UnsupportedLockSchema(1))
         ));
     }
-
 }

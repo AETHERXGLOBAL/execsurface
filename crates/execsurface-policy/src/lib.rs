@@ -818,5 +818,4 @@ mod tests {
             Err(PolicyError::InvalidMatcher { rule_id, .. }) if rule_id == "legacy-read"
         ));
     }
-
 }
