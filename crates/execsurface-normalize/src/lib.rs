@@ -31,6 +31,8 @@ pub enum NormalizeError {
     AmbiguousRoot { path: String, labels: Vec<String> },
     DuplicateSequence(u64),
     MissingLinuxOpenFlags,
+    InvalidFdOperation(FileOperation),
+    ExecutionChainTooDeep { tid: i32, limit: usize },
 }
 
 impl fmt::Display for NormalizeError {
@@ -63,6 +65,12 @@ impl fmt::Display for NormalizeError {
             }
             Self::MissingLinuxOpenFlags => {
                 write!(f, "Linux file.open event is missing raw flags required to avoid collapsing access intent")
+            }
+            Self::InvalidFdOperation(operation) => {
+                write!(f, "fd-attributed event has invalid operation: {operation:?}")
+            }
+            Self::ExecutionChainTooDeep { tid, limit } => {
+                write!(f, "execution chain for tid {tid} exceeded fail-closed limit {limit}")
             }
         }
     }
@@ -123,7 +131,7 @@ pub fn canonicalize(
         }
     }
 
-    let mut executables: HashMap<i32, CanonicalExecutable> = HashMap::new();
+    let mut processes: HashMap<i32, CanonicalProcessState> = HashMap::new();
     let mut effects = BTreeSet::new();
 
     for event in events {
@@ -132,10 +140,9 @@ pub fn canonicalize(
                 child_tid,
                 mechanism,
             } => {
-                let actor = executables.get(&event.tid).cloned();
-                if let Some(inherited) = actor.clone() {
-                    executables.insert(*child_tid, inherited);
-                }
+                let state = processes.get(&event.tid).cloned().unwrap_or_default();
+                let actor = state.current.clone();
+                processes.insert(*child_tid, state);
                 effects.insert(CanonicalEffect::ProcessSpawn {
                     actor,
                     mechanism: *mechanism,
@@ -143,7 +150,17 @@ pub fn canonicalize(
             }
             RawEventKind::ProcessExec { path } => {
                 let executable = canonical_executable(path, &roots);
-                let from = executables.insert(event.tid, executable.clone());
+                let state = processes.entry(event.tid).or_default();
+                let from = state.current.replace(executable.clone());
+                if state.execution_chain.last() != Some(&executable) {
+                    if state.execution_chain.len() >= MAX_EXECUTION_CHAIN {
+                        return Err(NormalizeError::ExecutionChainTooDeep {
+                            tid: event.tid,
+                            limit: MAX_EXECUTION_CHAIN,
+                        });
+                    }
+                    state.execution_chain.push(executable.clone());
+                }
                 effects.insert(CanonicalEffect::ProcessExec { from, executable });
             }
             RawEventKind::FilePathAccess {
@@ -151,31 +168,75 @@ pub fn canonicalize(
                 path,
                 flags,
             } => {
-                let actor = executables.get(&event.tid).cloned();
+                let state = processes.get(&event.tid).cloned().unwrap_or_default();
                 let open_intent = match operation {
                     FileOperation::Open => Some(linux_open_intent(
                         observation.backend.platform.as_str(),
                         *flags,
+                        0,
                     )?),
-                    FileOperation::Create | FileOperation::Delete => None,
+                    FileOperation::Create
+                    | FileOperation::Delete
+                    | FileOperation::Read
+                    | FileOperation::Write => None,
                 };
                 effects.insert(CanonicalEffect::FilePathAccess {
-                    actor,
+                    actor: state.current,
+                    execution_chain: state.execution_chain,
                     operation: *operation,
                     target: canonical_path(path, &roots),
                     open_intent,
                 });
             }
+            RawEventKind::FileOpenAt2 {
+                path,
+                flags,
+                resolve,
+            } => {
+                let state = processes.get(&event.tid).cloned().unwrap_or_default();
+                effects.insert(CanonicalEffect::FilePathAccess {
+                    actor: state.current,
+                    execution_chain: state.execution_chain,
+                    operation: FileOperation::Open,
+                    target: canonical_path(path, &roots),
+                    open_intent: Some(linux_open_intent(
+                        observation.backend.platform.as_str(),
+                        Some(*flags),
+                        *resolve,
+                    )?),
+                });
+            }
+            RawEventKind::FileDescriptorAccess {
+                operation,
+                path,
+                ..
+            } => {
+                if !matches!(operation, FileOperation::Read | FileOperation::Write) {
+                    return Err(NormalizeError::InvalidFdOperation(*operation));
+                }
+                let state = processes.get(&event.tid).cloned().unwrap_or_default();
+                effects.insert(CanonicalEffect::FilePathAccess {
+                    actor: state.current,
+                    execution_chain: state.execution_chain,
+                    operation: *operation,
+                    target: canonical_kernel_fd_path(path, &roots),
+                    open_intent: None,
+                });
+            }
             RawEventKind::FileRename { from, to } => {
+                let state = processes.get(&event.tid).cloned().unwrap_or_default();
                 effects.insert(CanonicalEffect::FileRename {
-                    actor: executables.get(&event.tid).cloned(),
+                    actor: state.current,
+                    execution_chain: state.execution_chain,
                     from: canonical_path(from, &roots),
                     to: canonical_path(to, &roots),
                 });
             }
             RawEventKind::NetworkConnectAttempt { endpoint } => {
+                let state = processes.get(&event.tid).cloned().unwrap_or_default();
                 effects.insert(CanonicalEffect::NetworkConnectAttempt {
-                    actor: executables.get(&event.tid).cloned(),
+                    actor: state.current,
+                    execution_chain: state.execution_chain,
                     endpoint: canonical_endpoint(endpoint, &roots),
                 });
             }
@@ -187,6 +248,14 @@ pub fn canonicalize(
         normalization,
         effects: effects.into_iter().collect(),
     })
+}
+
+const MAX_EXECUTION_CHAIN: usize = 32;
+
+#[derive(Debug, Clone, Default)]
+struct CanonicalProcessState {
+    current: Option<CanonicalExecutable>,
+    execution_chain: Vec<CanonicalExecutable>,
 }
 
 fn semantic_root_labels(roots: &[RootRule]) -> Vec<String> {
@@ -354,6 +423,12 @@ fn canonical_path(path: &str, roots: &[RootRule]) -> CanonicalPath {
     }
 }
 
+fn canonical_kernel_fd_path(path: &str, roots: &[RootRule]) -> CanonicalPath {
+    let mut canonical = canonical_path(path, roots);
+    canonical.resolution = PathResolution::KernelFdResolved;
+    canonical
+}
+
 fn root_suffix<'a>(path: &'a str, root: &str) -> Option<&'a str> {
     if path == root {
         return Some("");
@@ -421,7 +496,11 @@ fn canonical_endpoint(endpoint: &NetworkEndpoint, roots: &[RootRule]) -> Canonic
     }
 }
 
-fn linux_open_intent(platform: &str, flags: Option<u64>) -> Result<OpenIntent, NormalizeError> {
+fn linux_open_intent(
+    platform: &str,
+    flags: Option<u64>,
+    resolve_flags: u64,
+) -> Result<OpenIntent, NormalizeError> {
     if platform != "linux" {
         return Ok(OpenIntent {
             read: false,
@@ -430,6 +509,7 @@ fn linux_open_intent(platform: &str, flags: Option<u64>) -> Result<OpenIntent, N
             truncate: false,
             append: false,
             path_only: false,
+            resolve_flags,
             other_flags: flags.unwrap_or_default(),
         });
     }
@@ -459,6 +539,7 @@ fn linux_open_intent(platform: &str, flags: Option<u64>) -> Result<OpenIntent, N
         truncate: flags_i32 & libc::O_TRUNC != 0,
         append: flags_i32 & libc::O_APPEND != 0,
         path_only,
+        resolve_flags,
         other_flags: flags & !known_mask,
     })
 }
@@ -753,8 +834,8 @@ mod tests {
 
     #[test]
     fn linux_open_access_mode_is_not_collapsed() {
-        let read = linux_open_intent("linux", Some(libc::O_RDONLY as u64)).unwrap();
-        let write = linux_open_intent("linux", Some(libc::O_WRONLY as u64)).unwrap();
+        let read = linux_open_intent("linux", Some(libc::O_RDONLY as u64), 0).unwrap();
+        let write = linux_open_intent("linux", Some(libc::O_WRONLY as u64), 0).unwrap();
         assert_ne!(read, write);
         assert!(read.read);
         assert!(write.write);
@@ -806,4 +887,123 @@ mod tests {
             Err(NormalizeError::AmbiguousRoot { .. })
         ));
     }
+
+    #[test]
+    fn fd_attributed_read_is_kernel_resolved_and_keeps_execution_chain() {
+        let raw = observation(vec![
+            RawEvent {
+                sequence: 1,
+                tid: 10,
+                kind: RawEventKind::ProcessExec {
+                    path: "/bin/sh".to_owned(),
+                },
+            },
+            RawEvent {
+                sequence: 2,
+                tid: 10,
+                kind: RawEventKind::ProcessSpawn {
+                    child_tid: 20,
+                    mechanism: SpawnMechanism::Fork,
+                },
+            },
+            RawEvent {
+                sequence: 3,
+                tid: 20,
+                kind: RawEventKind::ProcessExec {
+                    path: "/usr/bin/cat".to_owned(),
+                },
+            },
+            RawEvent {
+                sequence: 4,
+                tid: 20,
+                kind: RawEventKind::FileDescriptorAccess {
+                    operation: FileOperation::Read,
+                    fd: 3,
+                    path: "/home/runner/work/repo/data.txt".to_owned(),
+                },
+            },
+        ]);
+
+        let surface = canonicalize(&raw, &config_a()).expect("canonicalize");
+        let effect = surface
+            .effects
+            .iter()
+            .find(|effect| matches!(
+                effect,
+                CanonicalEffect::FilePathAccess {
+                    operation: FileOperation::Read,
+                    ..
+                }
+            ))
+            .expect("read effect");
+
+        match effect {
+            CanonicalEffect::FilePathAccess {
+                execution_chain,
+                target,
+                ..
+            } => {
+                assert_eq!(
+                    execution_chain
+                        .iter()
+                        .map(|exec| exec.family.as_str())
+                        .collect::<Vec<_>>(),
+                    vec!["sh", "cat"]
+                );
+                assert_eq!(target.value, "$WORKSPACE/data.txt");
+                assert_eq!(target.resolution, PathResolution::KernelFdResolved);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn openat2_resolve_flags_remain_semantically_visible() {
+        let raw = observation(vec![
+            RawEvent {
+                sequence: 1,
+                tid: 1,
+                kind: RawEventKind::ProcessExec {
+                    path: "/bin/demo".to_owned(),
+                },
+            },
+            RawEvent {
+                sequence: 2,
+                tid: 1,
+                kind: RawEventKind::FileOpenAt2 {
+                    path: "/home/runner/work/repo/input".to_owned(),
+                    flags: libc::O_RDONLY as u64,
+                    resolve: 0x08,
+                },
+            },
+        ]);
+        let surface = canonicalize(&raw, &config_a()).expect("canonicalize");
+        assert!(surface.effects.iter().any(|effect| matches!(
+            effect,
+            CanonicalEffect::FilePathAccess {
+                open_intent: Some(OpenIntent { resolve_flags: 0x08, .. }),
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn execution_chain_limit_fails_closed() {
+        let mut events = Vec::new();
+        for index in 0..=MAX_EXECUTION_CHAIN {
+            events.push(RawEvent {
+                sequence: index as u64 + 1,
+                tid: 1,
+                kind: RawEventKind::ProcessExec {
+                    path: format!("/bin/exec-{index}"),
+                },
+            });
+        }
+        assert!(matches!(
+            canonicalize(&observation(events), &NormalizationConfig::default()),
+            Err(NormalizeError::ExecutionChainTooDeep { limit, .. })
+                if limit == MAX_EXECUTION_CHAIN
+        ));
+    }
+
 }
