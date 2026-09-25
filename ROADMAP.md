@@ -22,9 +22,11 @@ Evidence: `docs/milestones/M2_EVIDENCE.md`.
 
 ## M3 — Baseline Lock
 
-**NOT STARTED**
+**CLOSED / ACCEPTED**
 
-`execsurface learn -- COMMAND` → deterministic `execsurface.lock.json` + digest.
+`execsurface learn -- COMMAND` creates a deterministic `execsurface.lock.json` with a frozen SHA-256 digest contract, privacy-safe command identity, explicit schema/versioning, atomic publication and no silent overwrite.
+
+Evidence: `docs/milestones/M3_EVIDENCE.md`.
 
 ## M4 — Diff Engine
 
