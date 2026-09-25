@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### 2026-09-25 — M2 Canonicalization accepted
+
+- added backend-independent canonical execution-surface model;
+- added versioned deterministic normalization profile;
+- added explicit semantic roots for workspace, home, temp, run-temp and named caches;
+- rejected generic random-looking path heuristics;
+- removed PID/TID/sequence from canonical identity while preserving causal replay;
+- added deterministic effect ordering and deduplication;
+- preserved executable/path suffixes and remote destination ports;
+- marked relative and parent-traversal paths unresolved instead of guessing;
+- prevented semantic roots from shadowing credential-sensitive namespaces;
+- preserved Linux open access intent rather than silently dropping flags;
+- proved repeated real ptrace observation of the same command canonicalizes identically in CI;
+- retained M2 failed CI evidence.
+
+
 ### 2026-09-25 — M1 Minimal Linux Observer accepted
 
 - implemented a Rust workspace with raw observation model, metadata-only native ptrace backend and experimental `execsurface observe -- COMMAND` CLI;

@@ -4,7 +4,7 @@
 
 Runtime execution-surface drift detection for software, CI pipelines, dependencies and AI tooling.
 
-> **Status:** M0 and M1 are accepted. The current implementation is a minimal Linux x86_64 metadata-only observer; M2 canonicalization has not started.
+> **Status:** M0, M1 and M2 are accepted. The current implementation includes a minimal Linux x86_64 metadata-only observer plus deterministic canonicalization; M3 baseline locking has not started.
 
 ExecSurface is a Linux-first developer tool for learning a content-addressed baseline of externally observable runtime effects, comparing a later run against it, and producing deterministic drift findings plus a policy-aware CI verdict.
 
@@ -81,7 +81,7 @@ Current M1 diagnostic CLI:
 cargo run -p execsurface-cli -- observe -- /bin/true
 ```
 
-`learn` and `check` remain future milestones; M1 intentionally emits raw observation evidence only.
+`learn` and `check` remain future milestones. M1 emits raw observation evidence; M2 converts that evidence into a deterministic canonical execution surface using explicit semantic roots rather than heuristic wildcarding.
 
 See:
 - [M0 Architecture](docs/architecture/M0_ARCHITECTURE.md)
