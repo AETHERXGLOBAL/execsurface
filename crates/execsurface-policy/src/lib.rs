@@ -594,14 +594,21 @@ mod tests {
                 ..RuleMatcher::default()
             },
         };
-        for rules in [vec![allow.clone(), block.clone()], vec![block.clone(), allow.clone()]] {
+        for rules in [
+            vec![allow.clone(), block.clone()],
+            vec![block.clone(), allow.clone()],
+        ] {
             let policy = Policy {
                 schema_version: 1,
                 default_action: FindingAction::Review,
                 rules,
             };
-            let report =
-                evaluate(&diff_with_added(file_effect("$WORKSPACE/a")), &policy, "test").unwrap();
+            let report = evaluate(
+                &diff_with_added(file_effect("$WORKSPACE/a")),
+                &policy,
+                "test",
+            )
+            .unwrap();
             assert_eq!(report.verdict, Verdict::Block);
             assert_eq!(
                 report.findings[0].matched_rules,
@@ -728,7 +735,10 @@ mod tests {
                 },
             }],
         };
-        assert_eq!(evaluate(&diff, &policy, "test").unwrap().verdict, Verdict::Block);
+        assert_eq!(
+            evaluate(&diff, &policy, "test").unwrap().verdict,
+            Verdict::Block
+        );
     }
 
     #[test]

@@ -117,10 +117,10 @@ fn explicit_policy_can_block_added_exec() {
     assert_eq!(output.status.code(), Some(20));
     let report: VerdictReport = serde_json::from_slice(&output.stdout).expect("verdict json");
     assert_eq!(report.verdict, Verdict::Block);
-    assert!(report
-        .findings
+    assert!(report.findings.iter().any(|finding| finding
+        .matched_rules
         .iter()
-        .any(|finding| finding.matched_rules.iter().any(|id| id == "block-added-exec")));
+        .any(|id| id == "block-added-exec")));
 
     let _ = fs::remove_dir_all(dir);
 }
