@@ -133,7 +133,7 @@ pub fn run_init(args: &[OsString]) -> Result<(), String> {
     }
 
     let command = command.ok_or_else(|| {
-        "init: missing --command. Example: execsurface init --command "cargo test --locked" --github-actions"
+        r#"init: missing --command. Example: execsurface init --command "cargo test --locked" --github-actions"#
             .to_owned()
     })?;
 

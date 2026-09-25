@@ -21,7 +21,10 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn version_reports_public_alpha_without_touching_schema_versions() {
-    let output = Command::new(binary()).arg("--version").output().expect("version");
+    let output = Command::new(binary())
+        .arg("--version")
+        .output()
+        .expect("version");
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
@@ -38,7 +41,11 @@ fn doctor_proves_supported_ci_readiness() {
         .current_dir(&dir)
         .output()
         .expect("doctor");
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("[PASS] Linux"));
     assert!(stdout.contains("[PASS] x86_64"));
