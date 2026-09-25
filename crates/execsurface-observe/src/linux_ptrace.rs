@@ -76,6 +76,7 @@ impl Collector {
                 "ptrace can perturb scheduling and trace-aware programs can behave differently".to_owned(),
                 "hostname intent is not inferred from connect(2)".to_owned(),
                 "Linux x86_64 only".to_owned(),
+                "M1 serializes observation sessions within one host process to avoid cross-reaping ptrace children".to_owned(),
             ],
         };
         Self {

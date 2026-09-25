@@ -8,6 +8,7 @@ use std::ffi::{CString, OsStr, OsString};
 use std::fmt;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
+use std::sync::Mutex;
 
 use execsurface_model::Observation;
 
@@ -86,7 +87,12 @@ impl From<io::Error> for ObserveError {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod linux_ptrace;
 
+static OBSERVE_LOCK: Mutex<()> = Mutex::new(());
+
 pub fn observe_command(spec: &CommandSpec) -> Result<Observation, ObserveError> {
+    let _session_guard = OBSERVE_LOCK.lock().map_err(|_| {
+        ObserveError::Protocol("observer session serialization lock was poisoned".to_owned())
+    })?;
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         linux_ptrace::observe(spec)
