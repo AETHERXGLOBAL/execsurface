@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AETHERXGLOBAL/execsurface/schemas/execsurface-policy-v1.schema.json",
+  "title": "ExecSurface Policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "default_action", "rules"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "default_action": { "enum": ["allow", "review", "block"] },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "action", "match"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "action": { "enum": ["allow", "review", "block"] },
+          "match": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "change": { "enum": ["added", "removed", "changed"] },
+              "effect": {
+                "enum": [
+                  "process_spawn",
+                  "process_exec",
+                  "file_open",
+                  "file_create",
+                  "file_delete",
+                  "file_rename",
+                  "network_connect"
+                ]
+              },
+              "path_class": {
+                "enum": [
+                  "workspace",
+                  "home",
+                  "credential_sensitive",
+                  "temp",
+                  "run_temp",
+                  "cache",
+                  "system",
+                  "device",
+                  "outside_declared_roots",
+                  "unknown"
+                ]
+              },
+              "path_prefix": { "type": "string", "minLength": 1 },
+              "executable_family": { "type": "string" },
+              "network_ip": { "type": "string" },
+              "network_port": { "type": "integer", "minimum": 0, "maximum": 65535 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

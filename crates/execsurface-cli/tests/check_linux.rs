@@ -38,7 +38,7 @@ fn check_json(
 ) -> std::process::Output {
     let mut cmd = Command::new(cli());
     cmd.current_dir(dir)
-        .args(["check", "--json", "--baseline"])
+        .args(["check", "--diff-only", "--json", "--baseline"])
         .arg(baseline)
         .arg("--");
     cmd.args(command);

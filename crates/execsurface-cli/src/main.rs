@@ -12,26 +12,36 @@ use execsurface_diff::{diff, CandidateSnapshot, DiffReport};
 use execsurface_model::RawEventKind;
 use execsurface_normalize::{canonicalize, canonicalize_executable, NormalizationConfig};
 use execsurface_observe::{observe_command, CommandSpec};
+use execsurface_policy::{
+    builtin_review_policy, evaluate, FindingAction, Policy, Verdict, VerdictReport,
+};
 
 fn main() -> ExitCode {
     match run() {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(message) => {
+            eprintln!("ExecSurface: ERROR");
             eprintln!("execsurface: {message}");
             ExitCode::from(2)
         }
     }
 }
 
-fn run() -> Result<(), String> {
+fn run() -> Result<ExitCode, String> {
     let mut args = env::args_os();
     let _binary = args.next();
     let subcommand = args.next().ok_or_else(|| usage("missing subcommand"))?;
     let remaining: Vec<OsString> = args.collect();
 
     match subcommand.to_string_lossy().as_ref() {
-        "observe" => run_observe(&remaining),
-        "learn" => run_learn(&remaining),
+        "observe" => {
+            run_observe(&remaining)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        "learn" => {
+            run_learn(&remaining)?;
+            Ok(ExitCode::SUCCESS)
+        }
         "check" => run_check(&remaining),
         _ => Err(usage("unknown subcommand")),
     }
@@ -111,8 +121,12 @@ fn run_learn(args: &[OsString]) -> Result<(), String> {
     Ok(())
 }
 
-fn run_check(args: &[OsString]) -> Result<(), String> {
+fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
     let parsed = parse_check_args(args)?;
+    if parsed.diff_only && parsed.policy.is_some() {
+        return Err("cannot combine --diff-only with --policy".to_owned());
+    }
+
     let baseline_bytes = std::fs::read(&parsed.baseline).map_err(|error| {
         format!(
             "cannot read baseline {}: {error}",
@@ -164,14 +178,114 @@ fn run_check(args: &[OsString]) -> Result<(), String> {
     };
 
     let report = diff(&baseline, &candidate).map_err(|error| error.to_string())?;
+
+    if parsed.diff_only {
+        if parsed.json {
+            let json = serde_json::to_string_pretty(&report)
+                .map_err(|error| format!("cannot serialize diff report: {error}"))?;
+            println!("{json}");
+        } else {
+            print_diff_report(&report)?;
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let (policy, policy_source) = load_policy(parsed.policy.as_ref())?;
+    let verdict_report =
+        evaluate(&report, &policy, policy_source).map_err(|error| error.to_string())?;
+
     if parsed.json {
-        let json = serde_json::to_string_pretty(&report)
-            .map_err(|error| format!("cannot serialize diff report: {error}"))?;
+        let json = serde_json::to_string_pretty(&verdict_report)
+            .map_err(|error| format!("cannot serialize verdict report: {error}"))?;
         println!("{json}");
     } else {
-        print_diff_report(&report)?;
+        print_verdict_report(&verdict_report)?;
+    }
+
+    Ok(exit_code_for_verdict(verdict_report.verdict))
+}
+
+fn load_policy(path: Option<&PathBuf>) -> Result<(Policy, String), String> {
+    match path {
+        Some(path) => {
+            let bytes = std::fs::read(path)
+                .map_err(|error| format!("cannot read policy {}: {error}", path.display()))?;
+            let policy: Policy = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("cannot parse policy {}: {error}", path.display()))?;
+            Ok((policy, path.display().to_string()))
+        }
+        None => Ok((
+            builtin_review_policy(),
+            "builtin:review-unmatched-drift".to_owned(),
+        )),
+    }
+}
+
+fn print_verdict_report(report: &VerdictReport) -> Result<(), String> {
+    println!("ExecSurface: {}", verdict_name(report.verdict));
+    if let Some(digest) = &report.baseline_digest {
+        println!("baseline: {digest}");
+    }
+    if let Some(target) = &report.target {
+        println!(
+            "target: exit_code={:?} signal={:?}",
+            target.exit_code, target.signal
+        );
+    }
+    let allow = report
+        .findings
+        .iter()
+        .filter(|finding| finding.action == FindingAction::Allow)
+        .count();
+    let review = report
+        .findings
+        .iter()
+        .filter(|finding| finding.action == FindingAction::Review)
+        .count();
+    let block = report
+        .findings
+        .iter()
+        .filter(|finding| finding.action == FindingAction::Block)
+        .count();
+    println!(
+        "findings: total={} allow={} review={} block={}",
+        report.findings.len(),
+        allow,
+        review,
+        block
+    );
+    for finding in &report.findings {
+        println!(
+            "{:?} {:?} {:?} rules={}",
+            finding.action,
+            finding.change,
+            finding.effect_kind,
+            if finding.matched_rules.is_empty() {
+                "<default>".to_owned()
+            } else {
+                finding.matched_rules.join(",")
+            }
+        );
     }
     Ok(())
+}
+
+fn verdict_name(verdict: Verdict) -> &'static str {
+    match verdict {
+        Verdict::Pass => "PASS",
+        Verdict::Review => "REVIEW",
+        Verdict::Block => "BLOCK",
+        Verdict::Error => "ERROR",
+    }
+}
+
+fn exit_code_for_verdict(verdict: Verdict) -> ExitCode {
+    match verdict {
+        Verdict::Pass => ExitCode::SUCCESS,
+        Verdict::Error => ExitCode::from(2),
+        Verdict::Review => ExitCode::from(10),
+        Verdict::Block => ExitCode::from(20),
+    }
 }
 
 fn print_diff_report(report: &DiffReport) -> Result<(), String> {
@@ -225,6 +339,8 @@ fn parse_observe_target(args: &[OsString]) -> Result<(OsString, Vec<OsString>), 
 
 struct CheckArgs {
     baseline: PathBuf,
+    policy: Option<PathBuf>,
+    diff_only: bool,
     json: bool,
     workspace: Option<String>,
     home: Option<String>,
@@ -249,6 +365,8 @@ impl CheckArgs {
 
 fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
     let mut baseline = PathBuf::from(DEFAULT_LOCKFILE_NAME);
+    let mut policy = None;
+    let mut diff_only = false;
     let mut json = false;
     let mut workspace = None;
     let mut home = None;
@@ -266,6 +384,8 @@ fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
                 .ok_or_else(|| usage("missing target command after `--`"))?;
             return Ok(CheckArgs {
                 baseline,
+                policy,
+                diff_only,
                 json,
                 workspace,
                 home,
@@ -281,6 +401,14 @@ fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
             "--json" => {
                 json = true;
                 index += 1;
+            }
+            "--diff-only" => {
+                diff_only = true;
+                index += 1;
+            }
+            "--policy" => {
+                policy = Some(PathBuf::from(option_value(args, index, "--policy")?));
+                index += 2;
             }
             "--baseline" => {
                 baseline = PathBuf::from(option_value(args, index, "--baseline")?);
@@ -487,7 +615,9 @@ fn usage(error: &str) -> String {
 
 check options:
   --baseline PATH     baseline lockfile (default: execsurface.lock.json)
-  --json              emit machine-readable JSON diff
+  --policy PATH       explicit policy JSON (default: built-in REVIEW for unmatched drift)
+  --diff-only         emit raw M4 diff and do not evaluate policy
+  --json              emit machine-readable JSON
   --workspace PATH    declared workspace root
   --home PATH         declared home root
   --tmp PATH          declared temp root; repeatable

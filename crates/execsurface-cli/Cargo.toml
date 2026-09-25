@@ -17,4 +17,5 @@ execsurface-diff = { path = "../execsurface-diff" }
 execsurface-model = { path = "../execsurface-model" }
 execsurface-normalize = { path = "../execsurface-normalize" }
 execsurface-observe = { path = "../execsurface-observe" }
+execsurface-policy = { path = "../execsurface-policy" }
 serde_json.workspace = true

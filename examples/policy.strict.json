@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "default_action": "review",
+  "rules": [
+    {
+      "id": "block-new-network",
+      "action": "block",
+      "match": {
+        "change": "added",
+        "effect": "network_connect"
+      }
+    },
+    {
+      "id": "block-new-credential-file-access",
+      "action": "block",
+      "match": {
+        "change": "added",
+        "path_class": "credential_sensitive"
+      }
+    },
+    {
+      "id": "allow-workspace-fixture-reads",
+      "action": "allow",
+      "match": {
+        "change": "added",
+        "effect": "file_open",
+        "path_prefix": "$WORKSPACE/fixtures"
+      }
+    }
+  ]
+}
