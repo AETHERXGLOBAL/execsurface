@@ -5,6 +5,7 @@ members = [
     "crates/execsurface-normalize",
     "crates/execsurface-baseline",
     "crates/execsurface-diff",
+    "crates/execsurface-policy",
     "crates/execsurface-cli",
 ]
 resolver = "2"

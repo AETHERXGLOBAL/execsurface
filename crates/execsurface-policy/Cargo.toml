@@ -1,0 +1,13 @@
+[package]
+name = "execsurface-policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Deterministic policy and verdict engine for AETHER X ExecSurface"
+
+[dependencies]
+execsurface-diff = { path = "../execsurface-diff" }
+execsurface-model = { path = "../execsurface-model" }
+serde.workspace = true

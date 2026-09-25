@@ -38,9 +38,11 @@ Evidence: `docs/milestones/M4_EVIDENCE.md`.
 
 ## M5 — Policy / Verdict
 
-**NOT STARTED**
+**CLOSED / ACCEPTED**
 
-PASS / REVIEW / BLOCK / ERROR with policy independent of baseline.
+Independent policy v1 maps M4 findings to ALLOW / REVIEW / BLOCK using deterministic order-independent rule resolution. No drift is always PASS; operational/comparability failures remain ERROR.
+
+Evidence: `docs/milestones/M5_EVIDENCE.md`.
 
 ## M6 — GitHub Action
 
