@@ -26,7 +26,6 @@ fn repeated_real_observation_produces_identical_canonical_surface() {
     assert_eq!(first_json, second_json);
 }
 
-
 #[test]
 fn observer_truncation_is_rejected_end_to_end() {
     let raw = observe_command_with_options(
@@ -48,19 +47,12 @@ fn observer_truncation_is_rejected_end_to_end() {
 
 #[test]
 fn real_shell_to_cat_chain_reaches_fd_read_effect() {
-    let path = std::env::temp_dir().join(format!(
-        "execsurface-m65-chain-{}",
-        std::process::id()
-    ));
+    let path = std::env::temp_dir().join(format!("execsurface-m65-chain-{}", std::process::id()));
     std::fs::write(&path, b"fixture").expect("fixture");
 
     let command = format!("cat '{}' >/dev/null", path.display());
-    let raw = observe_command(
-        &CommandSpec::new("/bin/sh")
-            .arg("-c")
-            .arg(command),
-    )
-    .expect("observation");
+    let raw =
+        observe_command(&CommandSpec::new("/bin/sh").arg("-c").arg(command)).expect("observation");
     assert!(raw.complete, "{:#?}", raw.warnings);
 
     let surface = canonicalize(
@@ -72,10 +64,7 @@ fn real_shell_to_cat_chain_reaches_fd_read_effect() {
     )
     .expect("canonicalization");
 
-    let expected = format!(
-        "$TMP/{}",
-        path.file_name().expect("name").to_string_lossy()
-    );
+    let expected = format!("$TMP/{}", path.file_name().expect("name").to_string_lossy());
 
     let effect = surface
         .effects

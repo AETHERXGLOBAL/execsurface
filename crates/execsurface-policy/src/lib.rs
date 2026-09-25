@@ -785,5 +785,4 @@ mod tests {
         assert_eq!(report.verdict, Verdict::Review);
         assert_eq!(report.findings[0].effect_kind, EffectKind::FileRead);
     }
-
 }

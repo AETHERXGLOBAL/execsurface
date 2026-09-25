@@ -63,7 +63,9 @@ fn run() -> Result<(), String> {
 
     if args.first().is_some_and(|arg| arg == "--repetitions") {
         if args.len() < 3 {
-            return Err("usage: execsurface-bench [--repetitions N] -- COMMAND [ARGS...]".to_owned());
+            return Err(
+                "usage: execsurface-bench [--repetitions N] -- COMMAND [ARGS...]".to_owned(),
+            );
         }
         repetitions = args[1]
             .to_string_lossy()
