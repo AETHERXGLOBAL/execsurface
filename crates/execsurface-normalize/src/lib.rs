@@ -67,10 +67,16 @@ impl fmt::Display for NormalizeError {
                 write!(f, "Linux file.open event is missing raw flags required to avoid collapsing access intent")
             }
             Self::InvalidFdOperation(operation) => {
-                write!(f, "fd-attributed event has invalid operation: {operation:?}")
+                write!(
+                    f,
+                    "fd-attributed event has invalid operation: {operation:?}"
+                )
             }
             Self::ExecutionChainTooDeep { tid, limit } => {
-                write!(f, "execution chain for tid {tid} exceeded fail-closed limit {limit}")
+                write!(
+                    f,
+                    "execution chain for tid {tid} exceeded fail-closed limit {limit}"
+                )
             }
         }
     }
@@ -207,9 +213,7 @@ pub fn canonicalize(
                 });
             }
             RawEventKind::FileDescriptorAccess {
-                operation,
-                path,
-                ..
+                operation, path, ..
             } => {
                 if !matches!(operation, FileOperation::Read | FileOperation::Write) {
                     return Err(NormalizeError::InvalidFdOperation(*operation));
@@ -928,13 +932,15 @@ mod tests {
         let effect = surface
             .effects
             .iter()
-            .find(|effect| matches!(
-                effect,
-                CanonicalEffect::FilePathAccess {
-                    operation: FileOperation::Read,
-                    ..
-                }
-            ))
+            .find(|effect| {
+                matches!(
+                    effect,
+                    CanonicalEffect::FilePathAccess {
+                        operation: FileOperation::Read,
+                        ..
+                    }
+                )
+            })
             .expect("read effect");
 
         match effect {
@@ -981,7 +987,10 @@ mod tests {
         assert!(surface.effects.iter().any(|effect| matches!(
             effect,
             CanonicalEffect::FilePathAccess {
-                open_intent: Some(OpenIntent { resolve_flags: 0x08, .. }),
+                open_intent: Some(OpenIntent {
+                    resolve_flags: 0x08,
+                    ..
+                }),
                 ..
             }
         )));
@@ -1005,5 +1014,4 @@ mod tests {
                 if limit == MAX_EXECUTION_CHAIN
         ));
     }
-
 }

@@ -54,7 +54,9 @@ fn main() {
             assert!(duplicated >= 0);
             let mut duplicated = unsafe { File::from_raw_fd(duplicated) };
             let mut byte = [0_u8; 1];
-            duplicated.read_exact(&mut byte).expect("read duplicated fd");
+            duplicated
+                .read_exact(&mut byte)
+                .expect("read duplicated fd");
         }
         Some("fork-read") => {
             let path = args.next().expect("file path");
@@ -115,7 +117,11 @@ fn main() {
                     std::mem::size_of::<OpenHow>(),
                 )
             } as i32;
-            assert!(fd >= 0, "openat2 failed: {}", std::io::Error::last_os_error());
+            assert!(
+                fd >= 0,
+                "openat2 failed: {}",
+                std::io::Error::last_os_error()
+            );
             unsafe {
                 libc::close(fd);
             }

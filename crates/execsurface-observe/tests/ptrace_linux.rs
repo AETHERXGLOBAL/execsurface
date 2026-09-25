@@ -115,14 +115,17 @@ fn tracks_dup_and_fork_inherited_file_descriptors() {
             observe_command(&CommandSpec::new(fixture()).arg(mode).arg(path.as_os_str()))
                 .expect("observe");
         assert!(observation.complete, "{mode}: {:#?}", observation.warnings);
-        assert!(observation.events.iter().any(|event| matches!(
-            &event.kind,
-            RawEventKind::FileDescriptorAccess {
-                operation: FileOperation::Read,
-                path,
-                ..
-            } if path == &expected
-        )), "{mode}: {observation:#?}");
+        assert!(
+            observation.events.iter().any(|event| matches!(
+                &event.kind,
+                RawEventKind::FileDescriptorAccess {
+                    operation: FileOperation::Read,
+                    path,
+                    ..
+                } if path == &expected
+            )),
+            "{mode}: {observation:#?}"
+        );
     }
 
     let _ = fs::remove_file(path);
@@ -237,7 +240,10 @@ fn high_event_volume_remains_complete_under_default_budget() {
             )
         })
         .count();
-    assert!(writes >= 256, "expected >=256 attributed writes, got {writes}");
+    assert!(
+        writes >= 256,
+        "expected >=256 attributed writes, got {writes}"
+    );
 
     let _ = fs::remove_dir_all(dir);
 }

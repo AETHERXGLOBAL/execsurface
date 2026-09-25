@@ -405,13 +405,7 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
         let event = ((wait_status as u32) >> 16) as libc::c_int;
 
         if stop_signal == libc::SIGTRAP && event != 0 {
-            handle_ptrace_event(
-                tid,
-                event,
-                &mut tracees,
-                &mut fd_tables,
-                &mut collector,
-            )?;
+            handle_ptrace_event(tid, event, &mut tracees, &mut fd_tables, &mut collector)?;
             resume_syscall(tid, 0)?;
             continue;
         }
@@ -419,21 +413,9 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
         if stop_signal == (libc::SIGTRAP | 0x80) {
             let info = syscall_info(tid)?;
             if let Some((nr, args)) = info.entry() {
-                handle_syscall_entry(
-                    tid,
-                    nr,
-                    args,
-                    &mut tracees,
-                    &mut collector,
-                );
+                handle_syscall_entry(tid, nr, args, &mut tracees, &mut collector);
             } else if let Some(result) = info.exit() {
-                handle_syscall_exit(
-                    tid,
-                    result,
-                    &mut tracees,
-                    &mut fd_tables,
-                    &mut collector,
-                );
+                handle_syscall_exit(tid, result, &mut tracees, &mut fd_tables, &mut collector);
             }
             resume_syscall(tid, 0)?;
             continue;
@@ -476,10 +458,11 @@ fn handle_ptrace_event(
                 .unwrap_or(fd_tables.root_id());
 
             let share_files = if event == libc::PTRACE_EVENT_CLONE {
-                match tracees.get(&tid).and_then(|state| state.pending_syscall.as_ref()) {
-                    Some(PendingSyscall::Clone { flags }) => {
-                        flags & libc::CLONE_FILES as u64 != 0
-                    }
+                match tracees
+                    .get(&tid)
+                    .and_then(|state| state.pending_syscall.as_ref())
+                {
+                    Some(PendingSyscall::Clone { flags }) => flags & libc::CLONE_FILES as u64 != 0,
                     _ => {
                         collector.warning(
                             tid,
@@ -513,7 +496,9 @@ fn handle_ptrace_event(
         }
         libc::PTRACE_EVENT_EXEC => {
             apply_exec_fd_semantics(tid, tracees, fd_tables);
-            let state = tracees.entry(tid).or_insert_with(|| TraceeState::root(fd_tables.root_id()));
+            let state = tracees
+                .entry(tid)
+                .or_insert_with(|| TraceeState::root(fd_tables.root_id()));
             match state.pending_exec.take() {
                 Some(path) => collector.event(tid, RawEventKind::ProcessExec { path }),
                 None => collector.warning(
@@ -743,11 +728,7 @@ fn handle_syscall_entry(
     }
 
     if nr == libc::SYS_close {
-        set_pending(
-            tracees,
-            tid,
-            PendingSyscall::Close { fd: args[0] as i32 },
-        );
+        set_pending(tracees, tid, PendingSyscall::Close { fd: args[0] as i32 });
         return;
     }
     if nr == libc::SYS_close_range {
@@ -823,11 +804,7 @@ fn handle_syscall_entry(
     }
 
     if nr == libc::SYS_clone {
-        set_pending(
-            tracees,
-            tid,
-            PendingSyscall::Clone { flags: args[0] },
-        );
+        set_pending(tracees, tid, PendingSyscall::Clone { flags: args[0] });
         return;
     }
     if nr == libc::SYS_clone3 {
@@ -972,7 +949,10 @@ fn record_exec_path(
         .and_then(|path| resolve_user_path(tid, dirfd, path))
     {
         Ok(path) => {
-            tracees.entry(tid).or_insert_with(|| TraceeState::root(1)).pending_exec = Some(path);
+            tracees
+                .entry(tid)
+                .or_insert_with(|| TraceeState::root(1))
+                .pending_exec = Some(path);
         }
         Err(error) => collector.warning(tid, "exec_path_unreadable", error.to_string()),
     }
@@ -1367,6 +1347,9 @@ mod tests {
 
     #[test]
     fn lexical_join_preserves_parent_traversal_for_later_canonical_review() {
-        assert_eq!(join_lexical("/tmp/work", "../secret"), "/tmp/work/../secret");
+        assert_eq!(
+            join_lexical("/tmp/work", "../secret"),
+            "/tmp/work/../secret"
+        );
     }
 }
