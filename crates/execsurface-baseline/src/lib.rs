@@ -232,7 +232,11 @@ fn normalize_payload_order(payload: &mut BaselinePayload) {
     payload.observer.limitations.sort();
     payload.observer.limitations.dedup();
 
-    payload.canonical_surface.normalization.semantic_roots.sort();
+    payload
+        .canonical_surface
+        .normalization
+        .semantic_roots
+        .sort();
     payload
         .canonical_surface
         .normalization
@@ -312,8 +316,8 @@ fn atomic_write(path: &Path, bytes: &[u8], overwrite: bool) -> Result<(), Baseli
 mod tests {
     use super::*;
     use execsurface_model::canonical::{
-        CanonicalEffect, CanonicalNetworkEndpoint, CanonicalPath, NormalizationMetadata,
-        PathClass, PathResolution,
+        CanonicalEffect, CanonicalNetworkEndpoint, CanonicalPath, NormalizationMetadata, PathClass,
+        PathResolution,
     };
 
     fn fixture_payload() -> BaselinePayload {
@@ -443,10 +447,8 @@ mod tests {
 
     #[test]
     fn atomic_writer_refuses_silent_overwrite() {
-        let dir = std::env::temp_dir().join(format!(
-            "execsurface-baseline-unit-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("execsurface-baseline-unit-{}", std::process::id()));
         fs::create_dir_all(&dir).expect("create dir");
         let path = dir.join("lock.json");
         let _ = fs::remove_file(&path);

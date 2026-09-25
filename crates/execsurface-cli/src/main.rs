@@ -72,8 +72,8 @@ fn run_learn(args: &[OsString]) -> Result<(), String> {
         .map(|(_, path)| path)
         .ok_or_else(|| "observer produced no confirmed root executable event".to_owned())?;
 
-    let executable =
-        canonicalize_executable(root_exec_path, &normalization).map_err(|error| error.to_string())?;
+    let executable = canonicalize_executable(root_exec_path, &normalization)
+        .map_err(|error| error.to_string())?;
     let argument_count = u32::try_from(parsed.command_args.len())
         .map_err(|_| "target argument count exceeds lockfile format".to_owned())?;
 
@@ -256,11 +256,7 @@ fn parse_learn_args(args: &[OsString]) -> Result<LearnArgs, String> {
     Err(usage("expected `--` before the target command"))
 }
 
-fn option_value<'a>(
-    args: &'a [OsString],
-    index: usize,
-    option: &str,
-) -> Result<&'a OsStr, String> {
+fn option_value<'a>(args: &'a [OsString], index: usize, option: &str) -> Result<&'a OsStr, String> {
     args.get(index + 1)
         .map(OsString::as_os_str)
         .ok_or_else(|| usage(&format!("{option} requires a value")))

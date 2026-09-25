@@ -10,10 +10,8 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 fn temp_dir(name: &str) -> std::path::PathBuf {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
-        "execsurface-m3-{name}-{}-{id}",
-        std::process::id()
-    ));
+    let path =
+        std::env::temp_dir().join(format!("execsurface-m3-{name}-{}-{id}", std::process::id()));
     fs::create_dir_all(&path).expect("create temp dir");
     path
 }
