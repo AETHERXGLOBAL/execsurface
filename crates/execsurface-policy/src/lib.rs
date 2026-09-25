@@ -755,4 +755,35 @@ mod tests {
         assert_eq!(report.verdict, Verdict::Error);
         assert_eq!(report.error.as_deref(), Some("observer failed"));
     }
+    #[test]
+    fn policy_can_distinguish_actual_file_read_from_open_attempt() {
+        let read = CanonicalEffect::FilePathAccess {
+            actor: Some(executable("demo")),
+            execution_chain: vec![executable("demo")],
+            operation: FileOperation::Read,
+            target: CanonicalPath {
+                value: "$WORKSPACE/secrets/input".to_owned(),
+                class: PathClass::Workspace,
+                resolution: PathResolution::KernelFdResolved,
+            },
+            open_intent: None,
+        };
+        let policy = Policy {
+            schema_version: 1,
+            default_action: FindingAction::Allow,
+            rules: vec![PolicyRule {
+                id: "review-actual-read".to_owned(),
+                action: FindingAction::Review,
+                matcher: RuleMatcher {
+                    effect: Some(EffectKind::FileRead),
+                    ..RuleMatcher::default()
+                },
+            }],
+        };
+
+        let report = evaluate(&diff_with_added(read), &policy, "test").unwrap();
+        assert_eq!(report.verdict, Verdict::Review);
+        assert_eq!(report.findings[0].effect_kind, EffectKind::FileRead);
+    }
+
 }
