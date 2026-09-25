@@ -25,22 +25,34 @@ jobs:
           lscpu | sed -n '1,20p'
 
       - name: Build benchmark and controlled fixture
-        run: cargo build --locked --release -p execsurface-bench -p execsurface-observe --bin execsurface-fixture
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p execsurface-bench --bin execsurface-bench
+          cargo build --locked --release -p execsurface-observe --bin execsurface-fixture
 
       - name: Benchmark /bin/true
         run: |
+          set -euo pipefail
           mkdir -p benchmark
           ./target/release/execsurface-bench --repetitions 20 -- /bin/true | tee benchmark/true.json
+          test -s benchmark/true.json
+          python -m json.tool benchmark/true.json >/dev/null
 
       - name: Benchmark descendant spawn
         run: |
+          set -euo pipefail
           ./target/release/execsurface-bench --repetitions 15 -- ./target/release/execsurface-fixture spawn | tee benchmark/spawn.json
+          test -s benchmark/spawn.json
+          python -m json.tool benchmark/spawn.json >/dev/null
 
       - name: Benchmark file event volume
         run: |
+          set -euo pipefail
           work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
           ./target/release/execsurface-bench --repetitions 7 -- ./target/release/execsurface-fixture burst "$work" 128 | tee benchmark/burst-128.json
-          rm -rf "$work"
+          test -s benchmark/burst-128.json
+          python -m json.tool benchmark/burst-128.json >/dev/null
 
       - name: Upload benchmark evidence
         uses: actions/upload-artifact@v7

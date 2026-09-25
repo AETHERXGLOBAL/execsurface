@@ -12,3 +12,7 @@ execsurface-normalize = { path = "../execsurface-normalize" }
 execsurface-observe = { path = "../execsurface-observe" }
 serde.workspace = true
 serde_json.workspace = true
+
+[[bin]]
+name = "execsurface-bench"
+path = "src/main.rs"
