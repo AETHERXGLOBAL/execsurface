@@ -1,0 +1,141 @@
+name: M6 Action Smoke
+
+on:
+  push:
+    branches:
+      - "milestone/m6-github-action"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pass:
+    name: Action / PASS
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Learn wrapped baseline
+        run: cargo run --locked -p execsurface-cli -- learn --output m6-pass.lock.json -- /bin/bash -lc true
+
+      - name: Run local Action
+        id: execsurface
+        uses: ./
+        with:
+          command: "true"
+          baseline: m6-pass.lock.json
+          upload-artifact: "true"
+          artifact-name: m6-pass-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Assert PASS outputs
+        env:
+          VERDICT: ${{ steps.execsurface.outputs.verdict }}
+          DIGEST: ${{ steps.execsurface.outputs.artifact-digest }}
+          SARIF_STATUS: ${{ steps.execsurface.outputs.sarif-status }}
+        run: |
+          test "$VERDICT" = "pass"
+          test -n "$DIGEST"
+          test "$SARIF_STATUS" = "not-generated:no-source-provenance"
+
+  review:
+    name: Action / REVIEW
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Learn wrapped baseline
+        run: cargo run --locked -p execsurface-cli -- learn --output m6-review.lock.json -- /bin/bash -lc true
+
+      - name: Run local Action
+        id: execsurface
+        uses: ./
+        with:
+          command: "true; /bin/echo x >/dev/null"
+          baseline: m6-review.lock.json
+          upload-artifact: "false"
+
+      - name: Assert REVIEW output
+        env:
+          VERDICT: ${{ steps.execsurface.outputs.verdict }}
+          EXIT_CODE: ${{ steps.execsurface.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = "review"
+          test "$EXIT_CODE" = "10"
+
+  block:
+    name: Action / BLOCK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Learn wrapped baseline
+        run: cargo run --locked -p execsurface-cli -- learn --output m6-block.lock.json -- /bin/bash -lc true
+
+      - name: Create blocking policy
+        run: |
+          cat > m6-block-policy.json <<'JSON'
+          {
+            "schema_version": 1,
+            "default_action": "review",
+            "rules": [
+              {
+                "id": "block-added-exec",
+                "action": "block",
+                "match": {
+                  "change": "added",
+                  "effect": "process_exec"
+                }
+              }
+            ]
+          }
+          JSON
+
+      - name: Run local Action
+        id: execsurface
+        continue-on-error: true
+        uses: ./
+        with:
+          command: "true; /bin/echo x >/dev/null"
+          baseline: m6-block.lock.json
+          policy: m6-block-policy.json
+          upload-artifact: "false"
+
+      - name: Assert BLOCK enforcement
+        env:
+          OUTCOME: ${{ steps.execsurface.outcome }}
+          VERDICT: ${{ steps.execsurface.outputs.verdict }}
+          EXIT_CODE: ${{ steps.execsurface.outputs.exit-code }}
+        run: |
+          test "$OUTCOME" = "failure"
+          test "$VERDICT" = "block"
+          test "$EXIT_CODE" = "20"
+
+  error:
+    name: Action / ERROR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run local Action against missing baseline
+        id: execsurface
+        continue-on-error: true
+        uses: ./
+        with:
+          command: "true"
+          baseline: does-not-exist.lock.json
+          upload-artifact: "false"
+
+      - name: Assert ERROR enforcement
+        env:
+          OUTCOME: ${{ steps.execsurface.outcome }}
+          VERDICT: ${{ steps.execsurface.outputs.verdict }}
+          EXIT_CODE: ${{ steps.execsurface.outputs.exit-code }}
+        run: |
+          test "$OUTCOME" = "failure"
+          test "$VERDICT" = "error"
+          test "$EXIT_CODE" = "2"
