@@ -106,7 +106,7 @@ jobs:
           cat "docs/releases/$TAG.md" > "$notes"
           {
             echo
-            echo "Source commit: `$GITHUB_SHA`"
+            printf 'Source commit: `%s`\n' "$GITHUB_SHA"
             echo
             echo "Build workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } >> "$notes"
