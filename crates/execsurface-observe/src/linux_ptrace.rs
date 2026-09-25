@@ -1088,7 +1088,46 @@ fn proc_cwd_path(tid: libc::pid_t) -> Result<String, ObserveError> {
 }
 
 fn proc_fd_path(tid: libc::pid_t, fd: i32) -> Result<String, ObserveError> {
-    read_proc_link(PathBuf::from(format!("/proc/{tid}/fd/{fd}")))
+    let path = read_proc_link(PathBuf::from(format!("/proc/{tid}/fd/{fd}")))?;
+    let tgid = tracee_tgid(tid).unwrap_or(tid);
+    Ok(normalize_own_proc_path(&path, tid, tgid))
+}
+
+fn tracee_tgid(tid: libc::pid_t) -> Result<libc::pid_t, ObserveError> {
+    let status = fs::read_to_string(format!("/proc/{tid}/status"))?;
+    status
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("Tgid:")
+                .and_then(|value| value.trim().parse::<libc::pid_t>().ok())
+        })
+        .ok_or_else(|| ObserveError::Protocol(format!("missing Tgid in /proc/{tid}/status")))
+}
+
+fn normalize_own_proc_path(path: &str, tid: libc::pid_t, tgid: libc::pid_t) -> String {
+    let Some(rest) = path.strip_prefix("/proc/") else {
+        return path.to_owned();
+    };
+    let Some((pid_text, suffix)) = rest.split_once('/') else {
+        return path.to_owned();
+    };
+    let Ok(pid) = pid_text.parse::<libc::pid_t>() else {
+        return path.to_owned();
+    };
+
+    if pid != tid && pid != tgid {
+        return path.to_owned();
+    }
+
+    if let Some(task_rest) = suffix.strip_prefix("task/") {
+        if let Some((task_tid_text, task_suffix)) = task_rest.split_once('/') {
+            if task_tid_text.parse::<libc::pid_t>().ok() == Some(tid) {
+                return format!("/proc/thread-self/{task_suffix}");
+            }
+        }
+    }
+
+    format!("/proc/self/{suffix}")
 }
 
 fn read_proc_link(path: PathBuf) -> Result<String, ObserveError> {
@@ -1352,4 +1391,29 @@ mod tests {
             "/tmp/work/../secret"
         );
     }
+
+    #[test]
+    fn normalizes_only_the_tracees_own_proc_identity() {
+        assert_eq!(
+            normalize_own_proc_path("/proc/123/maps", 123, 123),
+            "/proc/self/maps"
+        );
+        assert_eq!(
+            normalize_own_proc_path("/proc/100/maps", 101, 100),
+            "/proc/self/maps"
+        );
+        assert_eq!(
+            normalize_own_proc_path("/proc/100/task/101/status", 101, 100),
+            "/proc/thread-self/status"
+        );
+        assert_eq!(
+            normalize_own_proc_path("/proc/999/maps", 101, 100),
+            "/proc/999/maps"
+        );
+        assert_eq!(
+            normalize_own_proc_path("/proc/100/task/102/status", 101, 100),
+            "/proc/self/task/102/status"
+        );
+    }
+
 }
