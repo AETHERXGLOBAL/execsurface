@@ -65,6 +65,18 @@ The controlled 128-file burst remained complete with a median absolute ptrace ov
 Evidence: `docs/milestones/M6_5_EVIDENCE.md`.
 Backend decision: `docs/milestones/M6_5_BACKEND_DECISION.md`.
 
+## M6.6 — Public Self-Service & Distribution Gate
+
+**CLOSED / ACCEPTED**
+
+ExecSurface is now distributed as a Linux x86_64 public alpha with a GitHub Release binary, SHA-256 checksum, build-provenance attestation, fresh Cargo Git fallback, `execsurface doctor`, conservative `execsurface init`, product-first documentation and a gated `@v0.1` GitHub Action channel.
+
+The immutable `v0.1.0-alpha.1` release and moving `v0.1` Action channel both point to the release-gated source commit `d6919e2b3e23b196965bc7bba87598f09265599f`. The release workflow proved checksum/provenance verification, zero-contact binary use, fresh Cargo tag installation, immutable Action consumption, and stable-channel PASS/REVIEW/BLOCK/ERROR behavior.
+
+M6.6 did not change v2 evidence semantics, verdict semantics, baseline/policy separation, the Linux x86_64 support boundary, or the M6.5 ptrace/eBPF decision.
+
+Evidence: `docs/milestones/M6_6_EVIDENCE.md`.
+
 ## M7 — External Real-World Proof
 
 **NOT STARTED**
