@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod canonical;
+
 pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,7 +66,7 @@ pub enum RawEventKind {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SpawnMechanism {
     Fork,
@@ -72,7 +74,7 @@ pub enum SpawnMechanism {
     Clone,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FileOperation {
     Open,

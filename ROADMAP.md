@@ -14,9 +14,11 @@ Evidence: `docs/milestones/M1_EVIDENCE.md`.
 
 ## M2 — Canonicalization
 
-**NOT STARTED**
+**CLOSED / ACCEPTED**
 
-Stable model across PID/temp/order variance, with adversarial normalization tests.
+Deterministic canonical surface across PID/sequence/interleaving and declared machine-root variance. Explicit semantic roots, credential-shadow protection, unresolved-path semantics, deterministic deduplication, open-intent preservation, and observer→canonical repeatability are covered by CI.
+
+Evidence: `docs/milestones/M2_EVIDENCE.md`.
 
 ## M3 — Baseline Lock
 
