@@ -194,9 +194,7 @@ jobs:
         run: cargo build --locked -p execsurface-cli --bin execsurface
 
       - name: Learn wrapped baseline with argv sentinel
-        env:
-          SENTINEL: AX_M6_ARGV_SECRET_41e9d3
-        run: ./target/debug/execsurface learn --output m6-privacy.lock.json -- /bin/bash -lc 'printf "%s" "$0" >/dev/null' "$SENTINEL"
+        run: ./target/debug/execsurface learn --output m6-privacy.lock.json -- /bin/bash -lc 'printf "%s" "AX_M6_ARGV_SECRET_41e9d3" >/dev/null'
 
       - name: Run local Action with equivalent sentinel-bearing command
         id: execsurface
