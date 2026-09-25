@@ -6,9 +6,11 @@
 
 ## M1 — Minimal Linux Observer
 
-**NOT STARTED**
+**CLOSED / ACCEPTED**
 
-Observe descendants and a minimal process/file/network slice. Every accepted event needs fixtures and explicit loss/error handling.
+Metadata-only native ptrace backend on Linux x86_64. CI proves descendant exec observation, argv non-capture sentinel, path-based file observation, loopback connect destination, strict Clippy, and locked dependency reproducibility.
+
+Evidence: `docs/milestones/M1_EVIDENCE.md`.
 
 ## M2 — Canonicalization
 

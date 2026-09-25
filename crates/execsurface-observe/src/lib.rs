@@ -106,3 +106,16 @@ pub fn observe_command(spec: &CommandSpec) -> Result<Observation, ObserveError> 
         ))
     }
 }
+
+#[cfg(test)]
+mod api_tests {
+    use super::*;
+    use std::os::unix::ffi::OsStringExt;
+
+    #[test]
+    fn invalid_command_metadata_returns_explicit_error() {
+        let invalid = OsString::from_vec(b"bad\0program".to_vec());
+        let result = observe_command(&CommandSpec::new(invalid));
+        assert!(matches!(result, Err(ObserveError::InvalidCommand(_))));
+    }
+}

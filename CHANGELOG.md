@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### 2026-09-25 — M1 Minimal Linux Observer accepted
+
+- implemented a Rust workspace with raw observation model, metadata-only native ptrace backend and experimental `execsurface observe -- COMMAND` CLI;
+- added descendant exec, selected path-based filesystem, and connect-destination observation;
+- added privacy sentinel test proving argv-only sentinel absence from serialized observation;
+- serialized observer sessions within one host process after concurrency testing exposed cross-reaping risk;
+- pinned the Rust dependency graph in Cargo.lock;
+- passed format, strict Clippy, locked tests and lockfile-integrity checks on GitHub Actions;
+- preserved failed CI iterations in the M1 evidence ledger.
+
+
 ### 2026-09-25 — M1 Privacy Gate
 
 - red-team review found that decoded strace output can collect string syscall arguments before redaction;
