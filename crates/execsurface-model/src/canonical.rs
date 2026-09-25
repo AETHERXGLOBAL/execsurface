@@ -1,14 +1,14 @@
 //! Backend-independent canonical execution-surface model.
 //!
 //! These types deliberately exclude PIDs, TIDs, timestamps and raw event
-//! sequence numbers. M2 canonical surfaces are not baseline lockfiles.
+//! sequence numbers.
 
 use serde::{Deserialize, Serialize};
 
 use crate::{FileOperation, SpawnMechanism};
 
-pub const CANONICAL_SURFACE_SCHEMA_VERSION: u32 = 1;
-pub const NORMALIZATION_PROFILE_VERSION: u32 = 1;
+pub const CANONICAL_SURFACE_SCHEMA_VERSION: u32 = 2;
+pub const NORMALIZATION_PROFILE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CanonicalSurface {
@@ -57,6 +57,7 @@ pub enum PathResolution {
     Lexical,
     RelativeUnresolved,
     ContainsParentTraversal,
+    KernelFdResolved,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -72,17 +73,20 @@ pub enum CanonicalEffect {
     },
     FilePathAccess {
         actor: Option<CanonicalExecutable>,
+        execution_chain: Vec<CanonicalExecutable>,
         operation: FileOperation,
         target: CanonicalPath,
         open_intent: Option<OpenIntent>,
     },
     FileRename {
         actor: Option<CanonicalExecutable>,
+        execution_chain: Vec<CanonicalExecutable>,
         from: CanonicalPath,
         to: CanonicalPath,
     },
     NetworkConnectAttempt {
         actor: Option<CanonicalExecutable>,
+        execution_chain: Vec<CanonicalExecutable>,
         endpoint: CanonicalNetworkEndpoint,
     },
 }
@@ -95,6 +99,7 @@ pub struct OpenIntent {
     pub truncate: bool,
     pub append: bool,
     pub path_only: bool,
+    pub resolve_flags: u64,
     pub other_flags: u64,
 }
 

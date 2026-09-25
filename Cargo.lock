@@ -57,6 +57,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "execsurface-bench"
+version = "0.0.1"
+dependencies = [
+ "execsurface-normalize",
+ "execsurface-observe",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "execsurface-cli"
 version = "0.0.1"
 dependencies = [

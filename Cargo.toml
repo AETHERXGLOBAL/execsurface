@@ -4,6 +4,7 @@ members = [
     "crates/execsurface-observe",
     "crates/execsurface-normalize",
     "crates/execsurface-baseline",
+    "crates/execsurface-bench",
     "crates/execsurface-diff",
     "crates/execsurface-policy",
     "crates/execsurface-report",

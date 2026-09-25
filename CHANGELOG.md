@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### 2026-09-26 — M6.5 Semantic Fidelity & Completeness Hardening accepted
+
+- upgraded raw observation, canonical surface, baseline lock/digest, diff and verdict contracts to v2 rather than silently changing v1 meaning;
+- added successful-open fd identity and actual fd-attributed `file_read` / `file_write` effects;
+- added fd lifecycle handling for close/dup/dup2/dup3/fcntl duplication, fork inheritance, CLONE_FILES sharing and close-on-exec semantics;
+- added trace-time relative/openat resolution and openat2 resolve metadata;
+- added bounded causal execution chains without PID/TID in canonical identity;
+- added a finite observation event budget; overflow marks evidence incomplete and canonicalization fails closed;
+- added observer fault injection proving unreadable pathname metadata becomes incomplete evidence;
+- added high-volume and threaded/forked fd stress tests;
+- added self-proc normalization only for the proven tracee/TGID identity, preserving access to other PIDs as distinct;
+- added policy v2 file-read/file-write matchers while preserving restricted v1 policy compatibility;
+- added reproducible ptrace benchmark evidence and an evidence-based backend decision;
+- final branch CI passed format, strict Clippy, 78 tests and Cargo.lock integrity;
+- final GitHub Action smoke passed PASS, REVIEW, enforced REVIEW, BLOCK, ERROR and privacy cases;
+- preserved the v2 Action PASS regression caused by volatile `/proc/<PID>/maps` identities and its narrow correction.
+
+
 ### 2026-09-25 — M6 GitHub Action accepted
 
 - added root `action.yml` composite Action for Linux x86_64;

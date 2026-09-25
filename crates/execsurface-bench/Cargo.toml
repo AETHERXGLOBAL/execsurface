@@ -1,0 +1,18 @@
+[package]
+name = "execsurface-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Reproducible observer overhead probe for AETHER X ExecSurface"
+
+[dependencies]
+execsurface-normalize = { path = "../execsurface-normalize" }
+execsurface-observe = { path = "../execsurface-observe" }
+serde.workspace = true
+serde_json.workspace = true
+
+[[bin]]
+name = "execsurface-bench"
+path = "src/main.rs"

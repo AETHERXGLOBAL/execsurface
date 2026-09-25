@@ -15,7 +15,7 @@ use execsurface_model::canonical::{
 use execsurface_model::FileOperation;
 use serde::{Deserialize, Serialize};
 
-pub const DIFF_SCHEMA_VERSION: u32 = 1;
+pub const DIFF_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateSnapshot {
@@ -338,7 +338,9 @@ fn effect_subject(effect: &CanonicalEffect) -> Option<EffectSubject> {
             actor: actor.clone(),
             from_path: from.value.clone(),
         }),
-        CanonicalEffect::NetworkConnectAttempt { actor, endpoint } => match endpoint {
+        CanonicalEffect::NetworkConnectAttempt {
+            actor, endpoint, ..
+        } => match endpoint {
             CanonicalNetworkEndpoint::Inet { ip, .. } => Some(EffectSubject::NetworkInet {
                 actor: actor.clone(),
                 address_family: "inet".to_owned(),
@@ -384,9 +386,9 @@ mod tests {
 
     fn surface(effects: Vec<CanonicalEffect>) -> CanonicalSurface {
         CanonicalSurface {
-            schema_version: 1,
+            schema_version: 2,
             normalization: NormalizationMetadata {
-                profile_version: 1,
+                profile_version: 2,
                 semantic_roots: vec!["home".to_owned(), "workspace".to_owned()],
             },
             effects,
@@ -444,6 +446,7 @@ mod tests {
     fn file_open(write: bool) -> CanonicalEffect {
         CanonicalEffect::FilePathAccess {
             actor: Some(executable()),
+            execution_chain: vec![executable()],
             operation: FileOperation::Open,
             target: CanonicalPath {
                 value: "$WORKSPACE/data.txt".to_owned(),
@@ -457,6 +460,7 @@ mod tests {
                 truncate: false,
                 append: false,
                 path_only: false,
+                resolve_flags: 0,
                 other_flags: 0,
             }),
         }
@@ -510,6 +514,7 @@ mod tests {
     fn ambiguous_network_pairing_stays_added_removed() {
         let make = |port| CanonicalEffect::NetworkConnectAttempt {
             actor: Some(executable()),
+            execution_chain: vec![executable()],
             endpoint: CanonicalNetworkEndpoint::Inet {
                 ip: "192.0.2.10".to_owned(),
                 port,
@@ -530,6 +535,7 @@ mod tests {
     fn unique_remote_port_change_is_changed() {
         let make = |port| CanonicalEffect::NetworkConnectAttempt {
             actor: Some(executable()),
+            execution_chain: vec![executable()],
             endpoint: CanonicalNetworkEndpoint::Inet {
                 ip: "192.0.2.10".to_owned(),
                 port,
@@ -543,7 +549,7 @@ mod tests {
     fn normalization_profile_mismatch_is_incomparable() {
         let baseline = baseline(vec![]);
         let mut candidate = candidate(vec![]);
-        candidate.canonical_surface.normalization.profile_version = 2;
+        candidate.canonical_surface.normalization.profile_version = 3;
         assert!(matches!(
             diff(&baseline, &candidate),
             Err(DiffError::Incomparable(mismatches))

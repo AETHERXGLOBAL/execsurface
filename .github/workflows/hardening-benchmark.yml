@@ -1,0 +1,63 @@
+name: M6.5 Performance Evidence
+
+on:
+  push:
+    branches:
+      - "milestone/m6.5-semantic-fidelity"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: ptrace reference benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Environment evidence
+        run: |
+          uname -a
+          rustc --version --verbose
+          cargo --version
+          lscpu | sed -n '1,20p'
+
+      - name: Build benchmark and controlled fixture
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p execsurface-bench --bin execsurface-bench
+          cargo build --locked --release -p execsurface-observe --bin execsurface-fixture
+
+      - name: Benchmark /bin/true
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark
+          ./target/release/execsurface-bench --repetitions 20 -- /bin/true | tee benchmark/true.json
+          test -s benchmark/true.json
+          python -m json.tool benchmark/true.json >/dev/null
+
+      - name: Benchmark descendant spawn
+        run: |
+          set -euo pipefail
+          ./target/release/execsurface-bench --repetitions 15 -- ./target/release/execsurface-fixture spawn | tee benchmark/spawn.json
+          test -s benchmark/spawn.json
+          python -m json.tool benchmark/spawn.json >/dev/null
+
+      - name: Benchmark file event volume
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          ./target/release/execsurface-bench --repetitions 7 -- ./target/release/execsurface-fixture burst "$work" 128 | tee benchmark/burst-128.json
+          test -s benchmark/burst-128.json
+          python -m json.tool benchmark/burst-128.json >/dev/null
+
+      - name: Upload benchmark evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: m6-5-ptrace-benchmark-${{ github.run_id }}-${{ github.run_attempt }}
+          path: benchmark
+          if-no-files-found: error
+          retention-days: 30

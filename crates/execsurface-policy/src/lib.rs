@@ -10,8 +10,9 @@ use execsurface_model::canonical::{CanonicalEffect, CanonicalNetworkEndpoint, Pa
 use execsurface_model::FileOperation;
 use serde::{Deserialize, Serialize};
 
-pub const POLICY_SCHEMA_VERSION: u32 = 1;
-pub const VERDICT_SCHEMA_VERSION: u32 = 1;
+pub const LEGACY_POLICY_SCHEMA_VERSION: u32 = 1;
+pub const POLICY_SCHEMA_VERSION: u32 = 2;
+pub const VERDICT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,6 +47,8 @@ pub enum EffectKind {
     FileOpen,
     FileCreate,
     FileDelete,
+    FileRead,
+    FileWrite,
     FileRename,
     NetworkConnect,
 }
@@ -159,7 +162,9 @@ pub fn builtin_review_policy() -> Policy {
 }
 
 pub fn validate_policy(policy: &Policy) -> Result<(), PolicyError> {
-    if policy.schema_version != POLICY_SCHEMA_VERSION {
+    if policy.schema_version != LEGACY_POLICY_SCHEMA_VERSION
+        && policy.schema_version != POLICY_SCHEMA_VERSION
+    {
         return Err(PolicyError::UnsupportedSchema(policy.schema_version));
     }
 
@@ -195,6 +200,17 @@ pub fn validate_policy(policy: &Policy) -> Result<(), PolicyError> {
                         .to_owned(),
                 });
             }
+        }
+        if policy.schema_version == LEGACY_POLICY_SCHEMA_VERSION
+            && matches!(
+                rule.matcher.effect,
+                Some(EffectKind::FileRead | EffectKind::FileWrite)
+            )
+        {
+            return Err(PolicyError::InvalidMatcher {
+                rule_id: rule.id.clone(),
+                reason: "file_read/file_write require policy schema version 2".to_owned(),
+            });
         }
     }
     Ok(())
@@ -408,7 +424,9 @@ impl<'a> EffectMetadata<'a> {
                 network_ip: None,
                 network_port: None,
             },
-            CanonicalEffect::NetworkConnectAttempt { actor, endpoint } => match endpoint {
+            CanonicalEffect::NetworkConnectAttempt {
+                actor, endpoint, ..
+            } => match endpoint {
                 CanonicalNetworkEndpoint::Inet { ip, port }
                 | CanonicalNetworkEndpoint::Inet6 { ip, port } => Self {
                     path: None,
@@ -444,6 +462,8 @@ fn effect_kind(effect: &CanonicalEffect) -> EffectKind {
             FileOperation::Open => EffectKind::FileOpen,
             FileOperation::Create => EffectKind::FileCreate,
             FileOperation::Delete => EffectKind::FileDelete,
+            FileOperation::Read => EffectKind::FileRead,
+            FileOperation::Write => EffectKind::FileWrite,
         },
         CanonicalEffect::FileRename { .. } => EffectKind::FileRename,
         CanonicalEffect::NetworkConnectAttempt { .. } => EffectKind::NetworkConnect,
@@ -483,6 +503,7 @@ mod tests {
     fn file_effect(path: &str) -> CanonicalEffect {
         CanonicalEffect::FilePathAccess {
             actor: Some(executable("demo")),
+            execution_chain: vec![executable("demo")],
             operation: FileOperation::Open,
             target: CanonicalPath {
                 value: path.to_owned(),
@@ -496,6 +517,7 @@ mod tests {
                 truncate: false,
                 append: false,
                 path_only: false,
+                resolve_flags: 0,
                 other_flags: 0,
             }),
         }
@@ -688,6 +710,7 @@ mod tests {
     fn changed_rule_matches_after_state() {
         let before = CanonicalEffect::NetworkConnectAttempt {
             actor: Some(executable("demo")),
+            execution_chain: vec![executable("demo")],
             endpoint: CanonicalNetworkEndpoint::Inet {
                 ip: "192.0.2.1".to_owned(),
                 port: 443,
@@ -695,6 +718,7 @@ mod tests {
         };
         let after = CanonicalEffect::NetworkConnectAttempt {
             actor: Some(executable("demo")),
+            execution_chain: vec![executable("demo")],
             endpoint: CanonicalNetworkEndpoint::Inet {
                 ip: "192.0.2.1".to_owned(),
                 port: 8443,
@@ -744,5 +768,54 @@ mod tests {
         let report = error_report("observer failed");
         assert_eq!(report.verdict, Verdict::Error);
         assert_eq!(report.error.as_deref(), Some("observer failed"));
+    }
+    #[test]
+    fn policy_can_distinguish_actual_file_read_from_open_attempt() {
+        let read = CanonicalEffect::FilePathAccess {
+            actor: Some(executable("demo")),
+            execution_chain: vec![executable("demo")],
+            operation: FileOperation::Read,
+            target: CanonicalPath {
+                value: "$WORKSPACE/secrets/input".to_owned(),
+                class: PathClass::Workspace,
+                resolution: PathResolution::KernelFdResolved,
+            },
+            open_intent: None,
+        };
+        let policy = Policy {
+            schema_version: POLICY_SCHEMA_VERSION,
+            default_action: FindingAction::Allow,
+            rules: vec![PolicyRule {
+                id: "review-actual-read".to_owned(),
+                action: FindingAction::Review,
+                matcher: RuleMatcher {
+                    effect: Some(EffectKind::FileRead),
+                    ..RuleMatcher::default()
+                },
+            }],
+        };
+
+        let report = evaluate(&diff_with_added(read), &policy, "test").unwrap();
+        assert_eq!(report.verdict, Verdict::Review);
+        assert_eq!(report.findings[0].effect_kind, EffectKind::FileRead);
+    }
+    #[test]
+    fn legacy_v1_policy_rejects_v2_file_io_matchers() {
+        let policy = Policy {
+            schema_version: LEGACY_POLICY_SCHEMA_VERSION,
+            default_action: FindingAction::Review,
+            rules: vec![PolicyRule {
+                id: "legacy-read".to_owned(),
+                action: FindingAction::Block,
+                matcher: RuleMatcher {
+                    effect: Some(EffectKind::FileRead),
+                    ..RuleMatcher::default()
+                },
+            }],
+        };
+        assert!(matches!(
+            validate_policy(&policy),
+            Err(PolicyError::InvalidMatcher { rule_id, .. }) if rule_id == "legacy-read"
+        ));
     }
 }

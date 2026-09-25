@@ -14,8 +14,8 @@ use execsurface_model::canonical::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const LOCK_SCHEMA_VERSION: u32 = 1;
-pub const DIGEST_FORMAT_VERSION: u32 = 1;
+pub const LOCK_SCHEMA_VERSION: u32 = 2;
+pub const DIGEST_FORMAT_VERSION: u32 = 2;
 pub const DEFAULT_LOCKFILE_NAME: &str = "execsurface.lock.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -351,9 +351,9 @@ mod tests {
                 limitations: vec!["example limitation".to_owned()],
             },
             CanonicalSurface {
-                schema_version: 1,
+                schema_version: 2,
                 normalization: NormalizationMetadata {
-                    profile_version: 1,
+                    profile_version: 2,
                     semantic_roots: vec!["home".to_owned(), "workspace".to_owned()],
                 },
                 effects: vec![],
@@ -375,8 +375,8 @@ mod tests {
         let payload = fixture_payload();
         let bytes = digest_input_bytes(&payload).expect("digest bytes");
         let expected = concat!(
-            "{\"schema_version\":1,\"payload\":{",
-            "\"digest_format_version\":1,",
+            "{\"schema_version\":2,\"payload\":{",
+            "\"digest_format_version\":2,",
             "\"tool\":{\"name\":\"execsurface\",\"version\":\"0.0.1\"},",
             "\"command\":{\"executable\":{\"path\":{\"value\":\"/usr/bin/python3\",",
             "\"class\":\"system\",\"resolution\":\"lexical\"},\"family\":\"python3\"},",
@@ -385,14 +385,14 @@ mod tests {
             "\"observer\":{\"name\":\"linux-ptrace-metadata-only\",",
             "\"capabilities\":[\"connect_destination\",\"descendant_tracking\"],",
             "\"limitations\":[\"example limitation\"]},",
-            "\"canonical_surface\":{\"schema_version\":1,",
-            "\"normalization\":{\"profile_version\":1,",
+            "\"canonical_surface\":{\"schema_version\":2,",
+            "\"normalization\":{\"profile_version\":2,",
             "\"semantic_roots\":[\"home\",\"workspace\"]},\"effects\":[]}}}"
         );
         assert_eq!(bytes, expected.as_bytes());
         assert_eq!(
             digest_payload(&payload).expect("digest"),
-            "sha256:8e1b09c73d3133871dc2533a84fb01d5e62b6b8a30138a9e6f49ee03eabcd0b8"
+            "sha256:34c6428da9ce58aebd17fe47470c154d1f2eb99aff2d37ba0282a678f7dcb067"
         );
     }
 
@@ -406,6 +406,7 @@ mod tests {
             .effects
             .push(CanonicalEffect::NetworkConnectAttempt {
                 actor: None,
+                execution_chain: vec![],
                 endpoint: CanonicalNetworkEndpoint::Inet {
                     ip: "192.0.2.10".to_owned(),
                     port: 443,
@@ -465,5 +466,14 @@ mod tests {
         parse_and_verify(&bytes).expect("verify");
         let _ = fs::remove_file(&path);
         let _ = fs::remove_dir(&dir);
+    }
+    #[test]
+    fn legacy_lock_schema_is_rejected_instead_of_reinterpreted() {
+        let mut lock = build_lock(fixture_payload()).expect("lock");
+        lock.schema_version = 1;
+        assert!(matches!(
+            verify_lock(&lock),
+            Err(BaselineError::UnsupportedLockSchema(1))
+        ));
     }
 }

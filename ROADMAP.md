@@ -54,6 +54,17 @@ SARIF finding emission is **KILLED / DEFERRED for M6 v1** because current runtim
 
 Evidence: `docs/milestones/M6_EVIDENCE.md`.
 
+## M6.5 — Semantic Fidelity & Completeness Hardening
+
+**CLOSED / ACCEPTED**
+
+Hardened Linux ptrace evidence with syscall entry/exit pairing, successful-open fd identity, fd-attributed read/write effects, close/dup/fork/CLONE_FILES handling, openat/openat2 trace-time path semantics, bounded causal execution chains, explicit event-budget truncation, fault injection, v2 schema migration and reproducible performance evidence.
+
+The controlled 128-file burst remained complete with a median absolute ptrace overhead of 51.569 ms on the final shared-runner measurement. This is below the pre-M7 500 ms absolute-overhead trigger. ptrace therefore remains the reference correctness backend for M7; eBPF is not authorized as an interchangeable backend without equivalent lost-event/completeness semantics.
+
+Evidence: `docs/milestones/M6_5_EVIDENCE.md`.
+Backend decision: `docs/milestones/M6_5_BACKEND_DECISION.md`.
+
 ## M7 — External Real-World Proof
 
 **NOT STARTED**

@@ -1,13 +1,13 @@
 //! Versioned raw observation types for ExecSurface.
 //!
-//! M1 intentionally models backend evidence, not the M2 canonical execution
-//! surface. PIDs and syscall-oriented details may therefore appear here.
+//! Raw observations are backend evidence. PIDs/TIDs and syscall-oriented
+//! details may appear here, while canonical identity is defined later.
 
 use serde::{Deserialize, Serialize};
 
 pub mod canonical;
 
-pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 1;
+pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Observation {
@@ -57,6 +57,16 @@ pub enum RawEventKind {
         path: String,
         flags: Option<u64>,
     },
+    FileOpenAt2 {
+        path: String,
+        flags: u64,
+        resolve: u64,
+    },
+    FileDescriptorAccess {
+        operation: FileOperation,
+        fd: i32,
+        path: String,
+    },
     FileRename {
         from: String,
         to: String,
@@ -80,6 +90,8 @@ pub enum FileOperation {
     Open,
     Create,
     Delete,
+    Read,
+    Write,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

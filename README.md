@@ -4,7 +4,7 @@
 
 Runtime execution-surface drift detection for software, CI pipelines, dependencies and AI tooling.
 
-> **Status:** M0–M6 are accepted. ExecSurface can observe, canonicalize, learn, diff, evaluate independent policy into PASS / REVIEW / BLOCK, and run as a GitHub composite Action with JSON/Markdown evidence artifacts.
+> **Status:** M0–M6.5 are accepted. ExecSurface can observe, canonicalize, learn, diff, evaluate independent policy into PASS / REVIEW / BLOCK, and run as a GitHub composite Action with JSON/Markdown evidence artifacts. M6.5 hardens the Linux observer with actual fd-attributed read/write evidence, causal execution chains, fail-closed truncation and versioned v2 contracts.
 
 ExecSurface is a Linux-first developer tool for learning a content-addressed baseline of externally observable runtime effects, comparing a later run against it, and producing deterministic drift findings plus a policy-aware CI verdict.
 
@@ -75,7 +75,7 @@ ExecSurface is **not** an antivirus, EDR, malware detector, sandbox, or proof of
 
 ## M0 decision
 
-M1 uses a **minimal native Linux ptrace observer** after the original strace-ingestion plan failed the privacy gate: decoded strace output can collect string syscall arguments before redaction. eBPF remains deferred until evidence shows a material benefit.
+M1 uses a **minimal native Linux ptrace observer** after the original strace-ingestion plan failed the privacy gate: decoded strace output can collect string syscall arguments before redaction. M6.5 keeps ptrace as the **reference correctness backend** after measuring it directly; an eBPF fast-path remains conditional on real external-workload evidence rather than being introduced speculatively.
 
 Current CLI:
 
@@ -83,7 +83,7 @@ Current CLI:
 cargo run -p execsurface-cli -- observe -- /bin/true
 ```
 
-`learn` is implemented in M3, policy-free diffing in M4, policy-aware `check` in M5, and GitHub Action packaging in M6. Use `--diff-only` to retain raw M4 behavior.
+`learn` is implemented in M3, policy-free diffing in M4, policy-aware `check` in M5, GitHub Action packaging in M6, and semantic-fidelity hardening in M6.5. M6.5 uses v2 raw/canonical/baseline/diff/verdict contracts; existing v1 baselines must be relearned rather than silently reinterpreted. Use `--diff-only` to retain raw M4 behavior.
 
 ## GitHub Action
 
