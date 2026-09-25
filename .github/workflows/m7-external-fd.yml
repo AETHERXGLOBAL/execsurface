@@ -1,0 +1,180 @@
+name: M7 External Proof - sharkdp fd
+
+on:
+  push:
+    branches:
+      - "milestone/m7-external-fd-proof"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  attestations: read
+
+jobs:
+  fd-compatibility:
+    name: fd pinned compatibility proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout pinned upstream fd without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: sharkdp/fd
+          ref: ce97e473ebaec49697c07daa50a7bc2b32f713d2
+          path: external/fd
+          persist-credentials: false
+
+      - name: Verify exact upstream identity and toolchain
+        run: |
+          set -euo pipefail
+          test "$(git -C external/fd rev-parse HEAD)" = "ce97e473ebaec49697c07daa50a7bc2b32f713d2"
+          test -f external/fd/Cargo.lock
+          rustc --version --verbose
+          cargo --version
+          uname -a
+          python - <<'PY'
+          import re, subprocess
+          version = subprocess.check_output(["rustc", "--version"], text=True)
+          match = re.search(r"rustc (\d+)\.(\d+)\.(\d+)", version)
+          assert match, version
+          current = tuple(map(int, match.groups()))
+          assert current >= (1, 90, 0), f"fd pinned target requires Rust >=1.90.0, runner has {current}"
+          PY
+
+      - name: Install and verify ExecSurface public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="v0.1.0-alpha.1"
+          target="x86_64-unknown-linux-gnu"
+          asset="execsurface-${tag}-${target}.tar.gz"
+          install_dir="$RUNNER_TEMP/execsurface-m7"
+          mkdir -p "$install_dir"
+          cd "$install_dir"
+
+          curl --fail --location --silent --show-error             -O "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${tag}/${asset}"
+          curl --fail --location --silent --show-error             -O "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${tag}/${asset}.sha256"
+
+          sha256sum -c "${asset}.sha256"
+          gh attestation verify "$asset" -R AETHERXGLOBAL/execsurface
+
+          tar -xzf "$asset"
+          bin="$install_dir/execsurface-${tag}-${target}/execsurface"
+          test "$("$bin" --version)" = "execsurface 0.1.0-alpha.1"
+          echo "EXECSURFACE_BIN=$bin" >> "$GITHUB_ENV"
+
+      - name: Reproduce pinned upstream test suite
+        working-directory: external/fd
+        run: |
+          set -euo pipefail
+          cargo test --locked --all-features
+
+      - name: Build real fd release binary
+        working-directory: external/fd
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --all-features
+          ./target/release/fd --version
+
+      - name: Create controlled local runtime fixture
+        run: |
+          set -euo pipefail
+          mkdir -p external/fd/m7-fixture/sub
+          printf 'alpha\n' > external/fd/m7-fixture/alpha.txt
+          printf 'beta\n' > external/fd/m7-fixture/sub/beta.txt
+          test -z "$(git -C external/fd status --porcelain --untracked-files=no)"
+          mkdir -p m7-evidence
+          {
+            echo "upstream=sharkdp/fd"
+            echo "upstream_commit=$(git -C external/fd rev-parse HEAD)"
+            echo "execsurface=$("$EXECSURFACE_BIN" --version)"
+            echo "rustc=$(rustc --version)"
+            echo "cargo=$(cargo --version)"
+            echo "runner=$(uname -srvmo)"
+            echo "upstream_push=none"
+          } > m7-evidence/environment.txt
+
+      - name: Learn real fd runtime baseline
+        run: |
+          set -euo pipefail
+          "$EXECSURFACE_BIN" learn             --output m7-evidence/fd.lock.json             -- /bin/bash -lc             'cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
+
+      - name: Prove repeated no-drift compatibility
+        run: |
+          set -euo pipefail
+          for n in 1 2; do
+            "$EXECSURFACE_BIN" check               --json-output "m7-evidence/fd-pass-${n}.json"               --markdown-output "m7-evidence/fd-pass-${n}.md"               -- /bin/bash -lc               'cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
+          done
+
+          python - <<'PY'
+          import json
+          for n in (1, 2):
+              data = json.load(open(f"m7-evidence/fd-pass-{n}.json"))
+              assert data["verdict"] == "pass", data["verdict"]
+              assert data["findings"] == [], data["findings"]
+          PY
+
+      - name: Prove controlled runtime expansion is detected
+        run: |
+          set -euo pipefail
+          set +e
+          "$EXECSURFACE_BIN" check             --json-output m7-evidence/fd-controlled.json             --markdown-output m7-evidence/fd-controlled.md             -- /bin/bash -lc             'cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null; /usr/bin/sha256sum m7-fixture/alpha.txt >/dev/null'
+          status=$?
+          set -e
+          test "$status" -eq 10
+
+          python - <<'PY'
+          import json
+          data = json.load(open("m7-evidence/fd-controlled.json"))
+          assert data["verdict"] == "review", data["verdict"]
+          hits = []
+          for finding in data["findings"]:
+              if finding["change"] != "added" or finding["effect_kind"] != "process_exec":
+                  continue
+              evidence = finding["evidence"]
+              effect = evidence.get("effect", {})
+              executable = effect.get("executable", {})
+              if executable.get("family") == "sha256sum":
+                  hits.append(finding)
+          assert hits, "controlled /usr/bin/sha256sum execution was not present as an added process_exec finding"
+          print(f"controlled_added_sha256sum_findings={len(hits)}")
+          PY
+
+      - name: Prove stable v0.1 Action PASS on external checkout
+        id: action-pass
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null"
+          baseline: m7-evidence/fd.lock.json
+          upload-artifact: "false"
+
+      - name: Assert stable Action PASS
+        env:
+          VERDICT: ${{ steps.action-pass.outputs.verdict }}
+        run: test "$VERDICT" = "pass"
+
+      - name: Prove stable v0.1 Action surfaces controlled drift
+        id: action-review
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null; /usr/bin/sha256sum m7-fixture/alpha.txt >/dev/null"
+          baseline: m7-evidence/fd.lock.json
+          upload-artifact: "false"
+
+      - name: Assert stable Action REVIEW
+        env:
+          VERDICT: ${{ steps.action-review.outputs.verdict }}
+          EXIT_CODE: ${{ steps.action-review.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = "review"
+          test "$EXIT_CODE" = "10"
+
+      - name: Preserve M7 evidence artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m7-fd-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m7-evidence
+          if-no-files-found: error
+          retention-days: 30
