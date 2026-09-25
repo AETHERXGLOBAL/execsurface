@@ -549,7 +549,7 @@ mod tests {
     fn normalization_profile_mismatch_is_incomparable() {
         let baseline = baseline(vec![]);
         let mut candidate = candidate(vec![]);
-        candidate.canonical_surface.normalization.profile_version = 2;
+        candidate.canonical_surface.normalization.profile_version = 3;
         assert!(matches!(
             diff(&baseline, &candidate),
             Err(DiffError::Incomparable(mismatches))
