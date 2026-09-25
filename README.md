@@ -4,10 +4,91 @@
 
 Runtime execution-surface drift detection for software, CI pipelines, dependencies and AI tooling.
 
-> Status: M0 — Architecture Freeze. No runtime observer implementation is accepted yet.
+> **Status:** M0 — Architecture Freeze is complete. M1 implementation has **not** started.
 
-ExecSurface is a Linux-first, developer-oriented project for learning a content-addressed baseline of externally observable runtime effects and deterministically comparing later executions against that baseline and an independent policy.
+ExecSurface is a Linux-first developer tool for learning a content-addressed baseline of externally observable runtime effects, comparing a later run against it, and producing deterministic drift findings plus a policy-aware CI verdict.
 
-The project is intentionally **not** an antivirus, EDR, malware detector, sandbox, or proof that a program is safe.
+## Target workflow
 
-Architecture and acceptance evidence are being established before M1 implementation.
+```text
+OBSERVE
+  ↓
+NORMALIZE
+  ↓
+CANONICALIZE
+  ↓
+LOCK
+  ↓
+RUN AGAIN
+  ↓
+DIFF
+  ↓
+CLASSIFY EXPANSION
+  ↓
+VERDICT
+  ↓
+REPORT / SARIF / EVIDENCE
+```
+
+Target CLI:
+
+```bash
+execsurface learn -- python -m pytest
+execsurface check -- python -m pytest
+```
+
+Illustrative future report:
+
+```text
+Tests: PASS
+
+ExecSurface: BLOCK
+
++ EXEC    /usr/bin/curl
++ NETWORK 203.0.113.12:443
++ READ    ~/.ssh/config
+```
+
+## Core distinction
+
+A tracer emits observations. ExecSurface starts there and adds a stable, reviewable model:
+
+```text
+raw observation
+→ canonical execution surface
+→ content-addressed baseline
++ independent policy
+→ deterministic drift
+→ verdict + evidence
+```
+
+## Explicit security boundary
+
+ExecSurface is **not** an antivirus, EDR, malware detector, sandbox, or proof of program safety.
+
+- **NO EXECUTION-SURFACE DRIFT ≠ PROGRAM IS SAFE**
+- **OBSERVED BEHAVIOR ≠ ALL POSSIBLE BEHAVIOR**
+- **NO OBSERVED NETWORK ≠ PROOF THAT NETWORK ACCESS IS IMPOSSIBLE**
+- **TRACE COMPLETENESS DEPENDS ON THE OBSERVATION BACKEND**
+
+## M0 decision
+
+The planned M1 reference observer is **strace-based ingestion**. Native ptrace and eBPF remain later candidates that must earn adoption through measured evidence.
+
+See:
+- [M0 Architecture](docs/architecture/M0_ARCHITECTURE.md)
+- [ADR-0001: M1 Observation Backend](docs/architecture/ADR-0001-observation-backend.md)
+- [Adjacent Systems / Prior-Art Map](docs/architecture/COMPETITOR_MAP.md)
+- [M0 Gate](docs/architecture/M0_GATE.md)
+
+## Design invariants
+
+1. Raw observations and canonical execution surfaces are different models.
+2. Baseline and policy are different concepts.
+3. Observer failure can never become PASS.
+4. Normalization may remove irrelevant variability but may not silently collapse distinct security-relevant behavior.
+5. Privacy defaults to metadata, not secrets.
+6. Evidence and explicit limitations are product outputs.
+7. Precision > feature count.
+
+Apache-2.0 licensed.

@@ -1,0 +1,31 @@
+name: Architecture decision
+description: Propose a change to ExecSurface semantics or boundaries
+title: "ADR: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What precise architecture problem is being solved?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Reproducible evidence, references, counterexamples and limitations.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: true
+  - type: textarea
+    id: deviation
+    attributes:
+      label: Scope / deviation check
+      description: Why is this still execution-surface drift detection?
+    validations:
+      required: true
