@@ -44,9 +44,12 @@ fn captures_path_based_file_open() {
     ));
     fs::write(&path, b"fixture").expect("write fixture");
 
-    let observation =
-        observe_command(&CommandSpec::new(fixture()).arg("file").arg(path.as_os_str()))
-            .expect("observe");
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("file")
+            .arg(path.as_os_str()),
+    )
+    .expect("observe");
 
     let expected = path.to_string_lossy();
     assert!(
@@ -104,8 +107,7 @@ fn captures_local_network_connect_destination() {
 
 #[test]
 fn backend_declares_scope_and_limitations() {
-    let observation =
-        observe_command(&CommandSpec::new(fixture()).arg("noop")).expect("observe");
+    let observation = observe_command(&CommandSpec::new(fixture()).arg("noop")).expect("observe");
     assert_eq!(observation.backend.name, "linux-ptrace-metadata-only");
     assert_eq!(observation.backend.architecture, "x86_64");
     assert!(!observation.backend.limitations.is_empty());

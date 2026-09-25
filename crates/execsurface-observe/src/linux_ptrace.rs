@@ -105,8 +105,7 @@ impl Collector {
 
 pub(super) fn observe(spec: &CommandSpec) -> Result<Observation, ObserveError> {
     let (program, argv) = spec.c_argv()?;
-    let mut argv_ptrs: Vec<*const libc::c_char> =
-        argv.iter().map(|arg| arg.as_ptr()).collect();
+    let mut argv_ptrs: Vec<*const libc::c_char> = argv.iter().map(|arg| arg.as_ptr()).collect();
     argv_ptrs.push(ptr::null());
 
     // SAFETY: after fork, the child uses only libc tracing/signal/exec/exit calls.
@@ -312,7 +311,13 @@ fn handle_syscall_entry(
         return;
     }
     if nr == libc::SYS_unlinkat {
-        record_file_path(tid, FileOperation::Delete, args[1], Some(args[2]), collector);
+        record_file_path(
+            tid,
+            FileOperation::Delete,
+            args[1],
+            Some(args[2]),
+            collector,
+        );
         return;
     }
     if nr == libc::SYS_rename {
@@ -377,21 +382,13 @@ fn record_rename(tid: libc::pid_t, from: u64, to: u64, collector: &mut Collector
     }
 }
 
-fn record_connect(
-    tid: libc::pid_t,
-    address: u64,
-    length: u64,
-    collector: &mut Collector,
-) {
+fn record_connect(tid: libc::pid_t, address: u64, length: u64, collector: &mut Collector) {
     let length = usize::try_from(length)
         .unwrap_or(MAX_SOCKADDR_BYTES)
         .min(MAX_SOCKADDR_BYTES);
 
     match read_memory(tid, address, length).and_then(|bytes| parse_sockaddr(&bytes)) {
-        Ok(endpoint) => collector.event(
-            tid,
-            RawEventKind::NetworkConnectAttempt { endpoint },
-        ),
+        Ok(endpoint) => collector.event(tid, RawEventKind::NetworkConnectAttempt { endpoint }),
         Err(error) => collector.warning(tid, "connect_target_unreadable", error.to_string()),
     }
 }
@@ -446,11 +443,7 @@ fn ptrace_call(
     }
 }
 
-fn read_c_string(
-    tid: libc::pid_t,
-    address: u64,
-    max_len: usize,
-) -> Result<String, ObserveError> {
+fn read_c_string(tid: libc::pid_t, address: u64, max_len: usize) -> Result<String, ObserveError> {
     if address == 0 {
         return Err(ObserveError::Protocol("null string pointer".to_owned()));
     }
@@ -475,11 +468,7 @@ fn read_c_string(
     )))
 }
 
-fn read_memory(
-    tid: libc::pid_t,
-    address: u64,
-    len: usize,
-) -> Result<Vec<u8>, ObserveError> {
+fn read_memory(tid: libc::pid_t, address: u64, len: usize) -> Result<Vec<u8>, ObserveError> {
     if address == 0 {
         return Err(ObserveError::Protocol("null memory pointer".to_owned()));
     }
