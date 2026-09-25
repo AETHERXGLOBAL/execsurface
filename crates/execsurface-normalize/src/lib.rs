@@ -236,6 +236,18 @@ fn build_root_rules(config: &NormalizationConfig) -> Result<Vec<RootRule>, Norma
         }
     }
 
+    if let Some(home) = roots.iter().find(|root| root.label == "home") {
+        for root in roots.iter().filter(|root| root.label != "home") {
+            if is_sensitive_path_under_home(&root.physical, &home.physical) {
+                return Err(NormalizeError::InvalidRoot {
+                    label: root.label.clone(),
+                    reason: "semantic roots may not shadow credential-sensitive paths under $HOME"
+                        .to_owned(),
+                });
+            }
+        }
+    }
+
     roots.sort_by(|left, right| {
         right
             .physical
@@ -331,7 +343,7 @@ fn root_suffix<'a>(path: &'a str, root: &str) -> Option<&'a str> {
         return Some("");
     }
     if root == "/" {
-        return path.strip_prefix('/');
+        return Some(path);
     }
     path.strip_prefix(root)
         .filter(|suffix| suffix.starts_with('/'))
@@ -348,6 +360,17 @@ fn classify_tokenized_path(value: &str, default: PathClass) -> PathClass {
         return PathClass::CredentialSensitive;
     }
     default
+}
+
+fn is_sensitive_path_under_home(path: &str, home: &str) -> bool {
+    root_suffix(path, home).is_some_and(|suffix| {
+        suffix == "/.ssh"
+            || suffix.starts_with("/.ssh/")
+            || suffix == "/.aws"
+            || suffix.starts_with("/.aws/")
+            || suffix == "/.config/gcloud"
+            || suffix.starts_with("/.config/gcloud/")
+    })
 }
 
 fn classify_absolute_path(path: &str) -> PathClass {
@@ -614,6 +637,18 @@ mod tests {
         );
         assert_eq!(path.value, "$HOME/.ssh/config");
         assert_eq!(path.class, PathClass::CredentialSensitive);
+    }
+
+    #[test]
+    fn semantic_root_cannot_shadow_credential_namespace() {
+        let mut config = config_a();
+        config
+            .caches
+            .insert("aws".to_owned(), "/home/runner/.aws".to_owned());
+        assert!(matches!(
+            canonicalize(&observation(vec![]), &config),
+            Err(NormalizeError::InvalidRoot { label, .. }) if label == "cache:aws"
+        ));
     }
 
     #[test]
