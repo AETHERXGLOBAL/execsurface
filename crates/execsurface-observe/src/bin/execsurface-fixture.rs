@@ -126,6 +126,18 @@ fn main() {
                 libc::close(fd);
             }
         }
+        Some("fault-path") => {
+            let result = unsafe {
+                libc::syscall(
+                    libc::SYS_openat,
+                    libc::AT_FDCWD,
+                    1_usize as *const libc::c_char,
+                    libc::O_RDONLY,
+                    0,
+                )
+            };
+            assert_eq!(result, -1);
+        }
         Some("network") => {
             let address = args.next().expect("socket address");
             let _stream = TcpStream::connect(address).expect("connect fixture listener");

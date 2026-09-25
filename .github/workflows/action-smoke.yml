@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "milestone/m6-github-action"
+      - "milestone/m6.5-semantic-fidelity"
   pull_request:
 
 permissions:

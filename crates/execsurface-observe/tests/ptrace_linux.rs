@@ -248,6 +248,19 @@ fn high_event_volume_remains_complete_under_default_budget() {
     let _ = fs::remove_dir_all(dir);
 }
 
+
+#[test]
+fn unreadable_path_metadata_fails_closed() {
+    let observation =
+        observe_command(&CommandSpec::new(fixture()).arg("fault-path")).expect("observe");
+
+    assert!(!observation.complete);
+    assert!(observation
+        .warnings
+        .iter()
+        .any(|warning| warning.code == "file_path_unreadable"));
+}
+
 #[test]
 fn captures_local_network_connect_destination() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
