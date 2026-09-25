@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### 2026-09-26 — M6.6 Public Self-Service & Distribution Gate accepted
+
+- promoted product version to `0.1.0-alpha.1` without changing evidence schema v2;
+- added `execsurface --version`, diagnostic `execsurface doctor`, and conservative `execsurface init`;
+- added product-first README, five-minute quickstart, troubleshooting, support, examples and adoption/integration templates;
+- established GitHub Release as the primary no-clone Linux x86_64 installation path;
+- published `execsurface-v0.1.0-alpha.1-x86_64-unknown-linux-gnu.tar.gz` plus SHA-256 checksum;
+- generated GitHub build-provenance attestation and verified it in the zero-contact consumer gate;
+- proved a fresh release-binary consumer can run version/doctor/learn/check and observe controlled REVIEW drift without source checkout;
+- proved fresh `cargo install --git ... --tag v0.1.0-alpha.1 ... --locked`;
+- deferred crates.io publishing after a packaging probe confirmed the internal workspace dependency graph should not be distorted merely to publish the CLI;
+- changed remote GitHub Action consumption to download and checksum-verify the pinned release binary while preserving source-build `uses: ./` for repository development;
+- promoted stable `AETHERXGLOBAL/execsurface@v0.1` only after immutable release, binary, Cargo and Action gates passed;
+- proved stable-channel PASS, REVIEW, BLOCK and ERROR behavior;
+- preserved failed release-promotion evidence caused by literal `\\n` release-tag bytes; the gate stopped before tag creation;
+- preserved release-page metadata and verifier failures caused by shell backtick substitution; fixes changed release notes/verification only and did not move tags or alter artifact bytes;
+- verified final public release source metadata, archive digest and current main CI;
+- retained Linux x86_64-only and `observed behavior ≠ all possible behavior` boundaries.
+
 ### 2026-09-26 — M6.5 Semantic Fidelity & Completeness Hardening accepted
 
 - upgraded raw observation, canonical surface, baseline lock/digest, diff and verdict contracts to v2 rather than silently changing v1 meaning;
