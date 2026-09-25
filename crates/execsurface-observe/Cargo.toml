@@ -1,0 +1,19 @@
+[package]
+name = "execsurface-observe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Linux metadata-only observer for AETHER X ExecSurface"
+
+[dependencies]
+execsurface-model = { path = "../execsurface-model" }
+libc.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[[bin]]
+name = "execsurface-fixture"
+path = "src/bin/execsurface-fixture.rs"

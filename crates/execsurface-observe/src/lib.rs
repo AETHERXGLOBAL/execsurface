@@ -1,0 +1,121 @@
+//! Minimal Linux observation backend.
+//!
+//! M1 is intentionally narrow. On Linux x86_64 the implementation uses
+//! ptrace and reads only selected metadata pointers. It never dereferences
+//! argv or envp.
+
+use std::ffi::{CString, OsStr, OsString};
+use std::fmt;
+use std::io;
+use std::os::unix::ffi::OsStrExt;
+use std::sync::Mutex;
+
+use execsurface_model::Observation;
+
+#[derive(Clone)]
+pub struct CommandSpec {
+    program: OsString,
+    args: Vec<OsString>,
+}
+
+impl CommandSpec {
+    pub fn new(program: impl Into<OsString>) -> Self {
+        Self {
+            program: program.into(),
+            args: Vec::new(),
+        }
+    }
+
+    pub fn arg(mut self, arg: impl Into<OsString>) -> Self {
+        self.args.push(arg.into());
+        self
+    }
+
+    pub fn args<I, S>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    fn c_argv(&self) -> Result<(CString, Vec<CString>), ObserveError> {
+        let program = cstring_from_os(&self.program)?;
+        let mut argv = Vec::with_capacity(self.args.len() + 1);
+        argv.push(cstring_from_os(&self.program)?);
+        for arg in &self.args {
+            argv.push(cstring_from_os(arg)?);
+        }
+        Ok((program, argv))
+    }
+}
+
+fn cstring_from_os(value: &OsStr) -> Result<CString, ObserveError> {
+    CString::new(value.as_bytes()).map_err(|_| {
+        ObserveError::InvalidCommand("command contains an interior NUL byte".to_owned())
+    })
+}
+
+#[derive(Debug)]
+pub enum ObserveError {
+    UnsupportedPlatform(&'static str),
+    InvalidCommand(String),
+    Os(io::Error),
+    Protocol(String),
+}
+
+impl fmt::Display for ObserveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedPlatform(message) => write!(f, "unsupported platform: {message}"),
+            Self::InvalidCommand(message) => write!(f, "invalid command: {message}"),
+            Self::Os(error) => write!(f, "observer OS error: {error}"),
+            Self::Protocol(message) => write!(f, "observer protocol error: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for ObserveError {}
+
+impl From<io::Error> for ObserveError {
+    fn from(value: io::Error) -> Self {
+        Self::Os(value)
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+mod linux_ptrace;
+
+static OBSERVE_LOCK: Mutex<()> = Mutex::new(());
+
+pub fn observe_command(spec: &CommandSpec) -> Result<Observation, ObserveError> {
+    let _session_guard = OBSERVE_LOCK.lock().map_err(|_| {
+        ObserveError::Protocol("observer session serialization lock was poisoned".to_owned())
+    })?;
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        linux_ptrace::observe(spec)
+    }
+
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    {
+        let _ = spec;
+        Err(ObserveError::UnsupportedPlatform(
+            "M1 supports Linux x86_64 only",
+        ))
+    }
+}
+
+#[cfg(test)]
+mod api_tests {
+    use super::*;
+    use std::os::unix::ffi::OsStringExt;
+
+    #[test]
+    fn invalid_command_metadata_returns_explicit_error() {
+        let invalid = OsString::from_vec(b"bad\0program".to_vec());
+        let result = observe_command(&CommandSpec::new(invalid));
+        assert!(matches!(result, Err(ObserveError::InvalidCommand(_))));
+    }
+}
