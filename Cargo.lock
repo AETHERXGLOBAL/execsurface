@@ -64,6 +64,7 @@ dependencies = [
  "execsurface-diff",
  "execsurface-model",
  "execsurface-policy",
+ "execsurface-report",
  "execsurface-normalize",
  "execsurface-observe",
  "serde_json",
@@ -85,6 +86,13 @@ dependencies = [
  "execsurface-diff",
  "execsurface-model",
  "serde",
+]
+
+[[package]]
+name = "execsurface-report"
+version = "0.0.1"
+dependencies = [
+ "execsurface-policy",
 ]
 
 [[package]]
