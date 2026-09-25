@@ -1,0 +1,16 @@
+[package]
+name = "execsurface-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "CLI for AETHER X ExecSurface"
+
+[[bin]]
+name = "execsurface"
+path = "src/main.rs"
+
+[dependencies]
+execsurface-observe = { path = "../execsurface-observe" }
+serde_json.workspace = true
