@@ -34,3 +34,11 @@ jobs:
 
       - name: Tests
         run: cargo test --workspace --all-targets
+
+      - name: Dependency lock evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-lock
+          path: Cargo.lock
+          if-no-files-found: error
+          retention-days: 7
