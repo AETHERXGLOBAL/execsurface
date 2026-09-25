@@ -104,8 +104,9 @@ jobs:
       - name: Prove repeated no-drift compatibility
         run: |
           set -euo pipefail
+          test -f m7-evidence/fd.lock.json
           for n in 1 2; do
-            "$EXECSURFACE_BIN" check               --json-output "m7-evidence/fd-pass-${n}.json"               --markdown-output "m7-evidence/fd-pass-${n}.md"               -- /bin/bash -lc               'cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
+            "$EXECSURFACE_BIN" check               --baseline m7-evidence/fd.lock.json               --json-output "m7-evidence/fd-pass-${n}.json"               --markdown-output "m7-evidence/fd-pass-${n}.md"               -- /bin/bash -lc               'cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
           done
 
           python - <<'PY'
@@ -120,7 +121,7 @@ jobs:
         run: |
           set -euo pipefail
           set +e
-          "$EXECSURFACE_BIN" check             --json-output m7-evidence/fd-controlled.json             --markdown-output m7-evidence/fd-controlled.md             -- /bin/bash -lc             'cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null; /usr/bin/sha256sum m7-fixture/alpha.txt >/dev/null'
+          "$EXECSURFACE_BIN" check             --baseline m7-evidence/fd.lock.json             --json-output m7-evidence/fd-controlled.json             --markdown-output m7-evidence/fd-controlled.md             -- /bin/bash -lc             'cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null; /usr/bin/sha256sum m7-fixture/alpha.txt >/dev/null'
           status=$?
           set -e
           test "$status" -eq 10
