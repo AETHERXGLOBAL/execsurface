@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### 2026-09-25 — M6 GitHub Action accepted
+
+- added root `action.yml` composite Action for Linux x86_64;
+- added source-build execution with locked Cargo dependencies;
+- added JSON verdict evidence and deterministic Markdown job summaries;
+- added immutable evidence artifact upload with artifact URL/digest outputs;
+- added PASS / REVIEW / BLOCK / ERROR workflow enforcement;
+- REVIEW is non-failing by default and can be enforced with `fail-on-review=true`;
+- passed Action smoke tests for PASS, REVIEW, enforced REVIEW, BLOCK and ERROR;
+- passed an Action-level argv privacy sentinel test for JSON and Markdown evidence;
+- passed adversarial Markdown escaping tests;
+- command input is transported through an environment variable and quoted argv to `/bin/bash -lc` rather than interpolated into generated shell source;
+- SARIF findings were killed/deferred because runtime effects do not yet prove causal repository source locations;
+- preserved the initial Action smoke failure and its correction.
+
+
 ### 2026-09-25 — M5 Policy / Verdict accepted
 
 - added `execsurface-policy` crate and policy schema v1;

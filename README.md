@@ -4,7 +4,7 @@
 
 Runtime execution-surface drift detection for software, CI pipelines, dependencies and AI tooling.
 
-> **Status:** M0–M5 are accepted. ExecSurface can observe, canonicalize, learn, diff, and evaluate an independent deterministic policy into PASS / REVIEW / BLOCK. M6 GitHub Action packaging has not started.
+> **Status:** M0–M6 are accepted. ExecSurface can observe, canonicalize, learn, diff, evaluate independent policy into PASS / REVIEW / BLOCK, and run as a GitHub composite Action with JSON/Markdown evidence artifacts.
 
 ExecSurface is a Linux-first developer tool for learning a content-addressed baseline of externally observable runtime effects, comparing a later run against it, and producing deterministic drift findings plus a policy-aware CI verdict.
 
@@ -27,7 +27,9 @@ CLASSIFY EXPANSION
   ↓
 VERDICT
   ↓
-REPORT / SARIF / EVIDENCE
+REPORT / EVIDENCE
+
+SARIF findings are intentionally deferred until ExecSurface can prove causal source-code locations; M6 does not invent file/line annotations from runtime-only evidence.
 ```
 
 Target CLI:
@@ -81,7 +83,34 @@ Current CLI:
 cargo run -p execsurface-cli -- observe -- /bin/true
 ```
 
-`learn` is implemented in M3, policy-free diffing in M4, and policy-aware `check` in M5. Use `--diff-only` to retain raw M4 behavior.
+`learn` is implemented in M3, policy-free diffing in M4, policy-aware `check` in M5, and GitHub Action packaging in M6. Use `--diff-only` to retain raw M4 behavior.
+
+## GitHub Action
+
+M6 provides a Linux x86_64 composite Action with read-only default permissions, a GitHub job summary, structured JSON evidence and an uploaded evidence artifact.
+
+```yaml
+permissions:
+  contents: read
+
+steps:
+  - uses: actions/checkout@v6
+
+  - name: ExecSurface
+    uses: AETHERXGLOBAL/execsurface@main
+    with:
+      command: "cargo test --locked"
+      baseline: execsurface.lock.json
+      policy: execsurface-policy.json
+```
+
+The Action executes the command as `/bin/bash -lc <command>`. The committed baseline must therefore be learned with the same wrapper, for example:
+
+```bash
+execsurface learn -- /bin/bash -lc 'cargo test --locked'
+```
+
+For production use, pin the Action to a reviewed release tag or commit SHA rather than a moving branch.
 
 See:
 - [M0 Architecture](docs/architecture/M0_ARCHITECTURE.md)

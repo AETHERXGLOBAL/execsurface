@@ -46,9 +46,13 @@ Evidence: `docs/milestones/M5_EVIDENCE.md`.
 
 ## M6 — GitHub Action
 
-**NOT STARTED**
+**CLOSED / ACCEPTED**
 
-PR summary, JSON, Markdown, semantically appropriate SARIF, evidence artifact.
+Linux x86_64 composite Action with deterministic JSON evidence, Markdown job summary, artifact upload, PASS/REVIEW/BLOCK/ERROR enforcement, configurable REVIEW failure and privacy smoke evidence.
+
+SARIF finding emission is **KILLED / DEFERRED for M6 v1** because current runtime evidence does not establish a causal repository source file/line. ExecSurface does not invent source locations for Code Scanning.
+
+Evidence: `docs/milestones/M6_EVIDENCE.md`.
 
 ## M7 — External Real-World Proof
 
