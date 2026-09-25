@@ -1,0 +1,76 @@
+name: M6.6 Distribution Probe
+
+on:
+  push:
+    branches:
+      - "milestone/m6.6-public-self-service"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  git-install:
+    name: Fresh cargo git install
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install from immutable commit without checkout
+        env:
+          REV: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/execsurface-install"
+          cargo install             --git https://github.com/AETHERXGLOBAL/execsurface.git             --rev "$REV"             execsurface-cli             --locked             --root "$root"
+          echo "$root/bin" >> "$GITHUB_PATH"
+
+      - name: Prove installed CLI identity and readiness
+        run: |
+          set -euo pipefail
+          execsurface --version
+          test "$(execsurface --version)" = "execsurface 0.1.0-alpha.1"
+          work="$RUNNER_TEMP/execsurface-consumer"
+          mkdir -p "$work"
+          cd "$work"
+          execsurface doctor
+
+      - name: Prove learn and no-drift check
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/execsurface-consumer"
+          cd "$work"
+          execsurface learn -- /bin/bash -lc true
+          execsurface check -- /bin/bash -lc true
+
+      - name: Prove controlled drift is visible
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/execsurface-consumer"
+          cd "$work"
+          set +e
+          output="$(execsurface check -- /bin/bash -lc 'true; /bin/echo drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 10
+          printf '%s\n' "$output"
+          grep -F "ExecSurface: REVIEW" <<<"$output"
+
+  crates-io-feasibility:
+    name: crates.io packaging decision
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Confirm current CLI package is intentionally not registry-ready
+        run: |
+          set -euo pipefail
+          set +e
+          cargo package -p execsurface-cli --allow-dirty --no-verify >package.stdout 2>package.stderr
+          status=$?
+          set -e
+          cat package.stdout
+          cat package.stderr >&2
+          test "$status" -ne 0
+          grep -Eiq 'must have a version|does not specify a version|path.*dependenc' package.stderr
+          echo "crates.io: DEFERRED — workspace registry chain is not being distorted for M6.6"
