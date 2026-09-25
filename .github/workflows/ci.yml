@@ -30,15 +30,12 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Tests
-        run: cargo test --workspace --all-targets
+        run: cargo test --locked --workspace --all-targets
 
-      - name: Dependency lock evidence
-        uses: actions/upload-artifact@v4
-        with:
-          name: cargo-lock
-          path: Cargo.lock
-          if-no-files-found: error
-          retention-days: 7
+      - name: Lockfile integrity
+        run: |
+          git diff --exit-code -- Cargo.lock
+          test -z "$(git status --porcelain -- Cargo.lock)"
