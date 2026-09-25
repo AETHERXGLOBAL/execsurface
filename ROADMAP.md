@@ -30,9 +30,11 @@ Evidence: `docs/milestones/M3_EVIDENCE.md`.
 
 ## M4 — Diff Engine
 
-**NOT STARTED**
+**CLOSED / ACCEPTED**
 
-Added/removed/changed canonical effects.
+Verified baseline ingestion, comparability gating, deterministic added/removed findings, conservative changed pairing, JSON/text reporting, and real `learn → check` integration are covered by CI.
+
+Evidence: `docs/milestones/M4_EVIDENCE.md`.
 
 ## M5 — Policy / Verdict
 

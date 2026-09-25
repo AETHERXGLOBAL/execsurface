@@ -5,9 +5,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use execsurface_baseline::{
-    build_lock, write_lockfile, BaselinePayload, CommandIdentity, ObserverIdentity,
-    PlatformIdentity, ToolIdentity, DEFAULT_LOCKFILE_NAME,
+    build_lock, parse_and_verify, write_lockfile, BaselinePayload, CommandIdentity,
+    ObserverIdentity, PlatformIdentity, ToolIdentity, DEFAULT_LOCKFILE_NAME,
 };
+use execsurface_diff::{diff, CandidateSnapshot, DiffReport};
 use execsurface_model::RawEventKind;
 use execsurface_normalize::{canonicalize, canonicalize_executable, NormalizationConfig};
 use execsurface_observe::{observe_command, CommandSpec};
@@ -31,6 +32,7 @@ fn run() -> Result<(), String> {
     match subcommand.to_string_lossy().as_ref() {
         "observe" => run_observe(&remaining),
         "learn" => run_learn(&remaining),
+        "check" => run_check(&remaining),
         _ => Err(usage("unknown subcommand")),
     }
 }
@@ -109,6 +111,107 @@ fn run_learn(args: &[OsString]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_check(args: &[OsString]) -> Result<(), String> {
+    let parsed = parse_check_args(args)?;
+    let baseline_bytes = std::fs::read(&parsed.baseline).map_err(|error| {
+        format!(
+            "cannot read baseline {}: {error}",
+            parsed.baseline.display()
+        )
+    })?;
+    let baseline = parse_and_verify(&baseline_bytes).map_err(|error| error.to_string())?;
+
+    let spec = CommandSpec::new(parsed.program.clone()).args(parsed.command_args.clone());
+    let observation = observe_command(&spec).map_err(|error| error.to_string())?;
+    let normalization = parsed.normalization_config()?;
+    let canonical_surface =
+        canonicalize(&observation, &normalization).map_err(|error| error.to_string())?;
+
+    let root_exec_path = observation
+        .events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            RawEventKind::ProcessExec { path } => Some((event.sequence, path)),
+            _ => None,
+        })
+        .min_by_key(|(sequence, _)| *sequence)
+        .map(|(_, path)| path)
+        .ok_or_else(|| "observer produced no confirmed root executable event".to_owned())?;
+
+    let executable = canonicalize_executable(root_exec_path, &normalization)
+        .map_err(|error| error.to_string())?;
+    let argument_count = u32::try_from(parsed.command_args.len())
+        .map_err(|_| "target argument count exceeds diff format".to_owned())?;
+
+    let candidate = CandidateSnapshot {
+        command: CommandIdentity {
+            executable,
+            argument_count,
+            label: baseline.payload.command.label.clone(),
+        },
+        platform: PlatformIdentity {
+            os: observation.backend.platform.clone(),
+            architecture: observation.backend.architecture.clone(),
+        },
+        observer: ObserverIdentity {
+            name: observation.backend.name.clone(),
+            capabilities: observation.backend.capabilities.clone(),
+            limitations: observation.backend.limitations.clone(),
+        },
+        canonical_surface,
+        target_exit_code: observation.outcome.exit_code,
+        target_signal: observation.outcome.signal,
+    };
+
+    let report = diff(&baseline, &candidate).map_err(|error| error.to_string())?;
+    if parsed.json {
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|error| format!("cannot serialize diff report: {error}"))?;
+        println!("{json}");
+    } else {
+        print_diff_report(&report)?;
+    }
+    Ok(())
+}
+
+fn print_diff_report(report: &DiffReport) -> Result<(), String> {
+    println!("ExecSurface diff");
+    println!("baseline: {}", report.baseline_digest);
+    println!(
+        "target: exit_code={:?} signal={:?}",
+        report.target.exit_code, report.target.signal
+    );
+    println!(
+        "drift: +{} -{} ~{}",
+        report.added.len(),
+        report.removed.len(),
+        report.changed.len()
+    );
+
+    for effect in &report.added {
+        println!(
+            "+ {}",
+            serde_json::to_string(effect)
+                .map_err(|error| format!("cannot serialize added effect: {error}"))?
+        );
+    }
+    for effect in &report.removed {
+        println!(
+            "- {}",
+            serde_json::to_string(effect)
+                .map_err(|error| format!("cannot serialize removed effect: {error}"))?
+        );
+    }
+    for effect in &report.changed {
+        println!(
+            "~ {}",
+            serde_json::to_string(effect)
+                .map_err(|error| format!("cannot serialize changed effect: {error}"))?
+        );
+    }
+    Ok(())
+}
+
 fn parse_observe_target(args: &[OsString]) -> Result<(OsString, Vec<OsString>), String> {
     if args.first().is_none_or(|arg| arg != "--") {
         return Err(usage("expected `--` before the target command"));
@@ -118,6 +221,102 @@ fn parse_observe_target(args: &[OsString]) -> Result<(OsString, Vec<OsString>), 
         .cloned()
         .ok_or_else(|| usage("missing target command after `--`"))?;
     Ok((program, args[2..].to_vec()))
+}
+
+struct CheckArgs {
+    baseline: PathBuf,
+    json: bool,
+    workspace: Option<String>,
+    home: Option<String>,
+    tmp_roots: Vec<String>,
+    run_tmp: Option<String>,
+    caches: BTreeMap<String, String>,
+    program: OsString,
+    command_args: Vec<OsString>,
+}
+
+impl CheckArgs {
+    fn normalization_config(&self) -> Result<NormalizationConfig, String> {
+        normalization_config(
+            self.workspace.clone(),
+            self.home.clone(),
+            self.tmp_roots.clone(),
+            self.run_tmp.clone(),
+            self.caches.clone(),
+        )
+    }
+}
+
+fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
+    let mut baseline = PathBuf::from(DEFAULT_LOCKFILE_NAME);
+    let mut json = false;
+    let mut workspace = None;
+    let mut home = None;
+    let mut tmp_roots = Vec::new();
+    let mut run_tmp = None;
+    let mut caches = BTreeMap::new();
+
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if arg == "--" {
+            let program = args
+                .get(index + 1)
+                .cloned()
+                .ok_or_else(|| usage("missing target command after `--`"))?;
+            return Ok(CheckArgs {
+                baseline,
+                json,
+                workspace,
+                home,
+                tmp_roots,
+                run_tmp,
+                caches,
+                program,
+                command_args: args[index + 2..].to_vec(),
+            });
+        }
+
+        match arg.to_string_lossy().as_ref() {
+            "--json" => {
+                json = true;
+                index += 1;
+            }
+            "--baseline" => {
+                baseline = PathBuf::from(option_value(args, index, "--baseline")?);
+                index += 2;
+            }
+            "--workspace" => {
+                workspace = Some(path_string(option_value(args, index, "--workspace")?));
+                index += 2;
+            }
+            "--home" => {
+                home = Some(path_string(option_value(args, index, "--home")?));
+                index += 2;
+            }
+            "--tmp" => {
+                tmp_roots.push(path_string(option_value(args, index, "--tmp")?));
+                index += 2;
+            }
+            "--run-tmp" => {
+                run_tmp = Some(path_string(option_value(args, index, "--run-tmp")?));
+                index += 2;
+            }
+            "--cache" => {
+                let value = path_string(option_value(args, index, "--cache")?);
+                let (name, path) = value
+                    .split_once('=')
+                    .ok_or_else(|| "--cache expects NAME=PATH".to_owned())?;
+                if caches.insert(name.to_owned(), path.to_owned()).is_some() {
+                    return Err(format!("duplicate cache name: {name}"));
+                }
+                index += 2;
+            }
+            other => return Err(usage(&format!("unknown check option: {other}"))),
+        }
+    }
+
+    Err(usage("expected `--` before the target command"))
 }
 
 struct LearnArgs {
@@ -135,40 +334,56 @@ struct LearnArgs {
 
 impl LearnArgs {
     fn normalization_config(&self) -> Result<NormalizationConfig, String> {
-        let cwd = env::current_dir()
-            .map_err(|error| format!("cannot determine current directory: {error}"))?;
-        let cwd = path_string(cwd.as_os_str());
-
-        let default_home = env::var_os("HOME").map(|value| path_string(&value));
-        let home = self.home.clone().or(default_home);
-
-        let workspace = match &self.workspace {
-            Some(path) => Some(path.clone()),
-            None if home.as_deref() == Some(cwd.as_str()) => None,
-            None => Some(cwd),
-        };
-
-        let tmp_roots = if self.tmp_roots.is_empty() {
-            let mut roots = Vec::new();
-            if let Some(tmpdir) = env::var_os("TMPDIR") {
-                roots.push(path_string(&tmpdir));
-            }
-            if !roots.iter().any(|root| root == "/tmp") {
-                roots.push("/tmp".to_owned());
-            }
-            roots
-        } else {
-            self.tmp_roots.clone()
-        };
-
-        Ok(NormalizationConfig {
-            workspace,
-            home,
-            tmp_roots,
-            run_tmp: self.run_tmp.clone(),
-            caches: self.caches.clone(),
-        })
+        normalization_config(
+            self.workspace.clone(),
+            self.home.clone(),
+            self.tmp_roots.clone(),
+            self.run_tmp.clone(),
+            self.caches.clone(),
+        )
     }
+}
+
+fn normalization_config(
+    workspace: Option<String>,
+    home: Option<String>,
+    tmp_roots: Vec<String>,
+    run_tmp: Option<String>,
+    caches: BTreeMap<String, String>,
+) -> Result<NormalizationConfig, String> {
+    let cwd = env::current_dir()
+        .map_err(|error| format!("cannot determine current directory: {error}"))?;
+    let cwd = path_string(cwd.as_os_str());
+
+    let default_home = env::var_os("HOME").map(|value| path_string(&value));
+    let home = home.or(default_home);
+
+    let workspace = match workspace {
+        Some(path) => Some(path),
+        None if home.as_deref() == Some(cwd.as_str()) => None,
+        None => Some(cwd),
+    };
+
+    let tmp_roots = if tmp_roots.is_empty() {
+        let mut roots = Vec::new();
+        if let Some(tmpdir) = env::var_os("TMPDIR") {
+            roots.push(path_string(&tmpdir));
+        }
+        if !roots.iter().any(|root| root == "/tmp") {
+            roots.push("/tmp".to_owned());
+        }
+        roots
+    } else {
+        tmp_roots
+    };
+
+    Ok(NormalizationConfig {
+        workspace,
+        home,
+        tmp_roots,
+        run_tmp,
+        caches,
+    })
 }
 
 fn parse_learn_args(args: &[OsString]) -> Result<LearnArgs, String> {
@@ -268,6 +483,15 @@ fn path_string(value: &OsStr) -> String {
 
 fn usage(error: &str) -> String {
     format!(
-        "{error}\n\nusage:\n  execsurface observe -- COMMAND [ARGS...]\n  execsurface learn [OPTIONS] -- COMMAND [ARGS...]\n\nlearn options:\n  --output PATH       output lockfile (default: execsurface.lock.json)\n  --overwrite         explicitly replace an existing lockfile\n  --label LABEL       privacy-safe logical command label\n  --workspace PATH    declared workspace root\n  --home PATH         declared home root\n  --tmp PATH          declared temp root; repeatable\n  --run-tmp PATH      declared run-specific temp root\n  --cache NAME=PATH   declared named cache root; repeatable"
+        "{error}\n\nusage:\n  execsurface observe -- COMMAND [ARGS...]\n  execsurface learn [OPTIONS] -- COMMAND [ARGS...]\n\nlearn options:\n  --output PATH       output lockfile (default: execsurface.lock.json)\n  --overwrite         explicitly replace an existing lockfile\n  --label LABEL       privacy-safe logical command label\n  --workspace PATH    declared workspace root\n  --home PATH         declared home root\n  --tmp PATH          declared temp root; repeatable\n  --run-tmp PATH      declared run-specific temp root\n  --cache NAME=PATH   declared named cache root; repeatable
+
+check options:
+  --baseline PATH     baseline lockfile (default: execsurface.lock.json)
+  --json              emit machine-readable JSON diff
+  --workspace PATH    declared workspace root
+  --home PATH         declared home root
+  --tmp PATH          declared temp root; repeatable
+  --run-tmp PATH      declared run-specific temp root
+  --cache NAME=PATH   declared named cache root; repeatable"
     )
 }

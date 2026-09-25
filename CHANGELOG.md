@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### 2026-09-25 — M4 Diff Engine accepted
+
+- added `execsurface-diff` crate;
+- added verified baseline-to-candidate comparison;
+- added explicit comparability gates for platform, observer capabilities, canonical schema, normalization profile/root labels and command identity;
+- added deterministic added/removed findings;
+- added conservative changed pairing that refuses ambiguous one-to-many or many-to-many pairing;
+- added `execsurface check` with text and JSON output;
+- kept drift policy-free: successful comparison exits 0 even when drift exists;
+- proved real `learn → check` no-drift behavior;
+- proved controlled process drift is surfaced;
+- proved corrupted baseline rejection and argv privacy in JSON reports;
+- preserved failed formatting CI evidence.
+
+
 ### 2026-09-25 — M3 Baseline Lock accepted
 
 - added `execsurface-baseline` crate and lock schema v1;
