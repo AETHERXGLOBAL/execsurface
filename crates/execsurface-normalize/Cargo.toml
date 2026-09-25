@@ -10,3 +10,7 @@ description = "Deterministic canonicalization for AETHER X ExecSurface"
 [dependencies]
 execsurface-model = { path = "../execsurface-model" }
 libc.workspace = true
+
+[dev-dependencies]
+execsurface-observe = { path = "../execsurface-observe" }
+serde_json.workspace = true

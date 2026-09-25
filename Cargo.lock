@@ -22,7 +22,9 @@ name = "execsurface-normalize"
 version = "0.0.1"
 dependencies = [
  "execsurface-model",
+ "execsurface-observe",
  "libc",
+ "serde_json",
 ]
 
 [[package]]
