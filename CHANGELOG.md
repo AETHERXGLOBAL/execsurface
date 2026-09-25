@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### 2026-09-25 — M5 Policy / Verdict accepted
+
+- added `execsurface-policy` crate and policy schema v1;
+- added independent ALLOW / REVIEW / BLOCK finding actions;
+- added PASS / REVIEW / BLOCK / ERROR verdict model;
+- built-in policy reviews unmatched drift rather than blocking by default;
+- made rule resolution order-independent with BLOCK > REVIEW > ALLOW;
+- ensured default action applies only when no rule matches;
+- ensured no drift is PASS even with a blocking default;
+- added matchers for change/effect/path class/path prefix/executable family/network IP/port;
+- made path-prefix matching component-boundary aware;
+- added stable exit codes: PASS=0, ERROR=2, REVIEW=10, BLOCK=20;
+- retained M4 policy-free behavior through `--diff-only`;
+- added policy JSON Schema and strict example policy;
+- preserved formatting and Clippy failure evidence.
+
+
 ### 2026-09-25 — M4 Diff Engine accepted
 
 - added `execsurface-diff` crate;
