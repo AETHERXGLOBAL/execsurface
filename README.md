@@ -4,7 +4,7 @@
 
 Runtime execution-surface drift detection for software, CI pipelines, dependencies and AI tooling.
 
-> **Status:** M0, M1 and M2 are accepted. The current implementation includes a minimal Linux x86_64 metadata-only observer plus deterministic canonicalization; M3 baseline locking has not started.
+> **Status:** M0–M3 are accepted. ExecSurface can observe Linux x86_64 metadata, canonicalize it deterministically, and create a content-addressed baseline lockfile. M4 candidate diff has not started.
 
 ExecSurface is a Linux-first developer tool for learning a content-addressed baseline of externally observable runtime effects, comparing a later run against it, and producing deterministic drift findings plus a policy-aware CI verdict.
 
@@ -75,13 +75,13 @@ ExecSurface is **not** an antivirus, EDR, malware detector, sandbox, or proof of
 
 M1 uses a **minimal native Linux ptrace observer** after the original strace-ingestion plan failed the privacy gate: decoded strace output can collect string syscall arguments before redaction. eBPF remains deferred until evidence shows a material benefit.
 
-Current M1 diagnostic CLI:
+Current CLI:
 
 ```bash
 cargo run -p execsurface-cli -- observe -- /bin/true
 ```
 
-`learn` and `check` remain future milestones. M1 emits raw observation evidence; M2 converts that evidence into a deterministic canonical execution surface using explicit semantic roots rather than heuristic wildcarding.
+`learn` is implemented in M3; `check` remains a future M4 milestone. M1 emits raw observation evidence, M2 canonicalizes it, and M3 writes a deterministic SHA-256-addressed `execsurface.lock.json` without storing full argv values.
 
 See:
 - [M0 Architecture](docs/architecture/M0_ARCHITECTURE.md)

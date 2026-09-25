@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### 2026-09-25 — M3 Baseline Lock accepted
+
+- added `execsurface-baseline` crate and lock schema v1;
+- added `execsurface learn -- COMMAND` with default `execsurface.lock.json` output;
+- froze digest-format v1 as SHA-256 over deterministic minified JSON excluding the digest field;
+- pinned `sha2 = 0.10.9` and generated Cargo.lock through GitHub Actions rather than manually inventing checksums;
+- added fixed serialization and SHA-256 test vectors;
+- added privacy-safe command identity using canonical executable, argument count and optional explicit label;
+- excluded full argv values from the lockfile and proved an argv sentinel is absent;
+- added atomic publication and explicit `--overwrite` semantics;
+- reject failed/signaled target commands without creating a baseline;
+- proved repeat learning produces byte-identical lockfiles for a controlled command;
+- proved a controlled canonical effect change changes the baseline digest;
+- added JSON Schema for lockfile v1;
+- preserved M3 bootstrap and CI failures in the evidence ledger.
+
+
 ### 2026-09-25 — M2 Canonicalization accepted
 
 - added backend-independent canonical execution-surface model;
