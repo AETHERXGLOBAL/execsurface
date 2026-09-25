@@ -1,0 +1,76 @@
+name: Repair ExecSurface Release Metadata
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".release/release-metadata-fix.json"
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    name: Verify immutable identity and repair release notes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Verify request and immutable tag identity
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(python -c 'import json; print(json.load(open(".release/release-metadata-fix.json"))["tag"])')"
+          expected_commit="$(python -c 'import json; print(json.load(open(".release/release-metadata-fix.json"))["source_commit"])')"
+          release_run="$(python -c 'import json; print(json.load(open(".release/release-metadata-fix.json"))["release_run"])')"
+
+          git fetch --tags --force
+          actual_commit="$(git rev-list -n1 "$tag")"
+          test "$actual_commit" = "$expected_commit"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "source_commit=$actual_commit" >> "$GITHUB_OUTPUT"
+          echo "release_run=$release_run" >> "$GITHUB_OUTPUT"
+
+      - name: Repair release notes only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.identity.outputs.tag }}
+          SOURCE_COMMIT: ${{ steps.identity.outputs.source_commit }}
+          RELEASE_RUN: ${{ steps.identity.outputs.release_run }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/release-notes.md"
+          cat "docs/releases/$TAG.md" > "$notes"
+
+          archive="execsurface-${TAG}-x86_64-unknown-linux-gnu.tar.gz"
+          digest="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq ".assets[] | select(.name==\"$archive\") | .digest")"
+          test -n "$digest"
+
+          {
+            echo
+            printf 'Source commit: `%s`\n' "$SOURCE_COMMIT"
+            echo
+            echo "Build workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN"
+            echo
+            printf 'Release archive digest: `%s`\n' "$digest"
+          } >> "$notes"
+
+          gh release edit "$TAG" --prerelease --title "ExecSurface $TAG" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
+
+      - name: Verify repaired public metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.identity.outputs.tag }}
+          SOURCE_COMMIT: ${{ steps.identity.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          body="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+          grep -F "Source commit: `$SOURCE_COMMIT`" <<<"$body"
+          grep -F "Release archive digest: `sha256:" <<<"$body"
