@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "milestone/m6.6-public-self-service"
+      - "milestone/m6.6-public-self-service-*"
   pull_request:
 
 permissions:
@@ -86,7 +87,9 @@ jobs:
       - name: Build and package Linux x86_64 bundle
         run: |
           set -euo pipefail
-          tag="v0.1.0-alpha.1"
+          tag="$(cat action/release-tag.txt)"
+          test "$tag" = "v0.1.0-alpha.1"
+          test "$(printf '%s' "$tag" | wc -c)" -eq 16
           target="x86_64-unknown-linux-gnu"
           dir="dist/execsurface-${tag}-${target}"
           archive="execsurface-${tag}-${target}.tar.gz"

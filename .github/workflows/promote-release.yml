@@ -27,11 +27,16 @@ jobs:
           requested_version="$(python -c 'import json; print(json.load(open(".release/release-request.json"))["version"])')"
           requested_tag="$(python -c 'import json; print(json.load(open(".release/release-request.json"))["tag"])')"
           stable_channel="$(python -c 'import json; print(json.load(open(".release/release-request.json"))["stable_channel"])')"
+          request_revision="$(python -c 'import json; print(json.load(open(".release/release-request.json")).get("request_revision", 1))')"
           package_version="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="execsurface-cli"))')"
+          release_tag_file="$(cat action/release-tag.txt)"
+
+          printf 'release request: version=%s tag=%s stable=%s revision=%s\n' "$requested_version" "$requested_tag" "$stable_channel" "$request_revision"
+          printf 'source identity: package=%s release_tag_file=%s\n' "$package_version" "$release_tag_file"
 
           test "$requested_version" = "$package_version"
           test "$requested_tag" = "v$package_version"
-          test "$requested_tag" = "$(tr -d '[:space:]' < action/release-tag.txt)"
+          test "$requested_tag" = "$release_tag_file"
           test "$stable_channel" = "v0.1"
 
           cargo fmt --all -- --check

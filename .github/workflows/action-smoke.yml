@@ -6,6 +6,7 @@ on:
       - "milestone/m6-github-action"
       - "milestone/m6.5-semantic-fidelity"
       - "milestone/m6.6-public-self-service"
+      - "milestone/m6.6-public-self-service-*"
   pull_request:
 
 permissions:
