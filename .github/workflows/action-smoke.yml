@@ -5,6 +5,7 @@ on:
     branches:
       - "milestone/m6-github-action"
       - "milestone/m6.5-semantic-fidelity"
+      - "milestone/m6.6-public-self-service"
   pull_request:
 
 permissions:
@@ -16,7 +17,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build baseline learner
         run: cargo build --locked -p execsurface-cli --bin execsurface
@@ -48,7 +49,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build baseline learner
         run: cargo build --locked -p execsurface-cli --bin execsurface
@@ -77,7 +78,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build baseline learner
         run: cargo build --locked -p execsurface-cli --bin execsurface
@@ -129,7 +130,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Run local Action against missing baseline
         id: execsurface
@@ -156,7 +157,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build baseline learner
         run: cargo build --locked -p execsurface-cli --bin execsurface
@@ -189,7 +190,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Build baseline learner
         run: cargo build --locked -p execsurface-cli --bin execsurface

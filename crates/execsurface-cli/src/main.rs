@@ -1,3 +1,5 @@
+mod self_service;
+
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -35,6 +37,20 @@ fn run() -> Result<ExitCode, String> {
     let remaining: Vec<OsString> = args.collect();
 
     match subcommand.to_string_lossy().as_ref() {
+        "--version" | "-V" | "version" => {
+            println!("execsurface {}", env!("CARGO_PKG_VERSION"));
+            Ok(ExitCode::SUCCESS)
+        }
+        "--help" | "-h" | "help" => {
+            println!("ExecSurface {}", env!("CARGO_PKG_VERSION"));
+            println!("{}", usage(""));
+            Ok(ExitCode::SUCCESS)
+        }
+        "doctor" => Ok(self_service::run_doctor()),
+        "init" => {
+            self_service::run_init(&remaining)?;
+            Ok(ExitCode::SUCCESS)
+        }
         "observe" => {
             run_observe(&remaining)?;
             Ok(ExitCode::SUCCESS)

@@ -1,0 +1,80 @@
+name: Adoption / Integration
+description: Evaluate ExecSurface against a real Linux x86_64 project or CI workflow
+title: "[Adoption] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing ExecSurface. Do **not** include secrets, tokens, private keys, confidential file contents or sensitive private paths.
+
+        ExecSurface reports observed execution-surface drift. It does not prove that a program is safe.
+
+  - type: input
+    id: repository
+    attributes:
+      label: Repository URL
+      description: Public repository URL if it can be shared.
+      placeholder: https://github.com/owner/repository
+    validations:
+      required: false
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      description: The command you want to baseline/check. Remove secrets.
+      placeholder: cargo test --locked
+    validations:
+      required: true
+
+  - type: textarea
+    id: linux
+    attributes:
+      label: Linux environment
+      description: Distribution, kernel, x86_64 runner/host, container details if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Execution behavior you want to monitor
+      description: Process, file, network or dependency behavior that makes runtime drift useful here.
+    validations:
+      required: true
+
+  - type: textarea
+    id: baseline
+    attributes:
+      label: Baseline use case
+      description: What accepted run would form the baseline, and when would it be reviewed/relearned?
+    validations:
+      required: true
+
+  - type: input
+    id: ci
+    attributes:
+      label: CI provider
+      placeholder: GitHub Actions / other / local only
+    validations:
+      required: true
+
+  - type: dropdown
+    id: sensitive
+    attributes:
+      label: Could runtime paths or metadata be sensitive?
+      options:
+        - "Yes — I will redact before posting"
+        - "No known sensitive paths"
+        - "Unsure — I will minimize shared evidence"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Public-data confirmation
+      options:
+        - label: I have removed secrets and confidential data from this issue.
+          required: true

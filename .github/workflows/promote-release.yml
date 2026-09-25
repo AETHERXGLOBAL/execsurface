@@ -1,0 +1,66 @@
+name: Promote ExecSurface Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".release/release-request.json"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  promote:
+    name: Verify and create immutable release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Verify release request and full source gates
+        id: verify
+        run: |
+          set -euo pipefail
+          requested_version="$(python -c 'import json; print(json.load(open(".release/release-request.json"))["version"])')"
+          requested_tag="$(python -c 'import json; print(json.load(open(".release/release-request.json"))["tag"])')"
+          stable_channel="$(python -c 'import json; print(json.load(open(".release/release-request.json"))["stable_channel"])')"
+          package_version="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="execsurface-cli"))')"
+
+          test "$requested_version" = "$package_version"
+          test "$requested_tag" = "v$package_version"
+          test "$requested_tag" = "$(tr -d '[:space:]' < action/release-tag.txt)"
+          test "$stable_channel" = "v0.1"
+
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace --all-targets
+          git diff --exit-code -- Cargo.lock
+          test -z "$(git status --porcelain -- Cargo.lock)"
+
+          echo "tag=$requested_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create immutable version tag
+        env:
+          TAG: ${{ steps.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            test "$(git rev-list -n1 "$TAG")" = "$GITHUB_SHA"
+          else
+            git tag -a "$TAG" "$GITHUB_SHA" -m "ExecSurface $TAG"
+            git push origin "refs/tags/$TAG"
+          fi
+
+      - name: Explicitly dispatch release workflow at immutable tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          echo "Dispatched release.yml at $TAG"

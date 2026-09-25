@@ -1,0 +1,345 @@
+name: Release ExecSurface
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build, attest and publish
+    if: ${{ github.ref_type == 'tag' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    outputs:
+      tag: ${{ steps.identity.outputs.tag }}
+      version: ${{ steps.identity.outputs.version }}
+      asset: ${{ steps.bundle.outputs.asset }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag, version and source lineage
+        id: identity
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          version="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="execsurface-cli"))')"
+          test "$tag" = "v$version"
+          test "$tag" = "$(tr -d '[:space:]' < action/release-tag.txt)"
+          git fetch origin main --depth=100
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Full release gates
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace --all-targets
+          git diff --exit-code -- Cargo.lock
+          test -z "$(git status --porcelain -- Cargo.lock)"
+
+      - name: Build release binary and smoke it
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p execsurface-cli --bin execsurface
+          test "$(./target/release/execsurface --version)" = "execsurface ${{ steps.identity.outputs.version }}"
+          work="$RUNNER_TEMP/release-smoke"
+          mkdir -p "$work"
+          (
+            cd "$work"
+            "$GITHUB_WORKSPACE/target/release/execsurface" doctor
+            "$GITHUB_WORKSPACE/target/release/execsurface" learn -- /bin/bash -lc true
+            "$GITHUB_WORKSPACE/target/release/execsurface" check -- /bin/bash -lc true
+          )
+
+      - name: Create release bundle and checksum
+        id: bundle
+        run: |
+          set -euo pipefail
+          tag="${{ steps.identity.outputs.tag }}"
+          version="${{ steps.identity.outputs.version }}"
+          target="x86_64-unknown-linux-gnu"
+          dirname="execsurface-${tag}-${target}"
+          asset="${dirname}.tar.gz"
+          mkdir -p "dist/$dirname"
+          cp target/release/execsurface "dist/$dirname/execsurface"
+          cp LICENSE NOTICE "dist/$dirname/"
+          {
+            echo "ExecSurface $tag"
+            echo "product_version=$version"
+            echo "target=$target"
+            echo "source_commit=$GITHUB_SHA"
+            echo "build_workflow=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "evidence_schema=v2"
+          } > "dist/$dirname/BUILD_INFO.txt"
+          tar -C dist -czf "dist/$asset" "$dirname"
+          (cd dist && sha256sum "$asset" > "$asset.sha256")
+          (cd dist && sha256sum -c "$asset.sha256")
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+          echo "archive=$GITHUB_WORKSPACE/dist/$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Generate GitHub build provenance attestation
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: ${{ steps.bundle.outputs.archive }}
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.identity.outputs.tag }}
+          ASSET: ${{ steps.bundle.outputs.asset }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/release-notes.md"
+          cat "docs/releases/$TAG.md" > "$notes"
+          {
+            echo
+            echo "Source commit: `$GITHUB_SHA`"
+            echo
+            echo "Build workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } >> "$notes"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$TAG" --prerelease --title "ExecSurface $TAG" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" \
+              --verify-tag --prerelease --title "ExecSurface $TAG" --notes-file "$notes" \
+              --repo "$GITHUB_REPOSITORY"
+          fi
+
+  binary-consumer:
+    name: Zero-contact release binary consumer
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Download public release without source checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+          ASSET: ${{ needs.release.outputs.asset }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/consumer"
+          cd "$RUNNER_TEMP/consumer"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ASSET" --pattern "$ASSET.sha256"
+          sha256sum -c "$ASSET.sha256"
+          gh attestation verify "$ASSET" -R "$GITHUB_REPOSITORY"
+          tar -xzf "$ASSET"
+          bin="$PWD/execsurface-${TAG}-x86_64-unknown-linux-gnu/execsurface"
+          echo "EXECSURFACE_CONSUMER_BIN=$bin" >> "$GITHUB_ENV"
+
+      - name: Prove version doctor learn check and controlled drift
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          test "$("$EXECSURFACE_CONSUMER_BIN" --version)" = "execsurface $version"
+          work="$RUNNER_TEMP/consumer-work"
+          mkdir -p "$work"
+          cd "$work"
+          "$EXECSURFACE_CONSUMER_BIN" doctor
+          "$EXECSURFACE_CONSUMER_BIN" learn -- /bin/bash -lc true
+          "$EXECSURFACE_CONSUMER_BIN" check -- /bin/bash -lc true
+          set +e
+          output="$("$EXECSURFACE_CONSUMER_BIN" check -- /bin/bash -lc 'true; /bin/echo drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 10
+          grep -F "ExecSurface: REVIEW" <<<"$output"
+
+  cargo-tag-consumer:
+    name: Fresh cargo install from immutable tag
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install without checkout
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/cargo-install"
+          cargo install \
+            --git https://github.com/AETHERXGLOBAL/execsurface.git \
+            --tag "$TAG" \
+            execsurface-cli --locked --root "$root"
+          test "$("$root/bin/execsurface" --version)" = "execsurface $VERSION"
+
+  immutable-action-consumer:
+    name: Immutable Action consumer
+    needs: [release, binary-consumer]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Download CLI only to learn consumer baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+          ASSET: ${{ needs.release.outputs.asset }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/action-consumer"
+          cd "$RUNNER_TEMP/action-consumer"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ASSET" --pattern "$ASSET.sha256"
+          sha256sum -c "$ASSET.sha256"
+          tar -xzf "$ASSET"
+          bin="$PWD/execsurface-${TAG}-x86_64-unknown-linux-gnu/execsurface"
+          echo "PATH=$(dirname "$bin"):$PATH" >> "$GITHUB_ENV"
+
+      - name: Learn baseline
+        run: execsurface learn --output "$GITHUB_WORKSPACE/immutable.lock.json" -- /bin/bash -lc true
+
+      - name: Prove immutable Action tag
+        id: immutable
+        uses: AETHERXGLOBAL/execsurface@v0.1.0-alpha.1
+        with:
+          command: "true"
+          baseline: immutable.lock.json
+          upload-artifact: "false"
+
+      - name: Assert immutable Action PASS
+        env:
+          VERDICT: ${{ steps.immutable.outputs.verdict }}
+        run: test "$VERDICT" = "pass"
+
+  promote-stable:
+    name: Promote stable v0.1 channel
+    needs: [release, binary-consumer, cargo-tag-consumer, immutable-action-consumer]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Move v0.1 only after release gates
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          test "$TAG" = "v0.1.0-alpha.1"
+          release_sha="$(git rev-list -n1 "$TAG")"
+          test "$release_sha" = "$GITHUB_SHA"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa v0.1 "$release_sha" -m "ExecSurface stable v0.1 channel -> $TAG"
+          git push origin refs/tags/v0.1 --force
+
+  stable-action-consumer:
+    name: Stable @v0.1 zero-contact Action proof
+    needs: [release, promote-stable]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Install release binary for baseline preparation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+          ASSET: ${{ needs.release.outputs.asset }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stable-consumer"
+          cd "$RUNNER_TEMP/stable-consumer"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ASSET" --pattern "$ASSET.sha256"
+          sha256sum -c "$ASSET.sha256"
+          tar -xzf "$ASSET"
+          bin="$PWD/execsurface-${TAG}-x86_64-unknown-linux-gnu/execsurface"
+          echo "PATH=$(dirname "$bin"):$PATH" >> "$GITHUB_ENV"
+
+      - name: Prepare baselines and blocking policy
+        run: |
+          set -euo pipefail
+          execsurface learn --output pass.lock.json -- /bin/bash -lc true
+          cp pass.lock.json review.lock.json
+          cp pass.lock.json block.lock.json
+          cat > block-policy.json <<'JSON'
+          {
+            "schema_version": 2,
+            "default_action": "review",
+            "rules": [
+              {
+                "id": "block-added-exec",
+                "action": "block",
+                "match": {
+                  "change": "added",
+                  "effect": "process_exec"
+                }
+              }
+            ]
+          }
+          JSON
+
+      - name: Stable PASS
+        id: pass
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "true"
+          baseline: pass.lock.json
+          upload-artifact: "false"
+
+      - name: Stable REVIEW
+        id: review
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "true; /bin/echo x >/dev/null"
+          baseline: review.lock.json
+          upload-artifact: "false"
+
+      - name: Stable BLOCK
+        id: block
+        continue-on-error: true
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "true; /bin/echo x >/dev/null"
+          baseline: block.lock.json
+          policy: block-policy.json
+          upload-artifact: "false"
+
+      - name: Stable ERROR
+        id: error
+        continue-on-error: true
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "true"
+          baseline: missing.lock.json
+          upload-artifact: "false"
+
+      - name: Assert stable channel semantics
+        env:
+          PASS_VERDICT: ${{ steps.pass.outputs.verdict }}
+          REVIEW_VERDICT: ${{ steps.review.outputs.verdict }}
+          BLOCK_VERDICT: ${{ steps.block.outputs.verdict }}
+          BLOCK_OUTCOME: ${{ steps.block.outcome }}
+          ERROR_VERDICT: ${{ steps.error.outputs.verdict }}
+          ERROR_OUTCOME: ${{ steps.error.outcome }}
+        run: |
+          set -euo pipefail
+          test "$PASS_VERDICT" = "pass"
+          test "$REVIEW_VERDICT" = "review"
+          test "$BLOCK_VERDICT" = "block"
+          test "$BLOCK_OUTCOME" = "failure"
+          test "$ERROR_VERDICT" = "error"
+          test "$ERROR_OUTCOME" = "failure"

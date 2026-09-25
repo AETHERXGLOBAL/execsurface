@@ -1,19 +1,167 @@
-# AETHER X ExecSurface
+<p align="center"><strong>AETHER X GLOBAL</strong></p>
 
-**Code diff shows what changed. ExecSurface shows what started happening.**
+# ExecSurface
 
-Runtime execution-surface drift detection for software, CI pipelines, dependencies and AI tooling.
+<p align="center"><strong>Code diff shows what changed. ExecSurface shows what started happening.</strong></p>
 
-> **Status:** M0–M6.5 are accepted. ExecSurface can observe, canonicalize, learn, diff, evaluate independent policy into PASS / REVIEW / BLOCK, and run as a GitHub composite Action with JSON/Markdown evidence artifacts. M6.5 hardens the Linux observer with actual fd-attributed read/write evidence, causal execution chains, fail-closed truncation and versioned v2 contracts.
+<p align="center">
+  <a href="https://github.com/AETHERXGLOBAL/execsurface/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/AETHERXGLOBAL/execsurface/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/AETHERXGLOBAL/execsurface/releases"><img alt="Release" src="https://img.shields.io/github/v/release/AETHERXGLOBAL/execsurface?include_prereleases&label=release"></a>
+  <img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue">
+  <img alt="Rust 1.82+" src="https://img.shields.io/badge/Rust-1.82%2B-orange">
+  <img alt="Linux x86_64" src="https://img.shields.io/badge/platform-Linux%20x86__64-informational">
+  <img alt="Public Alpha" src="https://img.shields.io/badge/status-Public%20Alpha-yellow">
+</p>
 
-ExecSurface is a Linux-first developer tool for learning a content-addressed baseline of externally observable runtime effects, comparing a later run against it, and producing deterministic drift findings plus a policy-aware CI verdict.
+ExecSurface is a Linux-first developer tool that learns an accepted **runtime execution surface**, runs the same command later, and reports what execution behavior appeared, disappeared, or changed.
 
-## Target workflow
+It is designed for software, CI pipelines, dependencies, developer tools and AI tooling where code review alone does not show every runtime effect.
+
+> **Public Alpha:** Linux x86_64 only. Current product version: **0.1.0-alpha.1**.
+
+### The idea in 10 seconds
+
+Illustrative strict-policy output:
+
+```text
+Tests: PASS
+
+ExecSurface: BLOCK
+
++ EXEC     /usr/bin/curl
++ NETWORK  203.0.113.12:443
++ READ     $HOME/.ssh/config
+```
+
+ExecSurface does **not** infer that this is malicious. It reports observed drift and applies the policy you chose.
+
+## Quickstart
+
+### 1. Install the public alpha — no source clone
+
+```bash
+VERSION=v0.1.0-alpha.1
+TARGET=x86_64-unknown-linux-gnu
+ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
+
+curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}"
+curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}.sha256"
+
+sha256sum -c "${ASSET}.sha256"
+tar -xzf "${ASSET}"
+
+mkdir -p "$HOME/.local/bin"
+install -m 0755 "execsurface-${VERSION}-${TARGET}/execsurface" "$HOME/.local/bin/execsurface"
+export PATH="$HOME/.local/bin:$PATH"
+
+execsurface --version
+```
+
+Optional provenance verification with GitHub CLI:
+
+```bash
+gh attestation verify "$ASSET" -R AETHERXGLOBAL/execsurface
+```
+
+A valid attestation links the artifact to its GitHub build provenance. It does **not** prove the binary is safe.
+
+### 2. Check environment readiness
+
+```bash
+execsurface doctor
+```
+
+Expected on a supported environment:
+
+```text
+ExecSurface Doctor
+
+[PASS] Linux
+[PASS] x86_64
+[PASS] ptrace observer available
+[PASS] workspace writable
+[PASS] ExecSurface 0.1.0-alpha.1
+
+Ready.
+```
+
+`doctor` is diagnostic only. It does not elevate privileges, change sysctls, or weaken host security settings.
+
+### 3. Create conservative starter files
+
+Replace the command with your real project command:
+
+```bash
+execsurface init --command "cargo test --locked" --github-actions
+```
+
+This creates a starter policy and GitHub Actions workflow. It **does not run your command** and does not create a baseline automatically.
+
+### 4. Learn an explicit baseline
+
+The GitHub Action executes its input as `/bin/bash -lc <command>`. Learn locally with the same wrapper:
+
+```bash
+execsurface learn --   /bin/bash -lc 'cargo test --locked'
+```
+
+Review `execsurface.lock.json` before committing it.
+
+### 5. Check the same command
+
+```bash
+execsurface check   --policy execsurface-policy.json   -- /bin/bash -lc 'cargo test --locked'
+```
+
+For a five-minute controlled drift demonstration, see **[Five-Minute Start](docs/QUICKSTART_5_MIN.md)**.
+
+## Cargo fallback
+
+A source clone is not required:
+
+```bash
+cargo install   --git https://github.com/AETHERXGLOBAL/execsurface.git   --tag v0.1.0-alpha.1   execsurface-cli   --locked
+```
+
+This fallback is tested from a fresh runner. crates.io publishing is intentionally deferred for the public alpha; the workspace is not being distorted merely to publish a registry name.
+
+## GitHub Actions
+
+Use the stable **v0.1** channel, not `@main`:
+
+```yaml
+permissions:
+  contents: read
+
+steps:
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+  - name: ExecSurface
+    uses: AETHERXGLOBAL/execsurface@v0.1
+    with:
+      command: cargo test --locked
+      baseline: execsurface.lock.json
+      policy: execsurface-policy.json
+```
+
+The public Action downloads the pinned ExecSurface release binary and verifies its SHA-256 checksum. Local `uses: ./` development continues to build from source.
+
+See **[GitHub Action guide](docs/GITHUB_ACTION.md)**.
+
+## Why runtime drift?
+
+A source diff can tell you that a dependency version changed. It cannot by itself tell you whether the new runtime now:
+
+- spawns another executable;
+- reads another file;
+- writes to a new location;
+- connects to another destination;
+- changes the process chain that produced an effect.
+
+ExecSurface records selected metadata-only runtime effects, canonicalizes unstable machine details, locks an accepted baseline, compares a later run, and evaluates an independent policy.
 
 ```text
 OBSERVE
-  ↓
-NORMALIZE
   ↓
 CANONICALIZE
   ↓
@@ -23,109 +171,115 @@ RUN AGAIN
   ↓
 DIFF
   ↓
-CLASSIFY EXPANSION
+POLICY
   ↓
-VERDICT
+PASS / REVIEW / BLOCK / ERROR
   ↓
-REPORT / EVIDENCE
-
-SARIF findings are intentionally deferred until ExecSurface can prove causal source-code locations; M6 does not invent file/line annotations from runtime-only evidence.
+JSON + Markdown evidence
 ```
 
-Target CLI:
+## What is observed
 
-```bash
-execsurface learn -- python -m pytest
-execsurface check -- python -m pytest
-```
+The current Linux x86_64 ptrace reference backend can produce evidence for:
 
-Illustrative future report:
+- descendant process spawn/exec;
+- pathname access attempts;
+- successful-open file descriptor identity;
+- actual fd-attributed read/write effects for the covered syscalls;
+- rename/delete operations in the covered syscall set;
+- network connect destinations;
+- trace-time relative/openat/openat2 path semantics;
+- causal executable chains;
+- explicit observer incompleteness.
 
-```text
-Tests: PASS
+M6.5 added fail-closed event-budget truncation and fault-injection coverage. Incomplete evidence cannot silently become PASS.
 
-ExecSurface: BLOCK
+## Security boundary
 
-+ EXEC    /usr/bin/curl
-+ NETWORK 203.0.113.12:443
-+ READ    ~/.ssh/config
-```
+ExecSurface is **not**:
 
-## Core distinction
+- an antivirus;
+- an EDR;
+- a malware detector;
+- a sandbox;
+- a proof of program safety.
 
-A tracer emits observations. ExecSurface starts there and adds a stable, reviewable model:
-
-```text
-raw observation
-→ canonical execution surface
-→ content-addressed baseline
-+ independent policy
-→ deterministic drift
-→ verdict + evidence
-```
-
-## Explicit security boundary
-
-ExecSurface is **not** an antivirus, EDR, malware detector, sandbox, or proof of program safety.
+The governing statements remain:
 
 - **NO EXECUTION-SURFACE DRIFT ≠ PROGRAM IS SAFE**
 - **OBSERVED BEHAVIOR ≠ ALL POSSIBLE BEHAVIOR**
-- **NO OBSERVED NETWORK ≠ PROOF THAT NETWORK ACCESS IS IMPOSSIBLE**
+- **NO OBSERVED NETWORK ≠ NETWORK ACCESS IS IMPOSSIBLE**
 - **TRACE COMPLETENESS DEPENDS ON THE OBSERVATION BACKEND**
 
-## M0 decision
+The default evidence boundary excludes file contents, environment values, stdin, network payloads and full child argv values.
 
-M1 uses a **minimal native Linux ptrace observer** after the original strace-ingestion plan failed the privacy gate: decoded strace output can collect string syscall arguments before redaction. M6.5 keeps ptrace as the **reference correctness backend** after measuring it directly; an eBPF fast-path remains conditional on real external-workload evidence rather than being introduced speculatively.
+See **[Security Policy](SECURITY.md)** and **[Troubleshooting](docs/TROUBLESHOOTING.md)**.
 
-Current CLI:
+## Baseline is not policy
+
+ExecSurface deliberately keeps these separate.
+
+The baseline answers:
+
+> What canonical execution surface was accepted?
+
+The policy answers:
+
+> What drift should be allowed, reviewed or blocked?
+
+A new baseline is not automatically an approval decision.
+
+## Exit codes
+
+| Result | Exit code | Meaning |
+|---|---:|---|
+| PASS | 0 | comparison/evaluation completed with no review/block finding |
+| ERROR | 2 | evidence/comparison/policy could not be established |
+| REVIEW | 10 | one or more findings require review |
+| BLOCK | 20 | one or more findings matched blocking policy |
+
+## Looking for early adopters
+
+ExecSurface public alpha is most relevant to teams experimenting with:
+
+- dependency-update CI;
+- build and test pipelines;
+- developer tools;
+- AI tooling that launches subprocesses;
+- security-sensitive automation.
+
+We are looking for compatibility evidence and workflow feedback, not testimonials.
+
+ExecSurface detects **observed execution-surface drift under its recorded observer and policy**. It does not prove that a program is safe.
+
+Use the **[Adoption / Integration issue template](https://github.com/AETHERXGLOBAL/execsurface/issues/new/choose)** and do not post secrets.
+
+## Documentation
+
+- [Five-Minute Start](docs/QUICKSTART_5_MIN.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Command examples](docs/EXAMPLES.md)
+- [GitHub Action](docs/GITHUB_ACTION.md)
+- [M6.6 distribution architecture](docs/milestones/M6_6_DISTRIBUTION_ARCHITECTURE.md)
+- [Roadmap](ROADMAP.md)
+- [Contributing](CONTRIBUTING.md)
+- [Support](SUPPORT.md)
+
+## Developing ExecSurface
+
+Source-build commands are for contributors, not the normal installation path.
 
 ```bash
-cargo run -p execsurface-cli -- observe -- /bin/true
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace --all-targets
+
+cargo run -p execsurface-cli -- --version
+cargo run -p execsurface-cli -- doctor
 ```
 
-`learn` is implemented in M3, policy-free diffing in M4, policy-aware `check` in M5, GitHub Action packaging in M6, and semantic-fidelity hardening in M6.5. M6.5 uses v2 raw/canonical/baseline/diff/verdict contracts; existing v1 baselines must be relearned rather than silently reinterpreted. Use `--diff-only` to retain raw M4 behavior.
+Architecture-affecting changes remain evidence-gated. See [CONTRIBUTING.md](CONTRIBUTING.md) and [GOVERNANCE.md](GOVERNANCE.md).
 
-## GitHub Action
+## License
 
-M6 provides a Linux x86_64 composite Action with read-only default permissions, a GitHub job summary, structured JSON evidence and an uploaded evidence artifact.
-
-```yaml
-permissions:
-  contents: read
-
-steps:
-  - uses: actions/checkout@v6
-
-  - name: ExecSurface
-    uses: AETHERXGLOBAL/execsurface@main
-    with:
-      command: "cargo test --locked"
-      baseline: execsurface.lock.json
-      policy: execsurface-policy.json
-```
-
-The Action executes the command as `/bin/bash -lc <command>`. The committed baseline must therefore be learned with the same wrapper, for example:
-
-```bash
-execsurface learn -- /bin/bash -lc 'cargo test --locked'
-```
-
-For production use, pin the Action to a reviewed release tag or commit SHA rather than a moving branch.
-
-See:
-- [M0 Architecture](docs/architecture/M0_ARCHITECTURE.md)
-- [ADR-0001: M1 Observation Backend](docs/architecture/ADR-0001-observation-backend.md)
-- [Adjacent Systems / Prior-Art Map](docs/architecture/COMPETITOR_MAP.md)
-- [M0 Gate](docs/architecture/M0_GATE.md)
-
-## Design invariants
-
-1. Raw observations and canonical execution surfaces are different models.
-2. Baseline and policy are different concepts.
-3. Observer failure can never become PASS.
-4. Normalization may remove irrelevant variability but may not silently collapse distinct security-relevant behavior.
-5. Privacy defaults to metadata, not secrets.
-6. Evidence and explicit limitations are product outputs.
-7. Precision > feature count.
-
-Apache-2.0 licensed.
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
