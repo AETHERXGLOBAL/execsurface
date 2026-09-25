@@ -1,8 +1,7 @@
-//! Minimal Linux observation backend.
+//! Linux metadata-only observation backend.
 //!
-//! M1 is intentionally narrow. On Linux x86_64 the implementation uses
-//! ptrace and reads only selected metadata pointers. It never dereferences
-//! argv or envp.
+//! On Linux x86_64 the implementation uses ptrace and reads only selected
+//! metadata pointers. It never dereferences argv or envp.
 
 use std::ffi::{CString, OsStr, OsString};
 use std::fmt;
@@ -11,6 +10,21 @@ use std::os::unix::ffi::OsStrExt;
 use std::sync::Mutex;
 
 use execsurface_model::Observation;
+
+pub const DEFAULT_EVENT_LIMIT: usize = 1_000_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObserveOptions {
+    pub event_limit: usize,
+}
+
+impl Default for ObserveOptions {
+    fn default() -> Self {
+        Self {
+            event_limit: DEFAULT_EVENT_LIMIT,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct CommandSpec {
@@ -90,19 +104,26 @@ mod linux_ptrace;
 static OBSERVE_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn observe_command(spec: &CommandSpec) -> Result<Observation, ObserveError> {
+    observe_command_with_options(spec, ObserveOptions::default())
+}
+
+pub fn observe_command_with_options(
+    spec: &CommandSpec,
+    options: ObserveOptions,
+) -> Result<Observation, ObserveError> {
     let _session_guard = OBSERVE_LOCK.lock().map_err(|_| {
         ObserveError::Protocol("observer session serialization lock was poisoned".to_owned())
     })?;
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        linux_ptrace::observe(spec)
+        linux_ptrace::observe(spec, options)
     }
 
     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
     {
-        let _ = spec;
+        let _ = (spec, options);
         Err(ObserveError::UnsupportedPlatform(
-            "M1 supports Linux x86_64 only",
+            "current observer supports Linux x86_64 only",
         ))
     }
 }
@@ -117,5 +138,11 @@ mod api_tests {
         let invalid = OsString::from_vec(b"bad\0program".to_vec());
         let result = observe_command(&CommandSpec::new(invalid));
         assert!(matches!(result, Err(ObserveError::InvalidCommand(_))));
+    }
+
+    #[test]
+    fn default_event_budget_is_fail_closed_and_finite() {
+        assert!(DEFAULT_EVENT_LIMIT >= 100_000);
+        assert!(DEFAULT_EVENT_LIMIT < usize::MAX);
     }
 }
