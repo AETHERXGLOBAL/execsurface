@@ -1,0 +1,51 @@
+name: M6.5 Performance Evidence
+
+on:
+  push:
+    branches:
+      - "milestone/m6.5-semantic-fidelity"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: ptrace reference benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Environment evidence
+        run: |
+          uname -a
+          rustc --version --verbose
+          cargo --version
+          lscpu | sed -n '1,20p'
+
+      - name: Build benchmark and controlled fixture
+        run: cargo build --locked --release -p execsurface-bench -p execsurface-observe --bin execsurface-fixture
+
+      - name: Benchmark /bin/true
+        run: |
+          mkdir -p benchmark
+          ./target/release/execsurface-bench --repetitions 20 -- /bin/true | tee benchmark/true.json
+
+      - name: Benchmark descendant spawn
+        run: |
+          ./target/release/execsurface-bench --repetitions 15 -- ./target/release/execsurface-fixture spawn | tee benchmark/spawn.json
+
+      - name: Benchmark file event volume
+        run: |
+          work="$(mktemp -d)"
+          ./target/release/execsurface-bench --repetitions 7 -- ./target/release/execsurface-fixture burst "$work" 128 | tee benchmark/burst-128.json
+          rm -rf "$work"
+
+      - name: Upload benchmark evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: m6-5-ptrace-benchmark-${{ github.run_id }}-${{ github.run_attempt }}
+          path: benchmark
+          if-no-files-found: error
+          retention-days: 30
