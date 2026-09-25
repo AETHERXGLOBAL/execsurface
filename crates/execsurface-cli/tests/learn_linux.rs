@@ -110,3 +110,23 @@ fn failed_target_does_not_create_baseline() {
     assert!(!output.exists());
     let _ = fs::remove_dir_all(dir);
 }
+
+
+#[test]
+fn learn_uses_default_lockfile_name() {
+    let dir = temp_dir("default-output");
+    let output = dir.join("execsurface.lock.json");
+
+    let status = Command::new(cli())
+        .current_dir(&dir)
+        .args(["learn", "--", "/bin/true"])
+        .stdout(Stdio::null())
+        .status()
+        .expect("learn with default output");
+
+    assert!(status.success());
+    assert!(output.exists());
+    parse_and_verify(&fs::read(&output).expect("read default lock")).expect("verified lock");
+
+    let _ = fs::remove_dir_all(dir);
+}
