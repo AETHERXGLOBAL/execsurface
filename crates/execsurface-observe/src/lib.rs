@@ -89,7 +89,7 @@ mod linux_ptrace;
 pub fn observe_command(spec: &CommandSpec) -> Result<Observation, ObserveError> {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        return linux_ptrace::observe(spec);
+        linux_ptrace::observe(spec)
     }
 
     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
