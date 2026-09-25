@@ -1,0 +1,112 @@
+name: ExecSurface
+description: Runtime execution-surface drift detection for Linux CI
+author: AETHER X GLOBAL
+
+inputs:
+  command:
+    description: Shell command to execute under /bin/bash -lc
+    required: true
+  baseline:
+    description: Baseline lockfile path
+    required: false
+    default: execsurface.lock.json
+  policy:
+    description: Optional policy JSON path
+    required: false
+    default: ""
+  fail-on-review:
+    description: Fail the Action when the ExecSurface verdict is REVIEW
+    required: false
+    default: "false"
+  upload-artifact:
+    description: Upload JSON and Markdown evidence as a GitHub Actions artifact
+    required: false
+    default: "true"
+  artifact-name:
+    description: Evidence artifact name
+    required: false
+    default: execsurface-evidence
+
+outputs:
+  verdict:
+    description: ExecSurface verdict
+    value: ${{ steps.execsurface.outputs.verdict }}
+  exit-code:
+    description: ExecSurface stable CLI exit code
+    value: ${{ steps.execsurface.outputs.exit-code }}
+  report-json:
+    description: Runner path to the structured verdict report
+    value: ${{ steps.execsurface.outputs.report-json }}
+  summary-markdown:
+    description: Runner path to the Markdown summary
+    value: ${{ steps.execsurface.outputs.summary-markdown }}
+  sarif-status:
+    description: SARIF generation disposition
+    value: ${{ steps.execsurface.outputs.sarif-status }}
+  artifact-url:
+    description: Uploaded evidence artifact URL when upload-artifact=true
+    value: ${{ steps.upload.outputs.artifact-url }}
+  artifact-digest:
+    description: Uploaded evidence artifact digest when upload-artifact=true
+    value: ${{ steps.upload.outputs.artifact-digest }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate platform and build ExecSurface
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
+          echo "::error title=ExecSurface::M6 currently supports Linux x86_64 only"
+          exit 2
+        fi
+        if ! command -v cargo >/dev/null 2>&1; then
+          echo "::error title=ExecSurface::Rust/Cargo is required by the source-build M6 Action"
+          exit 2
+        fi
+        target_dir="$RUNNER_TEMP/execsurface-action-target"
+        cargo build --locked --release           --manifest-path "$GITHUB_ACTION_PATH/Cargo.toml"           -p execsurface-cli --bin execsurface           --target-dir "$target_dir"
+        echo "EXECSURFACE_ACTION_BIN=$target_dir/release/execsurface" >> "$GITHUB_ENV"
+
+    - name: Run ExecSurface
+      id: execsurface
+      shell: bash
+      env:
+        EXECSURFACE_COMMAND: ${{ inputs.command }}
+        EXECSURFACE_BASELINE: ${{ inputs.baseline }}
+        EXECSURFACE_POLICY: ${{ inputs.policy }}
+      run: "$GITHUB_ACTION_PATH/action/run.sh"
+
+    - name: Upload ExecSurface evidence
+      id: upload
+      if: ${{ inputs.upload-artifact == 'true' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.execsurface.outputs.evidence-dir }}
+        if-no-files-found: error
+        retention-days: 14
+
+    - name: Enforce ExecSurface verdict
+      shell: bash
+      env:
+        EXECSURFACE_EXIT_CODE: ${{ steps.execsurface.outputs.exit-code }}
+        EXECSURFACE_FAIL_ON_REVIEW: ${{ inputs.fail-on-review }}
+      run: |
+        set -euo pipefail
+        case "$EXECSURFACE_EXIT_CODE" in
+          0) exit 0 ;;
+          10)
+            if [[ "$EXECSURFACE_FAIL_ON_REVIEW" == "true" ]]; then
+              exit 10
+            fi
+            exit 0
+            ;;
+          20) exit 20 ;;
+          *) exit 2 ;;
+        esac
+
+branding:
+  icon: shield
+  color: blue

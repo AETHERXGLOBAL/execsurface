@@ -13,8 +13,9 @@ use execsurface_model::RawEventKind;
 use execsurface_normalize::{canonicalize, canonicalize_executable, NormalizationConfig};
 use execsurface_observe::{observe_command, CommandSpec};
 use execsurface_policy::{
-    builtin_review_policy, evaluate, FindingAction, Policy, Verdict, VerdictReport,
+    builtin_review_policy, error_report, evaluate, FindingAction, Policy, Verdict, VerdictReport,
 };
+use execsurface_report::render_markdown;
 
 fn main() -> ExitCode {
     match run() {
@@ -43,6 +44,10 @@ fn run() -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         "check" => run_check(&remaining),
+        "render-error" => {
+            run_render_error(&remaining)?;
+            Ok(ExitCode::SUCCESS)
+        }
         _ => Err(usage("unknown subcommand")),
     }
 }
@@ -123,8 +128,14 @@ fn run_learn(args: &[OsString]) -> Result<(), String> {
 
 fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
     let parsed = parse_check_args(args)?;
-    if parsed.diff_only && parsed.policy.is_some() {
-        return Err("cannot combine --diff-only with --policy".to_owned());
+    if parsed.diff_only
+        && (parsed.policy.is_some()
+            || parsed.json_output.is_some()
+            || parsed.markdown_output.is_some())
+    {
+        return Err(
+            "cannot combine --diff-only with --policy/--json-output/--markdown-output".to_owned(),
+        );
     }
 
     let baseline_bytes = std::fs::read(&parsed.baseline).map_err(|error| {
@@ -194,6 +205,12 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
     let verdict_report =
         evaluate(&report, &policy, policy_source).map_err(|error| error.to_string())?;
 
+    write_verdict_outputs(
+        &verdict_report,
+        parsed.json_output.as_ref(),
+        parsed.markdown_output.as_ref(),
+    )?;
+
     if parsed.json {
         let json = serde_json::to_string_pretty(&verdict_report)
             .map_err(|error| format!("cannot serialize verdict report: {error}"))?;
@@ -203,6 +220,64 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
     }
 
     Ok(exit_code_for_verdict(verdict_report.verdict))
+}
+
+fn write_verdict_outputs(
+    report: &VerdictReport,
+    json_output: Option<&PathBuf>,
+    markdown_output: Option<&PathBuf>,
+) -> Result<(), String> {
+    if let Some(path) = json_output {
+        let mut bytes = serde_json::to_vec_pretty(report)
+            .map_err(|error| format!("cannot serialize verdict report: {error}"))?;
+        bytes.push(b'\n');
+        std::fs::write(path, bytes)
+            .map_err(|error| format!("cannot write verdict JSON {}: {error}", path.display()))?;
+    }
+
+    if let Some(path) = markdown_output {
+        std::fs::write(path, render_markdown(report)).map_err(|error| {
+            format!("cannot write Markdown summary {}: {error}", path.display())
+        })?;
+    }
+
+    Ok(())
+}
+
+fn run_render_error(args: &[OsString]) -> Result<(), String> {
+    let mut message = None;
+    let mut json_output = None;
+    let mut markdown_output = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].to_string_lossy().as_ref() {
+            "--message" => {
+                message = Some(path_string(option_value(args, index, "--message")?));
+                index += 2;
+            }
+            "--json-output" => {
+                json_output = Some(PathBuf::from(option_value(args, index, "--json-output")?));
+                index += 2;
+            }
+            "--markdown-output" => {
+                markdown_output = Some(PathBuf::from(option_value(
+                    args,
+                    index,
+                    "--markdown-output",
+                )?));
+                index += 2;
+            }
+            other => return Err(usage(&format!("unknown render-error option: {other}"))),
+        }
+    }
+
+    let message = message.ok_or_else(|| usage("render-error requires --message"))?;
+    let json_output = json_output.ok_or_else(|| usage("render-error requires --json-output"))?;
+    let markdown_output =
+        markdown_output.ok_or_else(|| usage("render-error requires --markdown-output"))?;
+    let report = error_report(message);
+    write_verdict_outputs(&report, Some(&json_output), Some(&markdown_output))
 }
 
 fn load_policy(path: Option<&PathBuf>) -> Result<(Policy, String), String> {
@@ -342,6 +417,8 @@ struct CheckArgs {
     policy: Option<PathBuf>,
     diff_only: bool,
     json: bool,
+    json_output: Option<PathBuf>,
+    markdown_output: Option<PathBuf>,
     workspace: Option<String>,
     home: Option<String>,
     tmp_roots: Vec<String>,
@@ -368,6 +445,8 @@ fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
     let mut policy = None;
     let mut diff_only = false;
     let mut json = false;
+    let mut json_output = None;
+    let mut markdown_output = None;
     let mut workspace = None;
     let mut home = None;
     let mut tmp_roots = Vec::new();
@@ -387,6 +466,8 @@ fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
                 policy,
                 diff_only,
                 json,
+                json_output,
+                markdown_output,
                 workspace,
                 home,
                 tmp_roots,
@@ -405,6 +486,18 @@ fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
             "--diff-only" => {
                 diff_only = true;
                 index += 1;
+            }
+            "--json-output" => {
+                json_output = Some(PathBuf::from(option_value(args, index, "--json-output")?));
+                index += 2;
+            }
+            "--markdown-output" => {
+                markdown_output = Some(PathBuf::from(option_value(
+                    args,
+                    index,
+                    "--markdown-output",
+                )?));
+                index += 2;
             }
             "--policy" => {
                 policy = Some(PathBuf::from(option_value(args, index, "--policy")?));
@@ -617,7 +710,10 @@ check options:
   --baseline PATH     baseline lockfile (default: execsurface.lock.json)
   --policy PATH       explicit policy JSON (default: built-in REVIEW for unmatched drift)
   --diff-only         emit raw M4 diff and do not evaluate policy
-  --json              emit machine-readable JSON
+  --json              emit machine-readable JSON to stdout
+  --json-output PATH  write verdict JSON directly to a file
+  --markdown-output PATH
+                      write Markdown verdict summary directly to a file
   --workspace PATH    declared workspace root
   --home PATH         declared home root
   --tmp PATH          declared temp root; repeatable
