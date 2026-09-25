@@ -61,10 +61,20 @@ name = "execsurface-cli"
 version = "0.0.1"
 dependencies = [
  "execsurface-baseline",
+ "execsurface-diff",
  "execsurface-model",
  "execsurface-normalize",
  "execsurface-observe",
  "serde_json",
+]
+
+[[package]]
+name = "execsurface-diff"
+version = "0.0.1"
+dependencies = [
+ "execsurface-baseline",
+ "execsurface-model",
+ "serde",
 ]
 
 [[package]]

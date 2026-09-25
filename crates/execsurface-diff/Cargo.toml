@@ -1,0 +1,13 @@
+[package]
+name = "execsurface-diff"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Deterministic policy-free execution-surface diff engine for AETHER X ExecSurface"
+
+[dependencies]
+execsurface-baseline = { path = "../execsurface-baseline" }
+execsurface-model = { path = "../execsurface-model" }
+serde.workspace = true
