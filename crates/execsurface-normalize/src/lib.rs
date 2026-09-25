@@ -40,16 +40,26 @@ impl fmt::Display for NormalizeError {
                 write!(f, "unsupported raw observation schema version: {version}")
             }
             Self::IncompleteObservation => {
-                write!(f, "raw observation is incomplete and cannot form a trusted canonical surface")
+                write!(
+                    f,
+                    "raw observation is incomplete and cannot form a trusted canonical surface"
+                )
             }
             Self::InvalidRoot { label, reason } => {
                 write!(f, "invalid semantic root {label}: {reason}")
             }
             Self::AmbiguousRoot { path, labels } => {
-                write!(f, "semantic root {path} is assigned to multiple labels: {}", labels.join(", "))
+                write!(
+                    f,
+                    "semantic root {path} is assigned to multiple labels: {}",
+                    labels.join(", ")
+                )
             }
             Self::DuplicateSequence(sequence) => {
-                write!(f, "raw observation contains duplicate event sequence {sequence}")
+                write!(
+                    f,
+                    "raw observation contains duplicate event sequence {sequence}"
+                )
             }
             Self::MissingLinuxOpenFlags => {
                 write!(f, "Linux file.open event is missing raw flags required to avoid collapsing access intent")
@@ -73,7 +83,9 @@ pub fn canonicalize(
     config: &NormalizationConfig,
 ) -> Result<CanonicalSurface, NormalizeError> {
     if observation.schema_version != RAW_OBSERVATION_SCHEMA_VERSION {
-        return Err(NormalizeError::UnsupportedRawSchema(observation.schema_version));
+        return Err(NormalizeError::UnsupportedRawSchema(
+            observation.schema_version,
+        ));
     }
     if !observation.complete {
         return Err(NormalizeError::IncompleteObservation);
@@ -174,7 +186,12 @@ fn build_root_rules(config: &NormalizationConfig) -> Result<Vec<RootRule>, Norma
     let mut roots = Vec::new();
 
     if let Some(path) = &config.workspace {
-        roots.push(root_rule(path, "$WORKSPACE", PathClass::Workspace, "workspace")?);
+        roots.push(root_rule(
+            path,
+            "$WORKSPACE",
+            PathClass::Workspace,
+            "workspace",
+        )?);
     }
     if let Some(path) = &config.home {
         roots.push(root_rule(path, "$HOME", PathClass::Home, "home")?);
@@ -193,7 +210,8 @@ fn build_root_rules(config: &NormalizationConfig) -> Result<Vec<RootRule>, Norma
         {
             return Err(NormalizeError::InvalidRoot {
                 label: format!("cache:{name}"),
-                reason: "cache name must use only ASCII letters, digits, '.', '-' or '_'".to_owned(),
+                reason: "cache name must use only ASCII letters, digits, '.', '-' or '_'"
+                    .to_owned(),
             });
         }
         roots.push(root_rule(
@@ -335,9 +353,11 @@ fn classify_tokenized_path(value: &str, default: PathClass) -> PathClass {
 fn classify_absolute_path(path: &str) -> PathClass {
     if path == "/dev" || path.starts_with("/dev/") {
         PathClass::Device
-    } else if ["/bin", "/sbin", "/usr", "/lib", "/lib64", "/etc", "/opt", "/proc", "/sys"]
-        .iter()
-        .any(|root| path == *root || path.starts_with(&format!("{root}/")))
+    } else if [
+        "/bin", "/sbin", "/usr", "/lib", "/lib64", "/etc", "/opt", "/proc", "/sys",
+    ]
+    .iter()
+    .any(|root| path == *root || path.starts_with(&format!("{root}/")))
     {
         PathClass::System
     } else {
@@ -390,11 +410,8 @@ fn linux_open_intent(platform: &str, flags: Option<u64>) -> Result<OpenIntent, N
         (true, false)
     };
 
-    let known_mask = (libc::O_ACCMODE
-        | libc::O_CREAT
-        | libc::O_TRUNC
-        | libc::O_APPEND
-        | libc::O_PATH) as u64;
+    let known_mask =
+        (libc::O_ACCMODE | libc::O_CREAT | libc::O_TRUNC | libc::O_APPEND | libc::O_PATH) as u64;
 
     Ok(OpenIntent {
         read,
@@ -438,9 +455,7 @@ fn clean_lexical_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use execsurface_model::{
-        BackendMetadata, CommandOutcome, RawEvent, SpawnMechanism,
-    };
+    use execsurface_model::{BackendMetadata, CommandOutcome, RawEvent, SpawnMechanism};
 
     fn observation(events: Vec<RawEvent>) -> Observation {
         Observation {
@@ -465,10 +480,7 @@ mod tests {
             home: Some("/home/runner".to_owned()),
             tmp_roots: vec!["/tmp".to_owned()],
             run_tmp: Some("/tmp/run-A".to_owned()),
-            caches: BTreeMap::from([(
-                "cargo".to_owned(),
-                "/home/runner/.cargo".to_owned(),
-            )]),
+            caches: BTreeMap::from([("cargo".to_owned(), "/home/runner/.cargo".to_owned())]),
         }
     }
 
@@ -478,10 +490,7 @@ mod tests {
             home: Some("/home/ci".to_owned()),
             tmp_roots: vec!["/var/tmp".to_owned()],
             run_tmp: Some("/var/tmp/run-B".to_owned()),
-            caches: BTreeMap::from([(
-                "cargo".to_owned(),
-                "/home/ci/.cargo".to_owned(),
-            )]),
+            caches: BTreeMap::from([("cargo".to_owned(), "/home/ci/.cargo".to_owned())]),
         }
     }
 
@@ -583,8 +592,14 @@ mod tests {
 
     #[test]
     fn explicit_run_root_normalization_preserves_security_relevant_suffix() {
-        let curl = canonical_path("/tmp/run-A/plugin/curl", &build_root_rules(&config_a()).unwrap());
-        let ssh = canonical_path("/tmp/run-A/plugin/ssh", &build_root_rules(&config_a()).unwrap());
+        let curl = canonical_path(
+            "/tmp/run-A/plugin/curl",
+            &build_root_rules(&config_a()).unwrap(),
+        );
+        let ssh = canonical_path(
+            "/tmp/run-A/plugin/ssh",
+            &build_root_rules(&config_a()).unwrap(),
+        );
 
         assert_eq!(curl.value, "$RUN_TMP/plugin/curl");
         assert_eq!(ssh.value, "$RUN_TMP/plugin/ssh");
