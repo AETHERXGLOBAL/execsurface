@@ -53,21 +53,9 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Validate platform and build ExecSurface
+    - name: Install ExecSurface
       shell: bash
-      run: |
-        set -euo pipefail
-        if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
-          echo "::error title=ExecSurface::M6 currently supports Linux x86_64 only"
-          exit 2
-        fi
-        if ! command -v cargo >/dev/null 2>&1; then
-          echo "::error title=ExecSurface::Rust/Cargo is required by the source-build M6 Action"
-          exit 2
-        fi
-        target_dir="$RUNNER_TEMP/execsurface-action-target"
-        cargo build --locked --release           --manifest-path "$GITHUB_ACTION_PATH/Cargo.toml"           -p execsurface-cli --bin execsurface           --target-dir "$target_dir"
-        echo "EXECSURFACE_ACTION_BIN=$target_dir/release/execsurface" >> "$GITHUB_ENV"
+      run: "$GITHUB_ACTION_PATH/action/install.sh"
 
     - name: Run ExecSurface
       id: execsurface
@@ -81,7 +69,7 @@ runs:
     - name: Upload ExecSurface evidence
       id: upload
       if: ${{ inputs.upload-artifact == 'true' }}
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: ${{ inputs.artifact-name }}
         path: ${{ steps.execsurface.outputs.evidence-dir }}

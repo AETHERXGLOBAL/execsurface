@@ -74,3 +74,50 @@ jobs:
           test "$status" -ne 0
           grep -Eiq 'must have a version|does not specify a version|path.*dependenc' package.stderr
           echo "crates.io: DEFERRED — workspace registry chain is not being distorted for M6.6"
+
+
+  release-bundle-dry-run:
+    name: Release bundle dry run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and package Linux x86_64 bundle
+        run: |
+          set -euo pipefail
+          tag="v0.1.0-alpha.1"
+          target="x86_64-unknown-linux-gnu"
+          dir="dist/execsurface-${tag}-${target}"
+          archive="execsurface-${tag}-${target}.tar.gz"
+          cargo build --locked --release -p execsurface-cli --bin execsurface
+          test "$(./target/release/execsurface --version)" = "execsurface 0.1.0-alpha.1"
+          mkdir -p "$dir"
+          cp target/release/execsurface "$dir/execsurface"
+          cp LICENSE NOTICE "$dir/"
+          {
+            echo "ExecSurface $tag"
+            echo "target=$target"
+            echo "source_commit=$GITHUB_SHA"
+            echo "build_workflow=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "$dir/BUILD_INFO.txt"
+          tar -C dist -czf "dist/$archive" "execsurface-${tag}-${target}"
+          (cd dist && sha256sum "$archive" > "$archive.sha256")
+          (cd dist && sha256sum -c "$archive.sha256")
+          mkdir -p "$RUNNER_TEMP/release-consumer"
+          tar -xzf "dist/$archive" -C "$RUNNER_TEMP/release-consumer"
+          binary="$RUNNER_TEMP/release-consumer/execsurface-${tag}-${target}/execsurface"
+          test "$("$binary" --version)" = "execsurface 0.1.0-alpha.1"
+          (
+            cd "$RUNNER_TEMP/release-consumer"
+            "$binary" doctor
+            "$binary" learn -- /bin/bash -lc true
+            "$binary" check -- /bin/bash -lc true
+          )
+
+      - name: Upload dry-run bundle evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m6-6-release-bundle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist
+          if-no-files-found: error
