@@ -79,6 +79,16 @@ Evidence: `docs/milestones/M6_6_EVIDENCE.md`.
 
 ## M7 — External Real-World Proof
 
-**NOT STARTED**
+**CLOSED / ACCEPTED — COMPATIBILITY PROOF**
 
-Compatibility proof against an external open-source project before requesting maintainer integration.
+External target:
+
+`sharkdp/fd@ce97e473ebaec49697c07daa50a7bc2b32f713d2`
+
+The pinned upstream suite reproduced with 118 tests passing. ExecSurface public release `v0.1.0-alpha.1` learned a real `fd` runtime baseline with 517 canonical effects, produced repeated no-drift PASS results, and detected a controlled runtime expansion as REVIEW with an added `sha256sum` process execution plus fd-attributed read evidence for the fixture file.
+
+The stable public Action channel `AETHERXGLOBAL/execsurface@v0.1` also proved PASS for the baseline command and REVIEW for the controlled expansion.
+
+No upstream modification or maintainer contact occurred before the proof passed. This is compatibility evidence, **not third-party adoption**.
+
+Evidence: `docs/milestones/M7_EVIDENCE.md`.
