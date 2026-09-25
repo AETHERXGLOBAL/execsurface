@@ -1415,5 +1415,4 @@ mod tests {
             "/proc/self/task/102/status"
         );
     }
-
 }
