@@ -6,9 +6,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use execsurface_diff::{ChangedEffect, DiffReport, TargetOutcome};
-use execsurface_model::canonical::{
-    CanonicalEffect, CanonicalNetworkEndpoint, CanonicalPath, PathClass,
-};
+use execsurface_model::canonical::{CanonicalEffect, CanonicalNetworkEndpoint, PathClass};
 use execsurface_model::FileOperation;
 use serde::{Deserialize, Serialize};
 
@@ -120,7 +118,7 @@ pub struct FindingDecision {
 pub enum FindingEvidence {
     Added { effect: CanonicalEffect },
     Removed { effect: CanonicalEffect },
-    Changed { finding: ChangedEffect },
+    Changed { finding: Box<ChangedEffect> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -236,7 +234,7 @@ pub fn evaluate(
             ChangeKind::Changed,
             &changed.after,
             FindingEvidence::Changed {
-                finding: changed.clone(),
+                finding: Box::new(changed.clone()),
             },
             policy,
         ));
