@@ -236,8 +236,9 @@ fn write_verdict_outputs(
     }
 
     if let Some(path) = markdown_output {
-        std::fs::write(path, render_markdown(report))
-            .map_err(|error| format!("cannot write Markdown summary {}: {error}", path.display()))?;
+        std::fs::write(path, render_markdown(report)).map_err(|error| {
+            format!("cannot write Markdown summary {}: {error}", path.display())
+        })?;
     }
 
     Ok(())
@@ -260,8 +261,11 @@ fn run_render_error(args: &[OsString]) -> Result<(), String> {
                 index += 2;
             }
             "--markdown-output" => {
-                markdown_output =
-                    Some(PathBuf::from(option_value(args, index, "--markdown-output")?));
+                markdown_output = Some(PathBuf::from(option_value(
+                    args,
+                    index,
+                    "--markdown-output",
+                )?));
                 index += 2;
             }
             other => return Err(usage(&format!("unknown render-error option: {other}"))),
@@ -488,8 +492,11 @@ fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
                 index += 2;
             }
             "--markdown-output" => {
-                markdown_output =
-                    Some(PathBuf::from(option_value(args, index, "--markdown-output")?));
+                markdown_output = Some(PathBuf::from(option_value(
+                    args,
+                    index,
+                    "--markdown-output",
+                )?));
                 index += 2;
             }
             "--policy" => {
