@@ -248,7 +248,6 @@ fn high_event_volume_remains_complete_under_default_budget() {
     let _ = fs::remove_dir_all(dir);
 }
 
-
 #[test]
 fn unreadable_path_metadata_fails_closed() {
     let observation =
