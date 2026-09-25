@@ -69,7 +69,11 @@ fn init_generates_files_but_never_runs_the_target_command() {
         .output()
         .expect("init");
 
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(!marker.exists(), "init executed the user target command");
     let policy = fs::read_to_string(dir.join("execsurface-policy.json")).expect("policy");
     assert!(policy.contains("\"schema_version\": 2"));

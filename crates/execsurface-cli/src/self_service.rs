@@ -59,9 +59,7 @@ pub fn run_doctor() -> ExitCode {
             Err(error) => {
                 fail(
                     "ptrace observer unavailable",
-                    &format!(
-                        "{error}; see docs/TROUBLESHOOTING.md#ptrace-restrictions"
-                    ),
+                    &format!("{error}; see docs/TROUBLESHOOTING.md#ptrace-restrictions"),
                 );
                 ready = false;
             }
@@ -137,7 +135,8 @@ pub fn run_init(args: &[OsString]) -> Result<(), String> {
             .to_owned()
     })?;
 
-    let cwd = env::current_dir().map_err(|error| format!("init: cannot read current directory: {error}"))?;
+    let cwd = env::current_dir()
+        .map_err(|error| format!("init: cannot read current directory: {error}"))?;
     let policy = cwd.join(POLICY_PATH);
     let workflow = cwd.join(WORKFLOW_PATH);
 
@@ -177,7 +176,9 @@ pub fn run_init(args: &[OsString]) -> Result<(), String> {
     }
     println!("[NOT RUN] target command");
     println!();
-    println!("Next: learn the baseline explicitly using the same Bash wrapper as the GitHub Action:");
+    println!(
+        "Next: learn the baseline explicitly using the same Bash wrapper as the GitHub Action:"
+    );
     println!(
         "  execsurface learn -- /bin/bash -lc {}",
         shell_quote(&command)
