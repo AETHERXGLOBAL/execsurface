@@ -15,7 +15,7 @@ use execsurface_model::canonical::{
 use execsurface_model::FileOperation;
 use serde::{Deserialize, Serialize};
 
-pub const DIFF_SCHEMA_VERSION: u32 = 1;
+pub const DIFF_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateSnapshot {

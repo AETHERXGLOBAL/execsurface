@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/AETHERXGLOBAL/execsurface/schemas/execsurface-lock-v1.schema.json",
-  "title": "ExecSurface Baseline Lock v1",
+  "$id": "https://github.com/AETHERXGLOBAL/execsurface/schemas/execsurface-lock-v2.schema.json",
+  "title": "ExecSurface Baseline Lock v2",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "baseline_digest", "payload"],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "baseline_digest": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
@@ -23,7 +23,7 @@
         "canonical_surface"
       ],
       "properties": {
-        "digest_format_version": { "const": 1 },
+        "digest_format_version": { "const": 2 },
         "tool": {
           "type": "object",
           "additionalProperties": false,
@@ -75,13 +75,13 @@
           "additionalProperties": false,
           "required": ["schema_version", "normalization", "effects"],
           "properties": {
-            "schema_version": { "const": 1 },
+            "schema_version": { "const": 2 },
             "normalization": {
               "type": "object",
               "additionalProperties": false,
               "required": ["profile_version", "semantic_roots"],
               "properties": {
-                "profile_version": { "const": 1 },
+                "profile_version": { "const": 2 },
                 "semantic_roots": {
                   "type": "array",
                   "items": { "type": "string" },
@@ -120,7 +120,7 @@
           ]
         },
         "resolution": {
-          "enum": ["lexical", "relative_unresolved", "contains_parent_traversal"]
+          "enum": ["lexical", "relative_unresolved", "contains_parent_traversal", "kernel_fd_resolved"]
         }
       }
     },

@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/AETHERXGLOBAL/execsurface/schemas/execsurface-policy-v1.schema.json",
-  "title": "ExecSurface Policy v1",
+  "$id": "https://github.com/AETHERXGLOBAL/execsurface/schemas/execsurface-policy-v2.schema.json",
+  "title": "ExecSurface Policy v2",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "default_action", "rules"],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "default_action": { "enum": ["allow", "review", "block"] },
     "rules": {
       "type": "array",
@@ -30,6 +30,8 @@
                   "file_open",
                   "file_create",
                   "file_delete",
+                  "file_read",
+                  "file_write",
                   "file_rename",
                   "network_connect"
                 ]

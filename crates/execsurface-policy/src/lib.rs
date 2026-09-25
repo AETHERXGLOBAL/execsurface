@@ -10,8 +10,9 @@ use execsurface_model::canonical::{CanonicalEffect, CanonicalNetworkEndpoint, Pa
 use execsurface_model::FileOperation;
 use serde::{Deserialize, Serialize};
 
-pub const POLICY_SCHEMA_VERSION: u32 = 1;
-pub const VERDICT_SCHEMA_VERSION: u32 = 1;
+pub const LEGACY_POLICY_SCHEMA_VERSION: u32 = 1;
+pub const POLICY_SCHEMA_VERSION: u32 = 2;
+pub const VERDICT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -161,7 +162,9 @@ pub fn builtin_review_policy() -> Policy {
 }
 
 pub fn validate_policy(policy: &Policy) -> Result<(), PolicyError> {
-    if policy.schema_version != POLICY_SCHEMA_VERSION {
+    if policy.schema_version != LEGACY_POLICY_SCHEMA_VERSION
+        && policy.schema_version != POLICY_SCHEMA_VERSION
+    {
         return Err(PolicyError::UnsupportedSchema(policy.schema_version));
     }
 
@@ -197,6 +200,17 @@ pub fn validate_policy(policy: &Policy) -> Result<(), PolicyError> {
                         .to_owned(),
                 });
             }
+        }
+        if policy.schema_version == LEGACY_POLICY_SCHEMA_VERSION
+            && matches!(
+                rule.matcher.effect,
+                Some(EffectKind::FileRead | EffectKind::FileWrite)
+            )
+        {
+            return Err(PolicyError::InvalidMatcher {
+                rule_id: rule.id.clone(),
+                reason: "file_read/file_write require policy schema version 2".to_owned(),
+            });
         }
     }
     Ok(())
@@ -769,7 +783,7 @@ mod tests {
             open_intent: None,
         };
         let policy = Policy {
-            schema_version: 1,
+            schema_version: POLICY_SCHEMA_VERSION,
             default_action: FindingAction::Allow,
             rules: vec![PolicyRule {
                 id: "review-actual-read".to_owned(),
@@ -785,4 +799,24 @@ mod tests {
         assert_eq!(report.verdict, Verdict::Review);
         assert_eq!(report.findings[0].effect_kind, EffectKind::FileRead);
     }
+    #[test]
+    fn legacy_v1_policy_rejects_v2_file_io_matchers() {
+        let policy = Policy {
+            schema_version: LEGACY_POLICY_SCHEMA_VERSION,
+            default_action: FindingAction::Review,
+            rules: vec![PolicyRule {
+                id: "legacy-read".to_owned(),
+                action: FindingAction::Block,
+                matcher: RuleMatcher {
+                    effect: Some(EffectKind::FileRead),
+                    ..RuleMatcher::default()
+                },
+            }],
+        };
+        assert!(matches!(
+            validate_policy(&policy),
+            Err(PolicyError::InvalidMatcher { rule_id, .. }) if rule_id == "legacy-read"
+        ));
+    }
+
 }

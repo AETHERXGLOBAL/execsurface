@@ -174,7 +174,7 @@ mod tests {
         report.verdict = Verdict::Pass;
         report.error = None;
         report.policy = Some(PolicySummary {
-            schema_version: 1,
+            schema_version: execsurface_policy::VERDICT_SCHEMA_VERSION,
             source: "evil|<tag>\n**bold**".to_owned(),
             default_action: FindingAction::Review,
         });
