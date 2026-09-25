@@ -78,6 +78,22 @@ struct RootRule {
     label: String,
 }
 
+pub fn canonicalize_path(
+    path: &str,
+    config: &NormalizationConfig,
+) -> Result<CanonicalPath, NormalizeError> {
+    let roots = build_root_rules(config)?;
+    Ok(canonical_path(path, &roots))
+}
+
+pub fn canonicalize_executable(
+    path: &str,
+    config: &NormalizationConfig,
+) -> Result<CanonicalExecutable, NormalizeError> {
+    let roots = build_root_rules(config)?;
+    Ok(canonical_executable(path, &roots))
+}
+
 pub fn canonicalize(
     observation: &Observation,
     config: &NormalizationConfig,

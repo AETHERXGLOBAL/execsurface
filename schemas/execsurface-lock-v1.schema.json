@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AETHERXGLOBAL/execsurface/schemas/execsurface-lock-v1.schema.json",
+  "title": "ExecSurface Baseline Lock v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "baseline_digest", "payload"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "baseline_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "digest_format_version",
+        "tool",
+        "command",
+        "platform",
+        "observer",
+        "canonical_surface"
+      ],
+      "properties": {
+        "digest_format_version": { "const": 1 },
+        "tool": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "const": "execsurface" },
+            "version": { "type": "string" }
+          }
+        },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["executable", "argument_count", "label"],
+          "properties": {
+            "executable": { "$ref": "#/$defs/executable" },
+            "argument_count": { "type": "integer", "minimum": 0 },
+            "label": { "type": ["string", "null"] }
+          }
+        },
+        "platform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["os", "architecture"],
+          "properties": {
+            "os": { "type": "string" },
+            "architecture": { "type": "string" }
+          }
+        },
+        "observer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "capabilities", "limitations"],
+          "properties": {
+            "name": { "type": "string" },
+            "capabilities": {
+              "type": "array",
+              "items": { "type": "string" },
+              "uniqueItems": true
+            },
+            "limitations": {
+              "type": "array",
+              "items": { "type": "string" },
+              "uniqueItems": true
+            }
+          }
+        },
+        "canonical_surface": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schema_version", "normalization", "effects"],
+          "properties": {
+            "schema_version": { "const": 1 },
+            "normalization": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["profile_version", "semantic_roots"],
+              "properties": {
+                "profile_version": { "const": 1 },
+                "semantic_roots": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "uniqueItems": true
+                }
+              }
+            },
+            "effects": {
+              "type": "array",
+              "items": { "type": "object" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "class", "resolution"],
+      "properties": {
+        "value": { "type": "string" },
+        "class": {
+          "enum": [
+            "workspace",
+            "home",
+            "credential_sensitive",
+            "temp",
+            "run_temp",
+            "cache",
+            "system",
+            "device",
+            "outside_declared_roots",
+            "unknown"
+          ]
+        },
+        "resolution": {
+          "enum": ["lexical", "relative_unresolved", "contains_parent_traversal"]
+        }
+      }
+    },
+    "executable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "family"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "family": { "type": "string" }
+      }
+    }
+  }
+}
