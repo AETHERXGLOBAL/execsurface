@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a reproducible ExecSurface defect on a supported environment
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Public alpha support is Linux x86_64. Do not post secrets or confidential runtime data.
+
+  - type: input
+    id: version
+    attributes:
+      label: ExecSurface version
+      placeholder: 0.1.0-alpha.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: execsurface doctor
+      description: Paste the non-sensitive output.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Commands/steps with secrets removed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true

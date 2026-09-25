@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting
+    url: https://github.com/AETHERXGLOBAL/execsurface/blob/main/docs/TROUBLESHOOTING.md
+    about: Check actionable installation, ptrace, baseline, policy and CI guidance first.
+  - name: Security report
+    url: https://github.com/AETHERXGLOBAL/execsurface/security
+    about: Use private vulnerability reporting for security-sensitive disclosures when available.
