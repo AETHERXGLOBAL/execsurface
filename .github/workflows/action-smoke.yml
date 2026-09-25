@@ -148,3 +148,70 @@ jobs:
           test "$OUTCOME" = "failure"
           test "$VERDICT" = "error"
           test "$EXIT_CODE" = "2"
+
+
+  review-fail:
+    name: Action / REVIEW fail-on-review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build baseline learner
+        run: cargo build --locked -p execsurface-cli --bin execsurface
+
+      - name: Learn wrapped baseline
+        run: ./target/debug/execsurface learn --output m6-review-fail.lock.json -- /bin/bash -lc true
+
+      - name: Run local Action
+        id: execsurface
+        continue-on-error: true
+        uses: ./
+        with:
+          command: "true; /bin/echo x >/dev/null"
+          baseline: m6-review-fail.lock.json
+          fail-on-review: "true"
+          upload-artifact: "false"
+
+      - name: Assert REVIEW can enforce failure
+        env:
+          OUTCOME: ${{ steps.execsurface.outcome }}
+          VERDICT: ${{ steps.execsurface.outputs.verdict }}
+          EXIT_CODE: ${{ steps.execsurface.outputs.exit-code }}
+        run: |
+          test "$OUTCOME" = "failure"
+          test "$VERDICT" = "review"
+          test "$EXIT_CODE" = "10"
+
+  privacy:
+    name: Action / privacy evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build baseline learner
+        run: cargo build --locked -p execsurface-cli --bin execsurface
+
+      - name: Learn wrapped baseline with argv sentinel
+        env:
+          SENTINEL: AX_M6_ARGV_SECRET_41e9d3
+        run: ./target/debug/execsurface learn --output m6-privacy.lock.json -- /bin/bash -lc 'printf "%s" "$0" >/dev/null' "$SENTINEL"
+
+      - name: Run local Action with equivalent sentinel-bearing command
+        id: execsurface
+        uses: ./
+        with:
+          command: 'printf "%s" "AX_M6_ARGV_SECRET_41e9d3" >/dev/null'
+          baseline: m6-privacy.lock.json
+          upload-artifact: "false"
+
+      - name: Assert sentinel absent from generated evidence
+        env:
+          REPORT_JSON: ${{ steps.execsurface.outputs.report-json }}
+          SUMMARY_MARKDOWN: ${{ steps.execsurface.outputs.summary-markdown }}
+        run: |
+          test -f "$REPORT_JSON"
+          test -f "$SUMMARY_MARKDOWN"
+          ! grep -F "AX_M6_ARGV_SECRET_41e9d3" "$REPORT_JSON"
+          ! grep -F "AX_M6_ARGV_SECRET_41e9d3" "$SUMMARY_MARKDOWN"
