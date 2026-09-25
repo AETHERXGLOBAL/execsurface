@@ -111,7 +111,6 @@ fn failed_target_does_not_create_baseline() {
     let _ = fs::remove_dir_all(dir);
 }
 
-
 #[test]
 fn learn_uses_default_lockfile_name() {
     let dir = temp_dir("default-output");
