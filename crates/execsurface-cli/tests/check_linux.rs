@@ -67,15 +67,17 @@ fn real_check_reports_controlled_process_drift_without_policy_failure() {
     let baseline = dir.join("lock.json");
     learn(&dir, &baseline, &["/bin/sh", "-c", "true"]);
 
-    let output = check_json(&dir, &baseline, &["/bin/sh", "-c", "true; /bin/echo x >/dev/null"]);
+    let output = check_json(
+        &dir,
+        &baseline,
+        &["/bin/sh", "-c", "true; /bin/echo x >/dev/null"],
+    );
     assert!(
         output.status.success(),
         "M4 drift is evidence, not a policy exit failure"
     );
     let report: DiffReport = serde_json::from_slice(&output.stdout).expect("diff json");
-    assert!(
-        !(report.added.is_empty() && report.removed.is_empty() && report.changed.is_empty())
-    );
+    assert!(!(report.added.is_empty() && report.removed.is_empty() && report.changed.is_empty()));
 
     let _ = fs::remove_dir_all(dir);
 }

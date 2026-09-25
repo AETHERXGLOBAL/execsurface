@@ -113,8 +113,12 @@ fn run_learn(args: &[OsString]) -> Result<(), String> {
 
 fn run_check(args: &[OsString]) -> Result<(), String> {
     let parsed = parse_check_args(args)?;
-    let baseline_bytes = std::fs::read(&parsed.baseline)
-        .map_err(|error| format!("cannot read baseline {}: {error}", parsed.baseline.display()))?;
+    let baseline_bytes = std::fs::read(&parsed.baseline).map_err(|error| {
+        format!(
+            "cannot read baseline {}: {error}",
+            parsed.baseline.display()
+        )
+    })?;
     let baseline = parse_and_verify(&baseline_bytes).map_err(|error| error.to_string())?;
 
     let spec = CommandSpec::new(parsed.program.clone()).args(parsed.command_args.clone());

@@ -6,7 +6,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use execsurface_baseline::{verify_lock, BaselineError, BaselineLock, CommandIdentity, ObserverIdentity, PlatformIdentity};
+use execsurface_baseline::{
+    verify_lock, BaselineError, BaselineLock, CommandIdentity, ObserverIdentity, PlatformIdentity,
+};
 use execsurface_model::canonical::{
     CanonicalEffect, CanonicalExecutable, CanonicalNetworkEndpoint, CanonicalPath, CanonicalSurface,
 };
@@ -228,14 +230,24 @@ fn comparability_mismatches(
         });
     }
 
-    if baseline.payload.canonical_surface.schema_version != candidate.canonical_surface.schema_version {
+    if baseline.payload.canonical_surface.schema_version
+        != candidate.canonical_surface.schema_version
+    {
         mismatches.push(ComparabilityMismatch {
             field: "canonical_surface.schema_version".to_owned(),
-            baseline: baseline.payload.canonical_surface.schema_version.to_string(),
+            baseline: baseline
+                .payload
+                .canonical_surface
+                .schema_version
+                .to_string(),
             candidate: candidate.canonical_surface.schema_version.to_string(),
         });
     }
-    if baseline.payload.canonical_surface.normalization.profile_version
+    if baseline
+        .payload
+        .canonical_surface
+        .normalization
+        .profile_version
         != candidate.canonical_surface.normalization.profile_version
     {
         mismatches.push(ComparabilityMismatch {
@@ -354,9 +366,7 @@ fn path_identity(path: &CanonicalPath) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use execsurface_baseline::{
-        build_lock, BaselinePayload, ToolIdentity,
-    };
+    use execsurface_baseline::{build_lock, BaselinePayload, ToolIdentity};
     use execsurface_model::canonical::{
         NormalizationMetadata, OpenIntent, PathClass, PathResolution,
     };
@@ -483,7 +493,11 @@ mod tests {
     fn unique_file_access_subject_becomes_changed() {
         let before = file_open(false);
         let after = file_open(true);
-        let report = diff(&baseline(vec![before.clone()]), &candidate(vec![after.clone()])).unwrap();
+        let report = diff(
+            &baseline(vec![before.clone()]),
+            &candidate(vec![after.clone()]),
+        )
+        .unwrap();
 
         assert!(report.added.is_empty());
         assert!(report.removed.is_empty());
