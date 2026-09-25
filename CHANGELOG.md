@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### 2026-09-26 — M7 External Real-World Compatibility Proof accepted
+
+- pinned external target `sharkdp/fd@ce97e473ebaec49697c07daa50a7bc2b32f713d2`;
+- reproduced the pinned upstream Linux/Rust test suite with 118 tests passing;
+- downloaded ExecSurface `v0.1.0-alpha.1` from the public GitHub Release and verified SHA-256 plus GitHub build provenance;
+- built the real `fd 10.5.0` release binary;
+- learned a real `fd` runtime baseline containing 517 canonical effects;
+- proved two repeated no-drift checks return PASS with zero findings;
+- introduced a controlled additional `/usr/bin/sha256sum` execution in the same Bash wrapper;
+- detected the controlled expansion as REVIEW with 38 added findings;
+- confirmed the drift includes one added `process_exec`, four added `file_read`, 32 added `file_open`, and one added `file_write` finding;
+- confirmed the fixture-file read is fd-attributed and carries the causal execution chain `bash → sha256sum`;
+- proved public stable Action `AETHERXGLOBAL/execsurface@v0.1` returns PASS for the accepted command and REVIEW/10 for the controlled expansion;
+- preserved two harness failures involving an omitted explicit baseline path; no ExecSurface semantic weakening or broad normalization was introduced;
+- made no upstream modification and no third-party adoption claim.
+
 ### 2026-09-26 — M6.6 Public Self-Service & Distribution Gate accepted
 
 - promoted product version to `0.1.0-alpha.1` without changing evidence schema v2;
