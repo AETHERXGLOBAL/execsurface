@@ -142,7 +142,9 @@ mod api_tests {
 
     #[test]
     fn default_event_budget_is_fail_closed_and_finite() {
-        assert!(DEFAULT_EVENT_LIMIT >= 100_000);
-        assert!(DEFAULT_EVENT_LIMIT < usize::MAX);
+        let options = ObserveOptions::default();
+        assert_eq!(options.event_limit, DEFAULT_EVENT_LIMIT);
+        assert!(options.event_limit >= 100_000);
+        assert!(options.event_limit < usize::MAX);
     }
 }

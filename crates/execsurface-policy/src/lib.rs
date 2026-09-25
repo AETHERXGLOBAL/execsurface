@@ -410,7 +410,9 @@ impl<'a> EffectMetadata<'a> {
                 network_ip: None,
                 network_port: None,
             },
-            CanonicalEffect::NetworkConnectAttempt { actor, endpoint } => match endpoint {
+            CanonicalEffect::NetworkConnectAttempt {
+                actor, endpoint, ..
+            } => match endpoint {
                 CanonicalNetworkEndpoint::Inet { ip, port }
                 | CanonicalNetworkEndpoint::Inet6 { ip, port } => Self {
                     path: None,
