@@ -46,6 +46,8 @@ pub enum EffectKind {
     FileOpen,
     FileCreate,
     FileDelete,
+    FileRead,
+    FileWrite,
     FileRename,
     NetworkConnect,
 }
@@ -444,6 +446,8 @@ fn effect_kind(effect: &CanonicalEffect) -> EffectKind {
             FileOperation::Open => EffectKind::FileOpen,
             FileOperation::Create => EffectKind::FileCreate,
             FileOperation::Delete => EffectKind::FileDelete,
+            FileOperation::Read => EffectKind::FileRead,
+            FileOperation::Write => EffectKind::FileWrite,
         },
         CanonicalEffect::FileRename { .. } => EffectKind::FileRename,
         CanonicalEffect::NetworkConnectAttempt { .. } => EffectKind::NetworkConnect,
@@ -483,6 +487,7 @@ mod tests {
     fn file_effect(path: &str) -> CanonicalEffect {
         CanonicalEffect::FilePathAccess {
             actor: Some(executable("demo")),
+            execution_chain: vec![executable("demo")],
             operation: FileOperation::Open,
             target: CanonicalPath {
                 value: path.to_owned(),
@@ -496,6 +501,7 @@ mod tests {
                 truncate: false,
                 append: false,
                 path_only: false,
+                resolve_flags: 0,
                 other_flags: 0,
             }),
         }
@@ -688,6 +694,7 @@ mod tests {
     fn changed_rule_matches_after_state() {
         let before = CanonicalEffect::NetworkConnectAttempt {
             actor: Some(executable("demo")),
+            execution_chain: vec![executable("demo")],
             endpoint: CanonicalNetworkEndpoint::Inet {
                 ip: "192.0.2.1".to_owned(),
                 port: 443,
@@ -695,6 +702,7 @@ mod tests {
         };
         let after = CanonicalEffect::NetworkConnectAttempt {
             actor: Some(executable("demo")),
+            execution_chain: vec![executable("demo")],
             endpoint: CanonicalNetworkEndpoint::Inet {
                 ip: "192.0.2.1".to_owned(),
                 port: 8443,

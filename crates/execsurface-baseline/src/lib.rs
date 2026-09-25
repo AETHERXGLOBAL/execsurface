@@ -351,9 +351,9 @@ mod tests {
                 limitations: vec!["example limitation".to_owned()],
             },
             CanonicalSurface {
-                schema_version: 1,
+                schema_version: 2,
                 normalization: NormalizationMetadata {
-                    profile_version: 1,
+                    profile_version: 2,
                     semantic_roots: vec!["home".to_owned(), "workspace".to_owned()],
                 },
                 effects: vec![],
@@ -385,14 +385,14 @@ mod tests {
             "\"observer\":{\"name\":\"linux-ptrace-metadata-only\",",
             "\"capabilities\":[\"connect_destination\",\"descendant_tracking\"],",
             "\"limitations\":[\"example limitation\"]},",
-            "\"canonical_surface\":{\"schema_version\":1,",
-            "\"normalization\":{\"profile_version\":1,",
+            "\"canonical_surface\":{\"schema_version\":2,",
+            "\"normalization\":{\"profile_version\":2,",
             "\"semantic_roots\":[\"home\",\"workspace\"]},\"effects\":[]}}}"
         );
         assert_eq!(bytes, expected.as_bytes());
         assert_eq!(
             digest_payload(&payload).expect("digest"),
-            "sha256:8e1b09c73d3133871dc2533a84fb01d5e62b6b8a30138a9e6f49ee03eabcd0b8"
+            "sha256:0346b43c414ed0e0cf67d5cb41b4cfb36a9a15d5e568d6b13a1d8c0a38af8c41"
         );
     }
 
@@ -406,6 +406,7 @@ mod tests {
             .effects
             .push(CanonicalEffect::NetworkConnectAttempt {
                 actor: None,
+                execution_chain: vec![],
                 endpoint: CanonicalNetworkEndpoint::Inet {
                     ip: "192.0.2.10".to_owned(),
                     port: 443,

@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "baseline_digest", "payload"],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "baseline_digest": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
@@ -81,7 +81,7 @@
               "additionalProperties": false,
               "required": ["profile_version", "semantic_roots"],
               "properties": {
-                "profile_version": { "const": 1 },
+                "profile_version": { "const": 2 },
                 "semantic_roots": {
                   "type": "array",
                   "items": { "type": "string" },
@@ -120,7 +120,7 @@
           ]
         },
         "resolution": {
-          "enum": ["lexical", "relative_unresolved", "contains_parent_traversal"]
+          "enum": ["lexical", "relative_unresolved", "contains_parent_traversal", "kernel_fd_resolved"]
         }
       }
     },

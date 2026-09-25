@@ -30,6 +30,8 @@
                   "file_open",
                   "file_create",
                   "file_delete",
+                  "file_read",
+                  "file_write",
                   "file_rename",
                   "network_connect"
                 ]

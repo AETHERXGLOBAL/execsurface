@@ -128,6 +128,8 @@ fn effect_name(effect: EffectKind) -> &'static str {
         EffectKind::FileOpen => "FILE_OPEN",
         EffectKind::FileCreate => "FILE_CREATE",
         EffectKind::FileDelete => "FILE_DELETE",
+        EffectKind::FileRead => "FILE_READ",
+        EffectKind::FileWrite => "FILE_WRITE",
         EffectKind::FileRename => "FILE_RENAME",
         EffectKind::NetworkConnect => "NETWORK_CONNECT",
     }
