@@ -2,6 +2,7 @@
 members = [
     "crates/execsurface-model",
     "crates/execsurface-observe",
+    "crates/execsurface-normalize",
     "crates/execsurface-cli",
 ]
 resolver = "2"
