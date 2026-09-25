@@ -202,7 +202,7 @@ fn trace_parent(root: libc::pid_t) -> Result<Observation, ObserveError> {
         }
 
         let stop_signal = libc::WSTOPSIG(wait_status);
-        let event = ((wait_status as u32) >> 16) as libc::c_uint;
+        let event = ((wait_status as u32) >> 16) as libc::c_int;
 
         if stop_signal == libc::SIGTRAP && event != 0 {
             handle_ptrace_event(tid, event, &mut tracees, &mut collector)?;
@@ -236,7 +236,7 @@ fn trace_parent(root: libc::pid_t) -> Result<Observation, ObserveError> {
 
 fn handle_ptrace_event(
     tid: libc::pid_t,
-    event: libc::c_uint,
+    event: libc::c_int,
     tracees: &mut HashMap<libc::pid_t, TraceeState>,
     collector: &mut Collector,
 ) -> Result<(), ObserveError> {
