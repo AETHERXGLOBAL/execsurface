@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### 2026-09-26 — M7.1 Registry Distribution Parity in progress
+
+- prepared the public CLI package name `execsurface` for Rust-native installation;
+- advanced product version to `0.1.0-alpha.2` without changing evidence schema v2;
+- added exact registry versions to publishable workspace path dependencies;
+- kept `execsurface-bench` explicitly non-publishable;
+- added a read-only registry packaging/lockfile gate;
+- added a manually dispatched, environment-protected crates.io publication workflow;
+- documented the first-publication credential boundary and dependency-order publication;
+- retained GitHub Release binaries and stable `@v0.1` Action distribution.
+
+
 ### 2026-09-26 — M7 External Real-World Compatibility Proof accepted
 
 - pinned external target `sharkdp/fd@ce97e473ebaec49697c07daa50a7bc2b32f713d2`;
