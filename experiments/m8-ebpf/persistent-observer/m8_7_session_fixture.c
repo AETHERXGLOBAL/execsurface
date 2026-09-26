@@ -6,19 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
+#ifndef M8_7_CHURN_CHILDREN
 #define M8_7_CHURN_CHILDREN 64
-#define M8_7_LOSS_CHILDREN 1024
-
-static volatile sig_atomic_t loss_flood_released = 0;
-
-static void release_loss_flood(int signo)
-{
-    (void)signo;
-    loss_flood_released = 1;
-}
+#endif
 
 static int write_pid_marker(const char *path)
 {
@@ -45,22 +37,6 @@ static int write_pid_marker(const char *path)
     return 0;
 }
 
-static int write_done_marker(const char *path)
-{
-    FILE *marker = fopen(path, "w");
-    if (marker == NULL) {
-        perror("fopen done marker");
-        return 36;
-    }
-    if (fprintf(marker, "done\n") < 0) {
-        fclose(marker);
-        return 37;
-    }
-    if (fclose(marker) != 0)
-        return 38;
-    return 0;
-}
-
 static int run_crash_hold(void)
 {
     const char *marker_path = getenv("M8_7_CRASH_MARKER");
@@ -77,67 +53,11 @@ static int run_crash_hold(void)
         pause();
 }
 
-static int run_loss_flood(void)
-{
-    const char *ready_path = getenv("M8_7_CRASH_MARKER");
-    const char *done_path = getenv("M8_7_DONE_MARKER");
-    const char *auto_release = getenv("M8_7_LOSS_AUTO_RELEASE");
-    if (ready_path == NULL || ready_path[0] == '\0' || done_path == NULL || done_path[0] == '\0') {
-        fprintf(stderr, "M8_7_CRASH_MARKER and M8_7_DONE_MARKER are required in loss-flood mode\n");
-        return 39;
-    }
-
-    struct sigaction action;
-    memset(&action, 0, sizeof(action));
-    action.sa_handler = release_loss_flood;
-    sigemptyset(&action.sa_mask);
-    if (sigaction(SIGUSR1, &action, NULL) != 0) {
-        perror("sigaction");
-        return 40;
-    }
-
-    int marker_rc = write_pid_marker(ready_path);
-    if (marker_rc != 0)
-        return marker_rc;
-
-    if (auto_release != NULL && strcmp(auto_release, "1") == 0)
-        loss_flood_released = 1;
-
-    while (!loss_flood_released)
-        pause();
-
-    for (int child_index = 0; child_index < M8_7_LOSS_CHILDREN; ++child_index) {
-        pid_t child = fork();
-        if (child < 0) {
-            perror("fork loss flood");
-            return 41;
-        }
-        if (child == 0) {
-            execl("/bin/true", "true", (char *)NULL);
-            _exit(127);
-        }
-
-        int status = 0;
-        while (waitpid(child, &status, 0) < 0) {
-            if (errno == EINTR)
-                continue;
-            perror("waitpid loss flood");
-            return 42;
-        }
-        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
-            return 43;
-    }
-
-    return write_done_marker(done_path);
-}
-
 static int run_tree(void)
 {
     const char *mode = getenv("M8_7_MODE");
     if (mode != NULL && strcmp(mode, "crash-hold") == 0)
         return run_crash_hold();
-    if (mode != NULL && strcmp(mode, "loss-flood") == 0)
-        return run_loss_flood();
 
     pid_t root = getpid();
 
@@ -165,8 +85,8 @@ static int run_tree(void)
     }
 
     /*
-     * Root exits without waiting. The collector must retain and drain all 64
-     * epoch-propagated descendants before the session can become clean.
+     * Root exits without waiting. The collector must retain and drain every
+     * epoch-propagated descendant before the session can become clean.
      */
     return 0;
 }
