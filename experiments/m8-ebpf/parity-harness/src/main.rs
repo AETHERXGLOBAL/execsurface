@@ -119,7 +119,10 @@ fn parse_args() -> Result<(PathBuf, PathBuf, PathBuf), Box<dyn Error>> {
     Ok((reference, candidate, output))
 }
 
-fn compare(reference: &Observation, candidate: &CandidateReport) -> Result<ParityReport, Box<dyn Error>> {
+fn compare(
+    reference: &Observation,
+    candidate: &CandidateReport,
+) -> Result<ParityReport, Box<dyn Error>> {
     let reference_descriptor = reference_backend_descriptor();
     let candidate_descriptor = experimental_ebpf_backend_descriptor();
     reference_descriptor.validate_capability_partition()?;
@@ -140,7 +143,11 @@ fn compare(reference: &Observation, candidate: &CandidateReport) -> Result<Parit
         .into());
     }
 
-    validate_candidate_capabilities(&candidate.backend, &candidate_descriptor.capabilities, &candidate_descriptor.unsupported_capabilities)?;
+    validate_candidate_capabilities(
+        &candidate.backend,
+        &candidate_descriptor.capabilities,
+        &candidate_descriptor.unsupported_capabilities,
+    )?;
 
     let hard_blocker = !reference.complete || candidate_hard_blocked(candidate);
     let mut assessments = Vec::new();
@@ -176,7 +183,8 @@ fn compare(reference: &Observation, candidate: &CandidateReport) -> Result<Parit
         });
 
         assessments.push(Assessment {
-            semantic_class: capability_name(ObservationCapability::ProcessExecOccurrence).to_owned(),
+            semantic_class: capability_name(ObservationCapability::ProcessExecOccurrence)
+                .to_owned(),
             verdict: if reference_projection.exec_roles == candidate_projection.exec_roles {
                 ParityVerdict::Equivalent
             } else {
@@ -189,23 +197,30 @@ fn compare(reference: &Observation, candidate: &CandidateReport) -> Result<Parit
         });
 
         assessments.push(Assessment {
-            semantic_class: capability_name(ObservationCapability::SuccessfulOpenFdIdentity).to_owned(),
+            semantic_class: capability_name(ObservationCapability::SuccessfulOpenFdIdentity)
+                .to_owned(),
             verdict: ParityVerdict::RepresentationDifference,
             detail: "ptrace proves successful open into its internal FD table but raw Observation v2 does not serialize a dedicated successful-open identity event; eBPF does, so raw evidence is not yet equivalent".to_owned(),
         });
 
         assessments.push(Assessment {
-            semantic_class: capability_name(ObservationCapability::LossTruncationVisibility).to_owned(),
+            semantic_class: capability_name(ObservationCapability::LossTruncationVisibility)
+                .to_owned(),
             verdict: ParityVerdict::RepresentationDifference,
             detail: "both backends expose fail-closed health semantics, but transport-specific loss accounting is not treated as event-level equivalence; controlled incomplete evidence is tested separately".to_owned(),
         });
     }
 
-    for capability in candidate_descriptor.unsupported_capabilities.iter().copied() {
+    for capability in candidate_descriptor
+        .unsupported_capabilities
+        .iter()
+        .copied()
+    {
         assessments.push(Assessment {
             semantic_class: capability_name(capability).to_owned(),
             verdict: ParityVerdict::NonComparable,
-            detail: "candidate backend explicitly declares this semantic class unsupported".to_owned(),
+            detail: "candidate backend explicitly declares this semantic class unsupported"
+                .to_owned(),
         });
     }
 
@@ -229,7 +244,11 @@ fn validate_candidate_capabilities(
     expected_supported: &[ObservationCapability],
     expected_unsupported: &[ObservationCapability],
 ) -> Result<(), Box<dyn Error>> {
-    let actual_supported = backend.capabilities.iter().cloned().collect::<BTreeSet<_>>();
+    let actual_supported = backend
+        .capabilities
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let actual_unsupported = backend
         .unsupported_capabilities
         .iter()
@@ -293,10 +312,12 @@ fn project_reference(reference: &Observation) -> Result<Projection, Box<dyn Erro
                 child_tid,
                 mechanism,
             } => {
-                let parent_role = roles
-                    .get(&event.tid)
-                    .cloned()
-                    .ok_or_else(|| format!("reference spawn parent {} has no structural role", event.tid))?;
+                let parent_role = roles.get(&event.tid).cloned().ok_or_else(|| {
+                    format!(
+                        "reference spawn parent {} has no structural role",
+                        event.tid
+                    )
+                })?;
                 let mechanism = spawn_name(*mechanism).to_owned();
                 let counter = counters
                     .entry((parent_role.clone(), mechanism.clone()))
@@ -307,10 +328,9 @@ fn project_reference(reference: &Observation) -> Result<Projection, Box<dyn Erro
                 spawn_edges.push(format!("{parent_role}|{mechanism}|{child_role}"));
             }
             RawEventKind::ProcessExec { .. } => {
-                let role = roles
-                    .get(&event.tid)
-                    .cloned()
-                    .ok_or_else(|| format!("reference exec tid {} has no structural role", event.tid))?;
+                let role = roles.get(&event.tid).cloned().ok_or_else(|| {
+                    format!("reference exec tid {} has no structural role", event.tid)
+                })?;
                 exec_roles.push(role);
             }
             _ => {}
@@ -324,7 +344,9 @@ fn project_reference(reference: &Observation) -> Result<Projection, Box<dyn Erro
 }
 
 fn project_candidate(candidate: &CandidateReport) -> Result<Projection, Box<dyn Error>> {
-    let root_pid = candidate.root_pid.ok_or("candidate report has no root_pid")?;
+    let root_pid = candidate
+        .root_pid
+        .ok_or("candidate report has no root_pid")?;
     let mut roles = BTreeMap::new();
     roles.insert(root_pid, "root".to_owned());
     let mut counters = BTreeMap::<(String, String), u32>::new();
@@ -342,10 +364,9 @@ fn project_candidate(candidate: &CandidateReport) -> Result<Projection, Box<dyn 
                 mechanism,
                 ..
             } => {
-                let parent_role = roles
-                    .get(parent_pid)
-                    .cloned()
-                    .ok_or_else(|| format!("candidate spawn parent {parent_pid} has no structural role"))?;
+                let parent_role = roles.get(parent_pid).cloned().ok_or_else(|| {
+                    format!("candidate spawn parent {parent_pid} has no structural role")
+                })?;
                 let counter = counters
                     .entry((parent_role.clone(), mechanism.clone()))
                     .or_insert(0);
@@ -394,7 +415,9 @@ fn capability_name(capability: ObservationCapability) -> &'static str {
     match capability {
         ObservationCapability::ProcessSpawnLineage => "process_spawn_lineage",
         ObservationCapability::ProcessExecOccurrence => "process_exec_occurrence",
-        ObservationCapability::ProcessExecPathIdentity => "unconditional_process_exec_path_identity",
+        ObservationCapability::ProcessExecPathIdentity => {
+            "unconditional_process_exec_path_identity"
+        }
         ObservationCapability::ProcessExit => "process_exit",
         ObservationCapability::PathAccessIntent => "path_access_intent",
         ObservationCapability::SuccessfulOpenFdIdentity => "successful_open_fd_identity",
