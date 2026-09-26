@@ -1,10 +1,11 @@
 # M8 — Pluggable Observation Backends & eBPF Evidence Architecture
 
 Date: 2026-09-26
-Status: **OPEN — M8.0–M8.2 CLOSED / M8.3 NEXT**
-Tracking: #34
+Status: **OPEN — M8.0–M8.4 CLOSED / M8.5 NEXT**
+Tracking: #34, #37, #40
 M8.2 decision: `docs/milestones/M8_2_STACK_DECISION.md`
 M8.2 evidence: `docs/milestones/M8_2_EVIDENCE.md`
+M8.4 evidence: `docs/milestones/M8_4_LOSS_SEMANTICS.md`
 
 ## Objective
 
@@ -155,6 +156,8 @@ The backend-to-core handoff must expose an explicit completeness state. Minimum 
 - `INCOMPLETE_CAPABILITY` — the host/backend cannot establish a required selected semantic;
 - `ERROR` — collection protocol, attachment, verifier, decoding, or lifecycle failure prevents reliable evidence.
 
+M8.4 operationalizes the non-complete/error family in the experimental collector with explicit machine-readable states including `incomplete_loss`, `incomplete_limit`, `incomplete_capability`, `incomplete_lifecycle`, `incomplete_decode`, and `incomplete_collector`. These remain experimental collection-health states until the public integration gate defines the stable external schema.
+
 Only `COMPLETE` may be eligible to proceed toward a normal PASS. Other states must remain fail-closed under existing comparability/verdict semantics.
 
 ## Capability model
@@ -209,7 +212,7 @@ Any kernel-side temporary data required to resolve metadata must be minimized an
 
 The implementation spike must evaluate BPF ring buffer as the primary event transport because it supports shared multi-producer ordering properties useful for process lifecycle streams. However, transport choice is evidence-driven rather than assumed.
 
-M8.4 must prove how producer reservation failure, dropped records, user-space consumer lag, buffer saturation, attachment failure, and teardown races become visible to ExecSurface.
+M8.4 proved how producer reservation failure, dropped records, user-space consumer lag, buffer saturation, attachment/setup failure, decode failure, post-start collector failure, and teardown races become visible and fail closed in the experimental collector. A post-start collector failure is additionally bounded by target process-group containment before returning failure.
 
 A condition that can lose selected events without detection is a **KILLED** design for PASS-capable operation.
 
@@ -249,7 +252,7 @@ Risks to measure:
 - static/dynamic linking and release portability;
 - reproducibility and supply-chain implications.
 
-No library is selected by preference. M8.2 must record a reproducible decision matrix and preserve losing-path evidence.
+No library is selected by preference. M8.2 recorded a reproducible decision matrix and preserved losing-path evidence; libbpf-rs/libbpf is the selected experimental implementation path and Aya remains preserved as a viable alternative.
 
 ## Attachment strategy
 
@@ -321,7 +324,7 @@ Acceptance requires a minimum declared capability set with explicit unsupported 
 
 ### M8.4 — Fail-closed loss gate
 
-Acceptance requires controlled proof that known event loss, truncation, buffer pressure, attachment failure, and teardown failure cannot produce silent PASS.
+Acceptance requires controlled proof that known event loss, truncation, buffer pressure, attachment failure, decode/lifecycle failure, and post-start collector failure cannot produce silent PASS or leave unbounded target execution.
 
 ### M8.5 — Parity gate
 
@@ -333,17 +336,17 @@ Acceptance requires representative direct/ptrace/eBPF measurements and a declare
 
 ### M8.7 — Public-alpha integration gate
 
-Acceptance requires safe backend selection, documentation, technical evaluation updates, release evidence, and no regression of the stable current path.
+Acceptance requires safe backend selection, expanded incomplete-state CLI/schema surfacing, documentation, technical evaluation updates, release evidence, and no regression of the stable current path.
 
 ## Current status
 
-- M8 objective: **OPEN — M8.3 NEXT**
+- M8 objective: **OPEN — M8.5 NEXT**
 - M8.0 architecture: **CLOSED / ACCEPTED**
 - M8.1 observer abstraction: **CLOSED / ACCEPTED**
 - M8.2 eBPF implementation selection: **CLOSED / ACCEPTED — libbpf-rs / libbpf selected**
-- M8.3 metadata-only eBPF observer: **OPEN / NEXT**
-- M8.4 fail-closed loss gate: **NOT STARTED**
-- M8.5 ptrace/eBPF parity gate: **NOT STARTED**
+- M8.3 metadata-only eBPF observer: **CLOSED / ACCEPTED — experimental observation-only path**
+- M8.4 fail-closed loss/lifecycle gate: **CLOSED / PROVED**
+- M8.5 ptrace/eBPF parity gate: **OPEN / NEXT**
 - M8.6 performance / compatibility gate: **NOT STARTED**
 - M8.7 public-alpha integration gate: **NOT STARTED**
 - eBPF PASS authority: **NOT AUTHORIZED**
