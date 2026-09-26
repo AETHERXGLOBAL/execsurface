@@ -124,6 +124,36 @@ jobs:
           print('M8_5A_CLEAN_CLASS_LOCAL_PARITY_PASS')
           PY
 
+      - name: Prove vfork semantic parity
+        shell: bash
+        run: |
+          set -euxo pipefail
+          HARNESS=experiments/m8-ebpf/parity-harness/target/release/execsurface-m8-parity-harness
+          FIX=experiments/m8-ebpf/parity-harness/target/release/m8_5_parity_fixture
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CLI=target/release/execsurface
+          REF="$RUNNER_TEMP/m8-5-vfork-reference.json"
+          CAND="$RUNNER_TEMP/m8-5-vfork-candidate.json"
+          OUT="$RUNNER_TEMP/m8-5-vfork-parity.json"
+
+          "$CLI" observe -- "$FIX" vfork-exec >"$REF"
+          sudo "$CLI" observe --backend experimental-libbpf --collector "$OBS" -- "$FIX" vfork-exec >"$CAND"
+          "$HARNESS" "$REF" "$CAND" "$OUT"
+          cat "$OUT"
+
+          python3 - "$OUT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          verdicts = {a['semantic_class']: a['verdict'] for a in report['assessments']}
+          assert report['reference_complete'] is True, report
+          assert report['candidate_completeness'] == 'incomplete_capability', report
+          assert verdicts['process_spawn_lineage'] == 'equivalent', verdicts
+          assert verdicts['process_exec_occurrence'] == 'equivalent', verdicts
+          assert report['full_surface_comparable'] is False
+          assert report['ebpf_pass_authorized'] is False
+          print('M8_5C_VFORK_PARITY_PASS')
+          PY
+
       - name: Prove nested-thread parent lineage parity
         shell: bash
         run: |
