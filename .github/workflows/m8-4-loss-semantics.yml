@@ -103,9 +103,54 @@ jobs:
           assert failure is not None, report
           assert failure['stage'] in {'open', 'load', 'attach', 'ring_buffer_register', 'ring_buffer_build'}, failure
           assert failure['target_started'] is False, failure
+          assert failure['target_terminated'] is False, failure
           assert 'collector_stage_failure' in codes, codes
           assert report['events'] == [], report['events']
           print(f"M8_4_MACHINE_READABLE_COLLECTOR_FAILURE_PASS stage={failure['stage']}")
+          PY
+          "$CHECK" "$REPORT"
+
+      - name: Prove post-start collector failure terminates the target process group
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CHECK=experiments/m8-ebpf/libbpf-observer/target/release/contract-check
+          REPORT="$RUNNER_TEMP/m8-4-post-start-failure.json"
+          STARTED="$RUNNER_TEMP/m8-4-post-started"
+          FINISHED="$RUNNER_TEMP/m8-4-post-finished"
+          LEAKED="$RUNNER_TEMP/m8-4-post-descendant-leaked"
+          rm -f "$REPORT" "$STARTED" "$FINISHED" "$LEAKED"
+
+          set +e
+          sudo "$OBS" --report "$REPORT" --inject-poll-error -- \
+            /bin/sh -c "touch '$STARTED'; (sleep 0.8; touch '$LEAKED') & sleep 2; touch '$FINISHED'" \
+            >"$RUNNER_TEMP/m8-4-post.out" 2>"$RUNNER_TEMP/m8-4-post.err"
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/m8-4-post.err"
+          test "$rc" -ne 0
+          test -f "$REPORT"
+          test -e "$STARTED"
+          sleep 1
+          test ! -e "$FINISHED"
+          test ! -e "$LEAKED"
+
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          codes = {w['code'] for w in report['warnings']}
+          failure = report['collector_failure']
+          assert report['observation_complete'] is False
+          assert report['completeness'] == 'incomplete_collector', report
+          assert isinstance(report['root_pid'], int), report['root_pid']
+          assert failure is not None, report
+          assert failure['stage'] == 'poll', failure
+          assert failure['target_started'] is True, failure
+          assert failure['target_terminated'] is True, failure
+          assert 'collector_stage_failure' in codes, codes
+          assert 'target_terminated_after_collector_failure' in codes, codes
+          print('M8_4_POST_START_FAILURE_CONTAINMENT_PASS')
           PY
           "$CHECK" "$REPORT"
 
@@ -249,6 +294,7 @@ jobs:
           set -euxo pipefail
           python3 - \
             "$RUNNER_TEMP/m8-4-collector-failure.json" \
+            "$RUNNER_TEMP/m8-4-post-start-failure.json" \
             "$RUNNER_TEMP/m8-4-limit.json" \
             "$RUNNER_TEMP/m8-4-loss.json" \
             "$RUNNER_TEMP/m8-4-consumer-lag.json" \
