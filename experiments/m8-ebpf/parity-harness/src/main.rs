@@ -85,43 +85,68 @@ enum CandidateEvent {
 struct Projection {
     spawn_edges: Vec<String>,
     exec_roles: Vec<String>,
+    successful_open_witnesses: BTreeSet<String>,
+    successful_open_identity_complete: bool,
+}
+
+struct HarnessArgs {
+    reference_path: PathBuf,
+    candidate_path: PathBuf,
+    output_path: PathBuf,
+    open_path: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let (reference_path, candidate_path, output_path) = parse_args()?;
-    let reference: Observation = serde_json::from_slice(&fs::read(reference_path)?)?;
-    let candidate: CandidateReport = serde_json::from_slice(&fs::read(candidate_path)?)?;
+    let args = parse_args()?;
+    let reference: Observation = serde_json::from_slice(&fs::read(args.reference_path)?)?;
+    let candidate: CandidateReport = serde_json::from_slice(&fs::read(args.candidate_path)?)?;
 
-    let report = compare(&reference, &candidate)?;
+    let report = compare(&reference, &candidate, args.open_path.as_deref())?;
     let mut bytes = serde_json::to_vec_pretty(&report)?;
     bytes.push(b'\n');
-    fs::write(output_path, bytes)?;
+    fs::write(args.output_path, bytes)?;
     Ok(())
 }
 
-fn parse_args() -> Result<(PathBuf, PathBuf, PathBuf), Box<dyn Error>> {
+fn parse_args() -> Result<HarnessArgs, Box<dyn Error>> {
     let mut args = std::env::args_os().skip(1);
-    let reference = args
-        .next()
-        .map(PathBuf::from)
-        .ok_or("usage: execsurface-m8-parity-harness REFERENCE_JSON CANDIDATE_JSON OUTPUT_JSON")?;
-    let candidate = args
+    let reference_path = args.next().map(PathBuf::from).ok_or(
+        "usage: execsurface-m8-parity-harness REFERENCE_JSON CANDIDATE_JSON OUTPUT_JSON [--open-path PATH]",
+    )?;
+    let candidate_path = args
         .next()
         .map(PathBuf::from)
         .ok_or("missing candidate report path")?;
-    let output = args
+    let output_path = args
         .next()
         .map(PathBuf::from)
         .ok_or("missing output report path")?;
-    if args.next().is_some() {
-        return Err("unexpected extra parity-harness argument".into());
+
+    let mut open_path = None;
+    while let Some(arg) = args.next() {
+        if arg == "--open-path" {
+            if open_path.is_some() {
+                return Err("--open-path may be supplied only once".into());
+            }
+            let value = args.next().ok_or("--open-path requires a path value")?;
+            open_path = Some(value.to_string_lossy().into_owned());
+        } else {
+            return Err(format!("unexpected parity-harness argument: {}", arg.to_string_lossy()).into());
+        }
     }
-    Ok((reference, candidate, output))
+
+    Ok(HarnessArgs {
+        reference_path,
+        candidate_path,
+        output_path,
+        open_path,
+    })
 }
 
 fn compare(
     reference: &Observation,
     candidate: &CandidateReport,
+    open_path: Option<&str>,
 ) -> Result<ParityReport, Box<dyn Error>> {
     let reference_descriptor = reference_backend_descriptor();
     let candidate_descriptor = experimental_ebpf_backend_descriptor();
@@ -166,8 +191,8 @@ fn compare(
             });
         }
     } else {
-        let reference_projection = project_reference(reference)?;
-        let candidate_projection = project_candidate(candidate)?;
+        let reference_projection = project_reference(reference, open_path)?;
+        let candidate_projection = project_candidate(candidate, open_path)?;
 
         assessments.push(Assessment {
             semantic_class: capability_name(ObservationCapability::ProcessSpawnLineage).to_owned(),
@@ -196,12 +221,11 @@ fn compare(
             ),
         });
 
-        assessments.push(Assessment {
-            semantic_class: capability_name(ObservationCapability::SuccessfulOpenFdIdentity)
-                .to_owned(),
-            verdict: ParityVerdict::RepresentationDifference,
-            detail: "ptrace proves successful open into its internal FD table but raw Observation v2 does not serialize a dedicated successful-open identity event; eBPF does, so raw evidence is not yet equivalent".to_owned(),
-        });
+        assessments.push(successful_open_assessment(
+            open_path,
+            &reference_projection,
+            &candidate_projection,
+        ));
 
         assessments.push(Assessment {
             semantic_class: capability_name(ObservationCapability::LossTruncationVisibility)
@@ -237,6 +261,60 @@ fn compare(
         ebpf_pass_authorized: false,
         assessments,
     })
+}
+
+fn successful_open_assessment(
+    open_path: Option<&str>,
+    reference: &Projection,
+    candidate: &Projection,
+) -> Assessment {
+    let semantic_class =
+        capability_name(ObservationCapability::SuccessfulOpenFdIdentity).to_owned();
+
+    let Some(open_path) = open_path else {
+        return Assessment {
+            semantic_class,
+            verdict: ParityVerdict::RepresentationDifference,
+            detail: "ptrace proves successful open into its internal FD table but raw Observation v2 does not serialize a dedicated successful-open identity event; eBPF does, so raw evidence is not yet equivalent without an explicit controlled witness projection".to_owned(),
+        };
+    };
+
+    if !candidate.successful_open_identity_complete {
+        return Assessment {
+            semantic_class,
+            verdict: ParityVerdict::BlockedIncomplete,
+            detail: format!(
+                "successful-open identity for focused path {open_path:?} is blocked because at least one candidate successful-open event lacked path identity"
+            ),
+        };
+    }
+
+    let reference_witnesses = &reference.successful_open_witnesses;
+    let candidate_witnesses = &candidate.successful_open_witnesses;
+    let verdict = if reference_witnesses == candidate_witnesses && !reference_witnesses.is_empty()
+    {
+        ParityVerdict::Equivalent
+    } else if reference_witnesses.is_empty() && candidate_witnesses.is_empty() {
+        ParityVerdict::NonComparable
+    } else if !reference_witnesses.is_empty()
+        && reference_witnesses.is_subset(candidate_witnesses)
+    {
+        ParityVerdict::ReferenceSubset
+    } else if !candidate_witnesses.is_empty()
+        && candidate_witnesses.is_subset(reference_witnesses)
+    {
+        ParityVerdict::CandidateSubset
+    } else {
+        ParityVerdict::Contradicted
+    };
+
+    Assessment {
+        semantic_class,
+        verdict,
+        detail: format!(
+            "controlled successful-open witness projection for path={open_path:?}; ptrace witness requires later fd-attributed I/O and therefore is not generalized to unused successful opens; reference_witnesses={reference_witnesses:?}; candidate_witnesses={candidate_witnesses:?}"
+        ),
+    }
 }
 
 fn validate_candidate_capabilities(
@@ -294,7 +372,10 @@ fn candidate_hard_blocked(candidate: &CandidateReport) -> bool {
         )
 }
 
-fn project_reference(reference: &Observation) -> Result<Projection, Box<dyn Error>> {
+fn project_reference(
+    reference: &Observation,
+    open_path: Option<&str>,
+) -> Result<Projection, Box<dyn Error>> {
     let root_tid = reference
         .events
         .first()
@@ -305,6 +386,7 @@ fn project_reference(reference: &Observation) -> Result<Projection, Box<dyn Erro
     let mut counters = BTreeMap::<(String, String), u32>::new();
     let mut spawn_edges = Vec::new();
     let mut exec_roles = Vec::new();
+    let mut successful_open_witnesses = BTreeSet::new();
 
     for event in &reference.events {
         match &event.kind {
@@ -333,6 +415,17 @@ fn project_reference(reference: &Observation) -> Result<Projection, Box<dyn Erro
                 })?;
                 exec_roles.push(role);
             }
+            RawEventKind::FileDescriptorAccess { path, .. }
+                if open_path.is_some_and(|focus| path == focus) =>
+            {
+                let role = roles.get(&event.tid).cloned().ok_or_else(|| {
+                    format!(
+                        "reference fd-access tid {} has no structural role",
+                        event.tid
+                    )
+                })?;
+                successful_open_witnesses.insert(format!("{role}|{path}"));
+            }
             _ => {}
         }
     }
@@ -340,10 +433,15 @@ fn project_reference(reference: &Observation) -> Result<Projection, Box<dyn Erro
     Ok(Projection {
         spawn_edges,
         exec_roles,
+        successful_open_witnesses,
+        successful_open_identity_complete: true,
     })
 }
 
-fn project_candidate(candidate: &CandidateReport) -> Result<Projection, Box<dyn Error>> {
+fn project_candidate(
+    candidate: &CandidateReport,
+    open_path: Option<&str>,
+) -> Result<Projection, Box<dyn Error>> {
     let root_pid = candidate
         .root_pid
         .ok_or("candidate report has no root_pid")?;
@@ -352,6 +450,8 @@ fn project_candidate(candidate: &CandidateReport) -> Result<Projection, Box<dyn 
     let mut counters = BTreeMap::<(String, String), u32>::new();
     let mut spawn_edges = Vec::new();
     let mut exec_roles = Vec::new();
+    let mut successful_open_witnesses = BTreeSet::new();
+    let mut successful_open_identity_complete = true;
 
     let mut events = candidate.events.iter().collect::<Vec<_>>();
     events.sort_by_key(|event| candidate_sequence(event));
@@ -383,15 +483,27 @@ fn project_candidate(candidate: &CandidateReport) -> Result<Projection, Box<dyn 
                     .ok_or_else(|| format!("candidate exec pid {pid} has no structural role"))?;
                 exec_roles.push(role);
             }
-            CandidateEvent::SuccessfulOpenIdentity { pid, fd, path, .. } => {
-                let _successful_open_metadata_is_not_raw_parity_yet = (pid, fd, path.as_deref());
-            }
+            CandidateEvent::SuccessfulOpenIdentity { pid, fd, path, .. } => match path {
+                Some(path) if open_path.is_some_and(|focus| path == focus) => {
+                    let role = roles.get(pid).cloned().ok_or_else(|| {
+                        format!("candidate successful-open pid {pid} has no structural role")
+                    })?;
+                    let _fd_is_local_evidence_not_cross_run_identity = fd;
+                    successful_open_witnesses.insert(format!("{role}|{path}"));
+                }
+                Some(_) => {}
+                None => {
+                    successful_open_identity_complete = false;
+                }
+            },
         }
     }
 
     Ok(Projection {
         spawn_edges,
         exec_roles,
+        successful_open_witnesses,
+        successful_open_identity_complete,
     })
 }
 

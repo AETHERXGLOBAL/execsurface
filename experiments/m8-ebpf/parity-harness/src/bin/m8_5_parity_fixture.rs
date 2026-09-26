@@ -6,6 +6,8 @@ use std::ptr;
 use std::thread;
 use std::time::Duration;
 
+const MISSING_OPEN_PATH: &str = "/__execsurface_m8_5_missing__/open-probe";
+
 fn main() -> Result<(), Box<dyn Error>> {
     let mode = std::env::args()
         .nth(1)
@@ -15,6 +17,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         "fork-exec" => run_fork_exec(),
         "vfork-exec" => run_vfork_exec(),
         "nested-thread-fork" => run_nested_thread_fork(),
+        "failed-open" => run_failed_open(),
         other => Err(format!("unknown fixture mode: {other}").into()),
     }
 }
@@ -24,6 +27,25 @@ fn open_probe() -> Result<File, Box<dyn Error>> {
     let mut byte = [0_u8; 1];
     file.read_exact(&mut byte)?;
     Ok(file)
+}
+
+fn run_failed_open() -> Result<(), Box<dyn Error>> {
+    match File::open(MISSING_OPEN_PATH) {
+        Ok(file) => {
+            drop(file);
+            Err(format!("controlled missing path unexpectedly opened: {MISSING_OPEN_PATH}").into())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // Keep the process alive briefly so the candidate collector can
+            // drain any surrounding loader/runtime events deterministically.
+            thread::sleep(Duration::from_millis(120));
+            Ok(())
+        }
+        Err(error) => Err(format!(
+            "controlled missing-path open failed with unexpected error kind: {error}"
+        )
+        .into()),
+    }
 }
 
 fn run_fork_exec() -> Result<(), Box<dyn Error>> {
