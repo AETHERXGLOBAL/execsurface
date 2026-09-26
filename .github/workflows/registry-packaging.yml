@@ -25,22 +25,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Regenerate lockfile for package identity changes
-        run: cargo generate-lockfile
-
-      - name: Commit lockfile on the dedicated preparation branch
-        if: github.event_name == 'push'
+      - name: Verify committed lockfile matches registry-ready manifests
         run: |
           set -euo pipefail
-          if git diff --quiet -- Cargo.lock; then
-            echo "Cargo.lock already current"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Cargo.lock
-          git commit -m "chore: refresh Cargo.lock for registry distribution"
-          git push origin "HEAD:$GITHUB_REF_NAME"
+          cargo generate-lockfile
+          git diff --exit-code -- Cargo.lock
 
       - name: Full source gates
         run: |
