@@ -1,0 +1,71 @@
+{
+  "schema_version": "m9-evidence-v1",
+  "evidence_id": "M9-SCHEMA-SENTINEL-ZERO-CONTACT",
+  "timestamp_utc": "2026-09-26T19:30:00Z",
+  "independence_class": "ZERO_CONTACT_EXTERNAL_REPRO",
+  "claim_status": "OPEN",
+  "external_reference": null,
+  "provenance": {
+    "initiated_by": "AETHER_X",
+    "executed_by": "AETHER_X",
+    "aether_x_material_involvement": true,
+    "third_party_attestation": null
+  },
+  "project": {
+    "name": "schema-sentinel-external-project",
+    "repository": "https://github.com/sharkdp/fd",
+    "revision": "ce97e473ebaec49697c07daa50a7bc2b32f713d2",
+    "modified_by_aether_x": false
+  },
+  "execsurface": {
+    "version": "protocol-sentinel",
+    "source_sha": "8f1ec63219e084f10678655ee698fd2a482312d6",
+    "install_path": "protocol-only",
+    "backend": "ptrace"
+  },
+  "host": {
+    "os": "protocol-sentinel",
+    "kernel": "protocol-sentinel",
+    "architecture": "x86_64",
+    "cpu_description": "protocol-sentinel",
+    "runner_image": null
+  },
+  "workflow": {
+    "command": "protocol-sentinel",
+    "baseline_attempted": false,
+    "rerun_check_attempted": false,
+    "drift_case_attempted": false,
+    "notes": "Validator fixture only; never acceptable as M9 adoption or runtime evidence."
+  },
+  "outcome": {
+    "installation": "NOT_RUN",
+    "doctor": "NOT_RUN",
+    "baseline": "NOT_RUN",
+    "rerun_check": "NOT_RUN",
+    "drift_case": "NOT_RUN",
+    "verdict": null,
+    "comparable": null,
+    "complete": null,
+    "operational_error": null,
+    "false_positive_reported": false,
+    "suspected_false_negative": false,
+    "usability_friction": null
+  },
+  "privacy": {
+    "metadata_only_confirmed": true,
+    "prohibited_sensitive_payload_collected": false,
+    "notes": "Static validator fixture."
+  },
+  "artifacts": [
+    {
+      "name": "sentinel",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "location": "tests/fixtures/m9/valid_zero_contact.json"
+    }
+  ],
+  "failures_exclusions": [],
+  "reproduction": {
+    "instructions": "Run scripts/m9_validate_evidence.py on this file.",
+    "expected_scope": "Schema/semantic validator sentinel only."
+  }
+}
