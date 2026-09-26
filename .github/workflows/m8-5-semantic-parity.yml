@@ -78,18 +78,23 @@ jobs:
           cargo +1.82.0 build \
             --manifest-path crates/execsurface-cli/Cargo.toml \
             --release --locked
+          clang -O2 -Wall -Wextra -Werror \
+            experiments/m8-ebpf/parity-harness/fixtures/m8_5_vfork_fixture.c \
+            -o "$RUNNER_TEMP/m8_5_vfork_fixture"
 
           HARNESS=experiments/m8-ebpf/parity-harness/target/release/execsurface-m8-parity-harness
           FIX=experiments/m8-ebpf/parity-harness/target/release/m8_5_parity_fixture
           NESTED=experiments/m8-ebpf/parity-harness/target/release/m8_5_nested_thread_fixture
+          VFORK="$RUNNER_TEMP/m8_5_vfork_fixture"
           OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
           CLI=target/release/execsurface
           test -x "$HARNESS"
           test -x "$FIX"
           test -x "$NESTED"
+          test -x "$VFORK"
           test -x "$OBS"
           test -x "$CLI"
-          sha256sum "$HARNESS" "$FIX" "$NESTED" "$OBS" "$CLI"
+          sha256sum "$HARNESS" "$FIX" "$NESTED" "$VFORK" "$OBS" "$CLI"
 
       - name: Prove clean class-local parity without granting full equivalence
         shell: bash
@@ -233,15 +238,15 @@ jobs:
         run: |
           set -euxo pipefail
           HARNESS=experiments/m8-ebpf/parity-harness/target/release/execsurface-m8-parity-harness
-          FIX=experiments/m8-ebpf/parity-harness/target/release/m8_5_parity_fixture
+          VFORK="$RUNNER_TEMP/m8_5_vfork_fixture"
           OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
           CLI=target/release/execsurface
           REF="$RUNNER_TEMP/m8-5-vfork-reference.json"
           CAND="$RUNNER_TEMP/m8-5-vfork-candidate.json"
           OUT="$RUNNER_TEMP/m8-5-vfork-parity.json"
 
-          "$CLI" observe -- "$FIX" vfork-exec >"$REF"
-          sudo "$CLI" observe --backend experimental-libbpf --collector "$OBS" -- "$FIX" vfork-exec >"$CAND"
+          "$CLI" observe -- "$VFORK" >"$REF"
+          sudo "$CLI" observe --backend experimental-libbpf --collector "$OBS" -- "$VFORK" >"$CAND"
           "$HARNESS" "$REF" "$CAND" "$OUT"
           cat "$OUT"
 
