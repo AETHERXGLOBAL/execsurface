@@ -1,0 +1,251 @@
+name: M9-H1.6B production-clean ptrace lifecycle promotion
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - scripts/m9_finalize_ptrace_lifecycle_core.py
+      - .github/workflows/m9-h1-6b-production-core-promotion.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prove-and-promote-production-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+      SOURCE: crates/execsurface-observe/src/linux_ptrace.rs
+      PROVED_SHA256: 72978ef99fd24b944cb191d5eeae665387ed223271c31e5636818f5ea81def37
+      PRODUCTION_SHA256: 3dc656358a3675a0d78135bb83046bc45c33dca2718c8bd8b68fa090e18eac8b
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Checkout pinned unmodified casey just
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: casey/just
+          ref: ${{ env.JUST_SHA }}
+          path: external/just
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+          rustc "+$RUST_TOOLCHAIN" --version --verbose
+          test "$(git -C external/just rev-parse HEAD)" = "$JUST_SHA"
+          test -z "$(git -C external/just status --porcelain)"
+
+      - name: Reconstruct proved source then remove diagnostic-only telemetry
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m9-h1-6b-evidence
+          python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_apply_ptrace_exit_lifecycle.py
+          python3 scripts/m9_apply_ptrace_preregistration_ordering.py
+          python3 scripts/m9_apply_get_syscall_info_exit_group_fix.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          git diff --check -- "$SOURCE"
+          proved="$(sha256sum "$SOURCE" | awk '{print $1}')"
+          printf 'proved_expected=%s\nproved_actual=%s\n' "$PROVED_SHA256" "$proved" \
+            | tee m9-h1-6b-evidence/hash-chain.txt
+          test "$proved" = "$PROVED_SHA256"
+          cp "$SOURCE" m9-h1-6b-evidence/linux_ptrace.proved.rs
+          python3 scripts/m9_finalize_ptrace_lifecycle_core.py \
+            | tee m9-h1-6b-evidence/finalizer.log
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          production="$(sha256sum "$SOURCE" | awk '{print $1}')"
+          printf 'production_expected=%s\nproduction_actual=%s\n' \
+            "$PRODUCTION_SHA256" "$production" \
+            | tee -a m9-h1-6b-evidence/hash-chain.txt
+          test "$production" = "$PRODUCTION_SHA256"
+          cp "$SOURCE" m9-h1-6b-evidence/linux_ptrace.production.rs
+          diff -u m9-h1-6b-evidence/linux_ptrace.proved.rs \
+            m9-h1-6b-evidence/linux_ptrace.production.rs \
+            > m9-h1-6b-evidence/diagnostic-only-cleanup.diff || true
+          test "$(grep -c '^-' m9-h1-6b-evidence/diagnostic-only-cleanup.diff)" -gt 0
+          changed="$(git diff --name-only -- "$SOURCE")"
+          printf 'tracked_source_diff=%s\n' "$changed" | tee -a m9-h1-6b-evidence/hash-chain.txt
+          test "$changed" = "$SOURCE"
+
+      - name: Build deterministic lifecycle fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/exit_group_sched_getaffinity_race.c \
+            -o /tmp/m9-h1-6b-exit-group-race
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/thread_lifecycle_repro.c \
+            -o /tmp/m9-h1-6b-thread-lifecycle-repro
+          sha256sum \
+            tests/fixtures/m9/exit_group_sched_getaffinity_race.c \
+            tests/fixtures/m9/thread_lifecycle_repro.c \
+            /tmp/m9-h1-6b-exit-group-race \
+            /tmp/m9-h1-6b-thread-lifecycle-repro \
+            > m9-h1-6b-evidence/fixture-SHA256SUMS
+
+      - name: Run unchanged observer regression suite on production-clean candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test -p execsurface-observe \
+            2>&1 | tee m9-h1-6b-evidence/observer-tests.log
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface \
+            2>&1 | tee m9-h1-6b-evidence/build.log
+
+      - name: Prove production-clean candidate on amplified exit-group race
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-6b-evidence/exit-group-summary.txt
+          for attempt in $(seq 1 120); do
+            target/debug/execsurface observe -- /tmp/m9-h1-6b-exit-group-race \
+              > "m9-h1-6b-evidence/exit-group-${attempt}.json" \
+              2> "m9-h1-6b-evidence/exit-group-${attempt}.stderr"
+            python3 - "$attempt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          attempt = sys.argv[1]
+          data = json.loads(Path(f"m9-h1-6b-evidence/exit-group-{attempt}.json").read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            if grep -Eq 'ExecSurface: ERROR|observer protocol error|observer OS error|M9_(UNTRACKED|UNEXPECTED|DUPLICATE|INVALID|STALE|PREREGISTRATION_STOPS_AT_ECHILD)' \
+              "m9-h1-6b-evidence/exit-group-${attempt}.stderr"; then
+              cat "m9-h1-6b-evidence/exit-group-${attempt}.stderr"
+              exit 1
+            fi
+            if grep -Eq 'M9_(EXIT_EVENT_RECONCILE_AT_ECHILD|PREREGISTRATION_STOP_BUFFERED|GET_SYSCALL_INFO_EXIT_GROUP_DEATH_DEFERRED|RESTART_ESRCH_DEFERRED|PREREGISTRATION_STOP_RECONCILED|EXEC_GROUP_COLLAPSE)' \
+              "m9-h1-6b-evidence/exit-group-${attempt}.stderr"; then
+              echo "diagnostic telemetry leaked into production-clean stderr"
+              exit 1
+            fi
+            printf 'attempt=%s complete=true exit=0\n' "$attempt" \
+              >> m9-h1-6b-evidence/exit-group-summary.txt
+          done
+          test "$(wc -l < m9-h1-6b-evidence/exit-group-summary.txt)" -eq 120
+
+      - name: Re-prove pre-registration ordering on production-clean candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-6b-evidence/prereg-summary.txt
+          for attempt in $(seq 1 12); do
+            target/debug/execsurface observe -- \
+              /tmp/m9-h1-6b-thread-lifecycle-repro 12 16 4 \
+              > "m9-h1-6b-evidence/prereg-${attempt}.stdout" \
+              2> "m9-h1-6b-evidence/prereg-${attempt}.stderr"
+            python3 - "$attempt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          attempt = sys.argv[1]
+          raw = Path(f"m9-h1-6b-evidence/prereg-{attempt}.stdout").read_text()
+          marker = raw.find("\n{")
+          assert marker >= 0, raw[:300]
+          data = json.loads(raw[marker + 1:])
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            if grep -Eq 'ExecSurface: ERROR|observer protocol error|observer OS error' \
+              "m9-h1-6b-evidence/prereg-${attempt}.stderr"; then
+              cat "m9-h1-6b-evidence/prereg-${attempt}.stderr"
+              exit 1
+            fi
+            printf 'attempt=%s complete=true exit=0\n' "$attempt" \
+              >> m9-h1-6b-evidence/prereg-summary.txt
+          done
+
+      - name: Prime pinned external workload directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd external/just && cargo "+$RUST_TOOLCHAIN" test --all >/dev/null 2>&1)
+
+      - name: Prove pinned casey just five consecutive times on production-clean candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-6b-evidence/just-summary.txt
+          for attempt in 1 2 3 4 5; do
+            target/debug/execsurface observe -- \
+              /bin/bash -lc \
+              "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
+              > "m9-h1-6b-evidence/just-${attempt}.json" \
+              2> "m9-h1-6b-evidence/just-${attempt}.stderr"
+            python3 - "$attempt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          attempt = sys.argv[1]
+          data = json.loads(Path(f"m9-h1-6b-evidence/just-{attempt}.json").read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            if grep -Eq 'ExecSurface: ERROR|observer protocol error|observer OS error|M9_(UNTRACKED|UNEXPECTED|DUPLICATE|INVALID|STALE|PREREGISTRATION_STOPS_AT_ECHILD)' \
+              "m9-h1-6b-evidence/just-${attempt}.stderr"; then
+              cat "m9-h1-6b-evidence/just-${attempt}.stderr"
+              exit 1
+            fi
+            if grep -Eq 'M9_(EXIT_EVENT_RECONCILE_AT_ECHILD|PREREGISTRATION_STOP_BUFFERED|GET_SYSCALL_INFO_EXIT_GROUP_DEATH_DEFERRED|RESTART_ESRCH_DEFERRED|PREREGISTRATION_STOP_RECONCILED|EXEC_GROUP_COLLAPSE)' \
+              "m9-h1-6b-evidence/just-${attempt}.stderr"; then
+              echo "diagnostic telemetry leaked into production-clean stderr"
+              exit 1
+            fi
+            printf 'attempt=%s complete=true exit=0\n' "$attempt" \
+              >> m9-h1-6b-evidence/just-summary.txt
+          done
+
+      - name: Seal evidence before promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'head_sha=%s\n' "$GITHUB_SHA"
+            printf 'just_sha=%s\n' "$JUST_SHA"
+            printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
+            printf 'source_sha256=%s\n' "$(sha256sum "$SOURCE" | awk '{print $1}')"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > m9-h1-6b-evidence/environment.txt
+          find m9-h1-6b-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-h1-6b-evidence/SHA256SUMS
+          test "$(sha256sum "$SOURCE" | awk '{print $1}')" = "$PRODUCTION_SHA256"
+
+      - name: Commit exact production-clean source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git diff --name-only -- "$SOURCE")" = "$SOURCE"
+          git add "$SOURCE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "M9-H1.6B: promote production-clean ptrace lifecycle fix into core"
+          git push origin HEAD:hardening/m9-ptrace-esrch-just
+
+      - name: Upload pre-promotion evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-h1-6b-production-core-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-h1-6b-evidence
+          if-no-files-found: error
+          retention-days: 30
