@@ -1,0 +1,153 @@
+name: M9-H1.9 bounded syscall-storm discriminator
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - tests/fixtures/m9/exit_group_sched_getaffinity_bounded.c
+      - .github/workflows/m9-h1-9-bounded-storm-discriminator.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  distinguish-lifecycle-from-unbounded-starvation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      SOURCE: crates/execsurface-observe/src/linux_ptrace.rs
+      PRODUCTION_BASE_SHA256: 3dc656358a3675a0d78135bb83046bc45c33dca2718c8bd8b68fa090e18eac8b
+      SINGLE_RESTART_SHA256: 157dc5feb0eaaf9ed61dd6a33048540938a3f3a8477c59b28cc283eaa1b5231a
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+
+      - name: Build and prove bounded fixture direct semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m9-h1-9-evidence
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/exit_group_sched_getaffinity_bounded.c \
+            -o /tmp/m9-h1-9-bounded
+          for attempt in 1 2 3 4 5; do
+            timeout 10s /tmp/m9-h1-9-bounded \
+              > "m9-h1-9-evidence/direct-${attempt}.stdout" \
+              2> "m9-h1-9-evidence/direct-${attempt}.stderr"
+          done
+          sha256sum \
+            tests/fixtures/m9/exit_group_sched_getaffinity_bounded.c \
+            /tmp/m9-h1-9-bounded \
+            > m9-h1-9-evidence/fixture-SHA256SUMS
+
+      - name: Reconstruct exact H1.7 single-restart candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_apply_ptrace_exit_lifecycle.py
+          python3 scripts/m9_apply_ptrace_preregistration_ordering.py
+          python3 scripts/m9_apply_get_syscall_info_exit_group_fix.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          python3 scripts/m9_finalize_ptrace_lifecycle_core.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          base="$(sha256sum "$SOURCE" | awk '{print $1}')"
+          test "$base" = "$PRODUCTION_BASE_SHA256"
+          python3 scripts/m9_h1_7_apply_single_restart_after_syscall_info_esrch.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          candidate="$(sha256sum "$SOURCE" | awk '{print $1}')"
+          {
+            printf 'base_expected=%s\nbase_actual=%s\n' "$PRODUCTION_BASE_SHA256" "$base"
+            printf 'candidate_expected=%s\ncandidate_actual=%s\n' "$SINGLE_RESTART_SHA256" "$candidate"
+          } | tee m9-h1-9-evidence/source-hash.txt
+          test "$candidate" = "$SINGLE_RESTART_SHA256"
+          git diff --check
+
+      - name: Run unchanged observer regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test -p execsurface-observe \
+            2>&1 | tee m9-h1-9-evidence/observer-tests.log
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface \
+            2>&1 | tee m9-h1-9-evidence/build.log
+
+      - name: Run bounded storm 240 times under H1.7 candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-9-evidence/summary.txt
+          recovered=0
+          for attempt in $(seq 1 240); do
+            out="m9-h1-9-evidence/attempt-${attempt}.json"
+            err="m9-h1-9-evidence/attempt-${attempt}.stderr"
+            set +e
+            timeout 15s target/debug/execsurface observe -- /tmp/m9-h1-9-bounded \
+              > "$out" 2> "$err"
+            rc=$?
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              printf 'attempt=%s rc=%s\n' "$attempt" "$rc" \
+                | tee -a m9-h1-9-evidence/summary.txt
+              cat "$err" || true
+              exit 1
+            fi
+            python3 - "$out" <<'PY'
+          import json, sys
+          from pathlib import Path
+          data = json.loads(Path(sys.argv[1]).read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            count="$(sed -n 's/^M9_H1_7_BOUNDED_GET_SYSCALL_INFO_ESRCH_RESTARTS count=//p' "$err" | tail -n1)"
+            test -n "$count"
+            case "$count" in (*[!0-9]*|'') exit 1;; esac
+            recovered=$((recovered + count))
+            if grep -Eq 'ExecSurface: ERROR|observer protocol error|observer OS error' "$err"; then
+              cat "$err"
+              exit 1
+            fi
+            printf 'attempt=%s complete=true exit=0 bounded_restarts=%s\n' \
+              "$attempt" "$count" >> m9-h1-9-evidence/summary.txt
+          done
+          printf 'total_bounded_restarts=%s\n' "$recovered" \
+            | tee -a m9-h1-9-evidence/summary.txt
+          test "$recovered" -gt 0
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'head_sha=%s\n' "$GITHUB_SHA"
+            printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > m9-h1-9-evidence/environment.txt
+          find m9-h1-9-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-h1-9-evidence/SHA256SUMS
+
+      - name: Upload discriminator evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-h1-9-bounded-storm-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-h1-9-evidence
+          if-no-files-found: error
+          retention-days: 30
