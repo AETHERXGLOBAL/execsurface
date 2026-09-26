@@ -1,0 +1,126 @@
+name: M8.7 Event Budget
+
+on:
+  push:
+    branches:
+      - "milestone/m8-7-persistent-observer"
+    paths:
+      - "experiments/m8-ebpf/persistent-observer/**"
+      - ".github/workflows/m8-7-event-limit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  event-budget:
+    name: live event-budget truncation fails closed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Install native dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+
+      - name: Install Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+
+      - name: Resolve compatible lockfile
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f experiments/m8-ebpf/persistent-observer/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml
+
+      - name: Create auditable event-budget fault build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SOURCE="experiments/m8-ebpf/persistent-observer/src/main.rs"
+          PATCH="$RUNNER_TEMP/m8-7-event-limit-fault.patch"
+          python3 - "$SOURCE" <<'PY'
+          import pathlib, sys
+          path = pathlib.Path(sys.argv[1])
+          text = path.read_text(encoding='utf-8')
+          old = 'const MAX_SESSION_EVENTS: usize = 100_000;'
+          new = 'const MAX_SESSION_EVENTS: usize = 32; // M8.7b6 fault build only'
+          assert text.count(old) == 1, 'expected exactly one event-budget constant'
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+          git diff --check
+          git diff -- "$SOURCE" | tee "$PATCH"
+          grep -F 'MAX_SESSION_EVENTS: usize = 32' "$SOURCE"
+
+      - name: Build fault observer and normal 64-descendant fixture
+        shell: bash
+        run: |
+          set -euxo pipefail
+          TARGET="$RUNNER_TEMP/m8-7-event-limit-target"
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml \
+            --release --locked \
+            --target-dir "$TARGET"
+          clang -O2 -Wall -Wextra -Werror \
+            experiments/m8-ebpf/persistent-observer/m8_7_session_fixture.c \
+            -o "$RUNNER_TEMP/m8_7_event_limit_fixture"
+          test -x "$TARGET/release/execsurface-m8-persistent-observer"
+          test -x "$RUNNER_TEMP/m8_7_event_limit_fixture"
+
+      - name: Prove live event-budget truncation cannot produce clean evidence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS="$RUNNER_TEMP/m8-7-event-limit-target/release/execsurface-m8-persistent-observer"
+          FIX="$RUNNER_TEMP/m8_7_event_limit_fixture"
+          REPORT="$RUNNER_TEMP/m8-7-event-limit-report.json"
+          LOG="$RUNNER_TEMP/m8-7-event-limit.log"
+
+          set +e
+          sudo "$OBS" --report "$REPORT" --fixture "$FIX" >"$LOG" 2>&1
+          RC=$?
+          set -e
+
+          test "$RC" -ne 0
+          test -s "$REPORT"
+          cat "$LOG"
+          cat "$REPORT"
+
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert report['sessions'], report
+          session = report['sessions'][0]
+          assert session['event_limit_hit'] is True, session
+          assert session['event_count'] == 32, session
+          assert session['producer_drop_delta'] == 0, session
+          assert session['clean_for_m8_7a'] is False, session
+          assert report['authority']['ebpf_pass_authorized'] is False, report
+          assert report['authority']['product_integration_authorized'] is False, report
+          print('M8_7B6_EVENT_LIMIT_FAIL_CLOSED_PASS')
+          print('M8_7B6_ACCEPTED_EVENT_COUNT', session['event_count'])
+          print('M8_7B6_ACTIVE_REMAINING', session['active_remaining'])
+          PY
+
+      - name: Upload event-budget evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: m8-7-event-limit-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/m8-7-event-limit-fault.patch
+            ${{ runner.temp }}/m8-7-event-limit.log
+            ${{ runner.temp }}/m8-7-event-limit-report.json
+          if-no-files-found: warn
+          retention-days: 30

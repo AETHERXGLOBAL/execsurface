@@ -1,0 +1,219 @@
+name: M8.7 Crash Restart
+
+on:
+  push:
+    branches:
+      - "milestone/m8-7-persistent-observer"
+    paths:
+      - "experiments/m8-ebpf/persistent-observer/**"
+      - ".github/workflows/m8-7-crash-restart.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  crash-restart:
+    name: collector crash and fresh-state restart isolation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Install declared native build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+          clang --version
+          pkg-config --modversion libelf
+
+      - name: Install resolver and product-MSRV Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          cargo +1.87.0 --version
+          rustc +1.82.0 --version --verbose
+          cargo +1.82.0 --version
+
+      - name: Resolve Rust-1.82-compatible isolated lock
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f experiments/m8-ebpf/persistent-observer/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml
+
+      - name: Build persistent observer and crash fixture
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo +1.82.0 fmt \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml \
+            -- --check
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml \
+            --release --locked
+          clang -O2 -Wall -Wextra -Werror \
+            experiments/m8-ebpf/persistent-observer/m8_7_session_fixture.c \
+            -o "$RUNNER_TEMP/m8_7_session_fixture"
+
+      - name: Prove crash invalidates in-flight evidence and restart is isolated
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS="$PWD/experiments/m8-ebpf/persistent-observer/target/release/execsurface-m8-persistent-observer"
+          FIX="$RUNNER_TEMP/m8_7_session_fixture"
+          OBSERVER_PID_FILE="$RUNNER_TEMP/m8-7-crash-observer.pid"
+          TARGET_MARKER="$RUNNER_TEMP/m8-7-crash-target.txt"
+          CRASH_REPORT="$RUNNER_TEMP/m8-7-crash-report.json"
+          CRASH_LOG="$RUNNER_TEMP/m8-7-crash.log"
+          RESTART_REPORT="$RUNNER_TEMP/m8-7-restart-report.json"
+          RESTART_LOG="$RUNNER_TEMP/m8-7-restart.log"
+          EVIDENCE="$RUNNER_TEMP/m8-7-crash-restart-evidence.json"
+
+          rm -f "$OBSERVER_PID_FILE" "$TARGET_MARKER" "$CRASH_REPORT" \
+            "$CRASH_LOG" "$RESTART_REPORT" "$RESTART_LOG" "$EVIDENCE"
+
+          cleanup() {
+            if [[ -s "$TARGET_MARKER" ]]; then
+              read -r _root_pid root_pgid < "$TARGET_MARKER" || true
+              if [[ -n "${root_pgid:-}" ]]; then
+                sudo kill -KILL -- "-$root_pgid" 2>/dev/null || true
+              fi
+            fi
+          }
+          trap cleanup EXIT
+
+          sudo bash -c '
+            set -eu
+            echo $$ > "$1"
+            exec env M8_7_MODE=crash-hold M8_7_CRASH_MARKER="$2" \
+              "$3" --report "$4" --fixture "$5"
+          ' _ "$OBSERVER_PID_FILE" "$TARGET_MARKER" "$OBS" "$CRASH_REPORT" "$FIX" \
+            >"$CRASH_LOG" 2>&1 &
+          SUDO_WRAPPER_PID=$!
+
+          for _ in $(seq 1 200); do
+            if [[ -s "$OBSERVER_PID_FILE" && -s "$TARGET_MARKER" ]]; then
+              break
+            fi
+            sleep 0.01
+          done
+
+          test -s "$OBSERVER_PID_FILE"
+          test -s "$TARGET_MARKER"
+          OBSERVER_PID=$(cat "$OBSERVER_PID_FILE")
+          read -r ROOT_PID ROOT_PGID < "$TARGET_MARKER"
+          test "$OBSERVER_PID" -gt 1
+          test "$ROOT_PID" -gt 1
+          test "$ROOT_PGID" -gt 1
+          sudo kill -0 "$OBSERVER_PID"
+          sudo kill -0 "$ROOT_PID"
+
+          sudo kill -KILL "$OBSERVER_PID"
+          set +e
+          wait "$SUDO_WRAPPER_PID"
+          CRASH_WAIT_RC=$?
+          set -e
+          test "$CRASH_WAIT_RC" -ne 0
+          test ! -e "$CRASH_REPORT"
+
+          TARGET_SURVIVED=false
+          if sudo kill -0 "$ROOT_PID" 2>/dev/null; then
+            TARGET_SURVIVED=true
+            echo "M8_7B4_TARGET_CONTAINMENT_OPEN root_pid=$ROOT_PID root_pgid=$ROOT_PGID"
+          else
+            echo "M8_7B4_TARGET_TERMINATED_WITH_COLLECTOR root_pid=$ROOT_PID"
+          fi
+
+          sudo "$OBS" --report "$RESTART_REPORT" --fixture "$FIX" \
+            >"$RESTART_LOG" 2>&1 &
+          RESTART_WRAPPER_PID=$!
+
+          # If the crashed collector left its target alive, terminate that old
+          # process while the fresh collector is active. The new kernel maps
+          # must treat that task as ambient/unregistered and never promote its
+          # exit into either fresh epoch.
+          sleep 0.05
+          if [[ "$TARGET_SURVIVED" == true ]]; then
+            sudo kill -KILL -- "-$ROOT_PGID" 2>/dev/null || true
+          fi
+
+          wait "$RESTART_WRAPPER_PID"
+          cat "$RESTART_LOG"
+          cat "$RESTART_REPORT"
+
+          python3 - "$RESTART_REPORT" "$EVIDENCE" "$TARGET_SURVIVED" "$CRASH_WAIT_RC" <<'PY'
+          import json, sys
+          report_path, evidence_path, survived_text, crash_wait_rc = sys.argv[1:]
+          report = json.load(open(report_path, encoding='utf-8'))
+
+          assert report['protocol_version'] == 1, report
+          assert report['architecture'] == 'persistent-attached-libbpf-feasibility-v1'
+          assert report['unexpected_without_session'] == 0, report
+          assert report['decode_errors_total'] == 0, report
+          assert report['final_membership_map_empty'] is True, report
+          assert report['final_pending_mechanism_map_empty'] is True, report
+          assert [s['epoch'] for s in report['sessions']] == [1, 2], report
+          for session in report['sessions']:
+              assert session['clean_for_m8_7a'] is True, session
+              assert session['stale_epoch_events'] == 0, session
+              assert session['integrity_errors'] == 0, session
+              assert session['producer_drop_delta'] == 0, session
+              assert session['routing_error_delta'] == 0, session
+              assert session['membership_map_empty'] is True, session
+              assert session['pending_mechanism_map_empty'] is True, session
+
+          authority = report['authority']
+          assert authority['ebpf_pass_authorized'] is False, authority
+          assert authority['product_integration_authorized'] is False, authority
+
+          evidence = {
+              'protocol_version': 1,
+              'collector_crash_forced': True,
+              'crashed_run_produced_report': False,
+              'crash_wait_rc': int(crash_wait_rc),
+              'target_survived_collector_crash': survived_text == 'true',
+              'target_containment_claimed': False,
+              'restart_fresh_epochs': [1, 2],
+              'restart_unexpected_without_session': report['unexpected_without_session'],
+              'restart_decode_errors_total': report['decode_errors_total'],
+              'restart_maps_clean': (
+                  report['final_membership_map_empty']
+                  and report['final_pending_mechanism_map_empty']
+              ),
+              'restart_stale_epoch_events': [
+                  s['stale_epoch_events'] for s in report['sessions']
+              ],
+              'ebpf_pass_authorized': authority['ebpf_pass_authorized'],
+              'product_integration_authorized': authority['product_integration_authorized'],
+          }
+          with open(evidence_path, 'w', encoding='utf-8') as handle:
+              json.dump(evidence, handle, indent=2, sort_keys=True)
+              handle.write('\n')
+
+          print('M8_7B4_CRASH_INVALIDATES_INFLIGHT_PASS')
+          print('M8_7B4_RESTART_ISOLATION_PASS')
+          print('M8_7B4_TARGET_SURVIVED_COLLECTOR_CRASH', evidence['target_survived_collector_crash'])
+          PY
+
+          cat "$EVIDENCE"
+
+      - name: Upload raw M8.7b4 evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: m8-7b4-crash-restart-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/m8-7-crash.log
+            ${{ runner.temp }}/m8-7-restart.log
+            ${{ runner.temp }}/m8-7-restart-report.json
+            ${{ runner.temp }}/m8-7-crash-restart-evidence.json
+          if-no-files-found: warn
+          retention-days: 30

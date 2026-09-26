@@ -1,0 +1,111 @@
+name: M8.7 Stale Epoch
+
+on:
+  push:
+    branches:
+      - "milestone/m8-7-persistent-observer"
+    paths:
+      - "experiments/m8-ebpf/persistent-observer/**"
+      - ".github/workflows/m8-7-stale-epoch.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stale-epoch:
+    name: real stale epoch event fails closed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Install native dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+
+      - name: Install Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+
+      - name: Resolve compatible lockfile
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f experiments/m8-ebpf/persistent-observer/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml
+
+      - name: Build isolated stale-epoch fault observer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          TARGET="$RUNNER_TEMP/m8-7-stale-epoch-target"
+          M8_7_FAULT_STALE_EPOCH=1 \
+            cargo +1.82.0 build \
+              --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml \
+              --release --locked \
+              --target-dir "$TARGET"
+          clang -O2 -Wall -Wextra -Werror \
+            experiments/m8-ebpf/persistent-observer/m8_7_benchmark_fixture.c \
+            -o "$RUNNER_TEMP/m8_7_stale_fixture"
+          test -x "$TARGET/release/execsurface-m8-persistent-observer"
+          test -x "$RUNNER_TEMP/m8_7_stale_fixture"
+
+      - name: Prove a real stale epoch cannot become clean session evidence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS="$RUNNER_TEMP/m8-7-stale-epoch-target/release/execsurface-m8-persistent-observer"
+          FIX="$RUNNER_TEMP/m8_7_stale_fixture"
+          REPORT="$RUNNER_TEMP/m8-7-stale-epoch-report.json"
+          LOG="$RUNNER_TEMP/m8-7-stale-epoch.log"
+
+          set +e
+          sudo "$OBS" --report "$REPORT" --fixture "$FIX" >"$LOG" 2>&1
+          RC=$?
+          set -e
+
+          test "$RC" -ne 0
+          test -s "$REPORT"
+          cat "$LOG"
+          cat "$REPORT"
+
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          sessions = report['sessions']
+          assert len(sessions) == 2, sessions
+          first, second = sessions
+          assert first['epoch'] == 1 and first['clean_for_m8_7a'] is True, first
+          assert first['stale_epoch_events'] == 0, first
+          assert second['epoch'] == 2, second
+          assert second['stale_epoch_events'] > 0, second
+          assert second['clean_for_m8_7a'] is False, second
+          assert second['producer_drop_delta'] == 0, second
+          assert second['routing_error_delta'] == 0, second
+          assert second['decode_error_delta'] == 0, second
+          assert report['authority']['ebpf_pass_authorized'] is False, report
+          assert report['authority']['product_integration_authorized'] is False, report
+          print('M8_7D_REAL_STALE_EPOCH_FAIL_CLOSED_PASS')
+          print('M8_7D_STALE_EVENT_COUNT', second['stale_epoch_events'])
+          PY
+
+      - name: Upload stale-epoch evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: m8-7-stale-epoch-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/m8-7-stale-epoch.log
+            ${{ runner.temp }}/m8-7-stale-epoch-report.json
+          if-no-files-found: warn
+          retention-days: 30

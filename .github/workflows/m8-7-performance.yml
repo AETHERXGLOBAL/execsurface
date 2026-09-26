@@ -1,0 +1,149 @@
+name: M8.7 Persistent Performance
+
+on:
+  push:
+    branches:
+      - "milestone/m8-7-persistent-observer"
+    paths:
+      - "experiments/m8-ebpf/persistent-observer/**"
+      - "experiments/m8-ebpf/libbpf-observer/**"
+      - "crates/execsurface-observe/**"
+      - "crates/execsurface-cli/**"
+      - "Cargo.lock"
+      - "docs/milestones/M8_7C_PERFORMANCE_PROTOCOL.md"
+      - ".github/workflows/m8-7-performance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  persistent-performance:
+    name: direct ptrace per-invocation and persistent evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Install native dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+          clang --version
+          pkg-config --modversion libelf
+
+      - name: Install resolver and product-MSRV Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          rustc +1.82.0 --version --verbose
+          cargo +1.82.0 --version
+
+      - name: Resolve isolated Rust-1.82-compatible locks
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for manifest in \
+            experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            experiments/m8-ebpf/persistent-observer/Cargo.toml
+          do
+            rm -f "$(dirname "$manifest")/Cargo.lock"
+            CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+              cargo +1.87.0 generate-lockfile --manifest-path "$manifest"
+          done
+
+      - name: Build benchmark subjects
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 -m py_compile experiments/m8-ebpf/persistent-observer/m8_7_performance.py
+          cargo +1.82.0 fmt \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            -- --check
+          cargo +1.82.0 fmt \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml \
+            -- --check
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            --release --locked
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml \
+            --release --locked
+          cargo +1.82.0 build \
+            --manifest-path crates/execsurface-cli/Cargo.toml \
+            --release --locked
+          clang -O2 -Wall -Wextra -Werror \
+            experiments/m8-ebpf/persistent-observer/m8_7_benchmark_fixture.c \
+            -o "$RUNNER_TEMP/m8_7_benchmark_fixture"
+
+          CLI="$PWD/target/release/execsurface"
+          COLLECTOR="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer"
+          PERSISTENT="$PWD/experiments/m8-ebpf/persistent-observer/target/release/execsurface-m8-persistent-observer"
+          FIXTURE="$RUNNER_TEMP/m8_7_benchmark_fixture"
+          test -x "$CLI"
+          test -x "$COLLECTOR"
+          test -x "$PERSISTENT"
+          test -x "$FIXTURE"
+          sha256sum "$CLI" "$COLLECTOR" "$PERSISTENT" "$FIXTURE"
+
+      - name: Execute frozen M8.7c protocol
+        shell: bash
+        run: |
+          set -euxo pipefail
+          CLI="$PWD/target/release/execsurface"
+          COLLECTOR="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer"
+          PERSISTENT="$PWD/experiments/m8-ebpf/persistent-observer/target/release/execsurface-m8-persistent-observer"
+          FIXTURE="$RUNNER_TEMP/m8_7_benchmark_fixture"
+          OUT="$RUNNER_TEMP/m8-7c-performance.json"
+
+          sudo env \
+            PATH="$PATH" \
+            RUNNER_NAME="${RUNNER_NAME:-}" \
+            RUNNER_OS="${RUNNER_OS:-}" \
+            RUNNER_ARCH="${RUNNER_ARCH:-}" \
+            python3 experiments/m8-ebpf/persistent-observer/m8_7_performance.py \
+              --cli "$CLI" \
+              --collector "$COLLECTOR" \
+              --persistent "$PERSISTENT" \
+              --fixture "$FIXTURE" \
+              --output "$OUT" \
+              --commit-sha "$GITHUB_SHA" \
+              --warmups 3 \
+              --samples 15
+
+          cat "$OUT"
+
+      - name: Verify claim and authority boundaries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - "$RUNNER_TEMP/m8-7c-performance.json" <<'PY'
+          import json, sys
+          evidence = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert evidence['schema_version'] == 1, evidence
+          assert evidence['protocol']['persistent_sessions_per_invocation'] == 2, evidence
+          assert evidence['protocol']['timed_invocations_per_mode'] == 15, evidence
+          persistent = evidence['samples']['persistent_two_session']
+          assert len(persistent) == 15, len(persistent)
+          for row in persistent:
+              assert row['clean'] is True, row
+              assert row['session_count'] == 2, row
+              assert row['authority']['ptrace_correctness_reference'] is True, row
+              assert row['authority']['full_surface_comparable'] is False, row
+              assert row['authority']['ebpf_pass_authorized'] is False, row
+              assert row['authority']['product_integration_authorized'] is False, row
+          print('M8_7C_AUTHORITY_BOUNDARY_PASS')
+          PY
+
+      - name: Upload raw M8.7c evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: m8-7c-performance-${{ github.sha }}
+          path: ${{ runner.temp }}/m8-7c-performance.json
+          if-no-files-found: error
+          retention-days: 30
