@@ -11,6 +11,7 @@ old_state_tail = '''    fd_table_id: u64,
 new_state_tail = '''    fd_table_id: u64,
     tgid: libc::pid_t,
     retired_by_exec: bool,
+    restart_esrch_seen: bool,
     exit_event_status: Option<libc::c_int>,
 }
 '''
@@ -22,6 +23,7 @@ old_ctor_tail = '''            fd_table_id,
 new_ctor_tail = '''            fd_table_id,
             tgid,
             retired_by_exec: false,
+            restart_esrch_seen: false,
             exit_event_status: None,
         }
 '''
@@ -61,6 +63,7 @@ new_echild = '''            if error.raw_os_error() == Some(libc::ECHILD) && tra
                             *tid,
                             state.tgid,
                             state.retired_by_exec,
+                            state.restart_esrch_seen,
                         ))
                     })
                     .collect::<Vec<_>>();
@@ -78,12 +81,13 @@ new_echild = '''            if error.raw_os_error() == Some(libc::ECHILD) && tra
                             *tid,
                             state.tgid,
                             state.retired_by_exec,
+                            state.restart_esrch_seen,
                             state.exit_event_status.unwrap(),
                         )
                     })
                     .collect::<Vec<_>>();
                 reconciled.sort_unstable_by_key(|entry| entry.0);
-                for (stale_tid, _, _, exit_status) in &reconciled {
+                for (stale_tid, _, _, _, exit_status) in &reconciled {
                     if !apply_terminal_outcome(root, *stale_tid, *exit_status, &mut root_outcome) {
                         return Err(ObserveError::Protocol(format!(
                             "M9_EXIT_EVENT_STATUS_NONTERMINAL_AT_ECHILD tid={stale_tid} status={exit_status:#x}"
@@ -149,6 +153,7 @@ new_exec_cleanup = '''            let old_tgid = state.tgid;
             state.tgid = tid;
             state.newborn = false;
             state.retired_by_exec = false;
+            state.restart_esrch_seen = false;
             state.exit_event_status = None;
             tracees.insert(tid, state);
 '''
@@ -217,36 +222,77 @@ fn record_terminal_wait_status(
 }
 '''
 
-old_wait_error = '''            if waited < 0 {
+old_resume_fn = '''fn resume_after_observed_stop(
+    root: libc::pid_t,
+    tid: libc::pid_t,
+    signal: libc::c_int,
+    tracees: &mut HashMap<libc::pid_t, TraceeState>,
+    root_outcome: &mut CommandOutcome,
+) -> Result<(), ObserveError> {
+    match resume_syscall(tid, signal) {
+        Ok(()) => Ok(()),
+        Err(ObserveError::Os(resume_error))
+            if resume_error.raw_os_error() == Some(libc::ESRCH) =>
+        {
+            let mut terminal_status = 0;
+            let waited = unsafe { libc::waitpid(tid, &mut terminal_status, libc::__WALL) };
+
+            if waited == tid
+                && record_terminal_wait_status(
+                    root,
+                    tid,
+                    terminal_status,
+                    tracees,
+                    root_outcome,
+                )
+            {
+                return Ok(());
+            }
+
+            if waited < 0 {
                 let wait_error = io::Error::last_os_error();
                 return Err(ObserveError::Protocol(format!(
                     "PTRACE_SYSCALL returned ESRCH after an observed ptrace-stop for tid {tid}, and exact-TID terminal wait failed: {wait_error}"
                 )));
             }
+
+            Err(ObserveError::Protocol(format!(
+                "PTRACE_SYSCALL returned ESRCH after an observed ptrace-stop for tid {tid}, but exact-TID wait returned non-terminal status {terminal_status:#x}"
+            )))
+        }
+        Err(error) => Err(error),
+    }
+}
 '''
-new_wait_error = '''            if waited < 0 {
-                let wait_error = io::Error::last_os_error();
-                if wait_error.raw_os_error() == Some(libc::ECHILD) {
-                    if let Some(exit_status) = tracees
-                        .get(&tid)
-                        .and_then(|state| state.exit_event_status)
-                    {
-                        if apply_terminal_outcome(root, tid, exit_status, root_outcome) {
-                            tracees.remove(&tid);
-                            eprintln!(
-                                "M9_ESRCH_RECONCILED_FROM_EXIT_EVENT tid={tid} status={exit_status:#x}"
-                            );
-                            return Ok(());
-                        }
-                        return Err(ObserveError::Protocol(format!(
-                            "M9_ESRCH_EXIT_EVENT_STATUS_NONTERMINAL tid={tid} status={exit_status:#x}"
-                        )));
-                    }
-                }
-                return Err(ObserveError::Protocol(format!(
-                    "PTRACE_SYSCALL returned ESRCH after an observed ptrace-stop for tid {tid}, and exact-TID terminal wait failed: {wait_error}"
-                )));
-            }
+new_resume_fn = '''fn resume_after_observed_stop(
+    _root: libc::pid_t,
+    tid: libc::pid_t,
+    signal: libc::c_int,
+    tracees: &mut HashMap<libc::pid_t, TraceeState>,
+    _root_outcome: &mut CommandOutcome,
+) -> Result<(), ObserveError> {
+    match resume_syscall(tid, signal) {
+        Ok(()) => Ok(()),
+        Err(ObserveError::Os(resume_error))
+            if resume_error.raw_os_error() == Some(libc::ESRCH) =>
+        {
+            let state = tracees.get_mut(&tid).ok_or_else(|| {
+                ObserveError::Protocol(format!(
+                    "M9_RESTART_ESRCH_FOR_UNTRACKED_TID tid={tid}"
+                ))
+            })?;
+            state.restart_esrch_seen = true;
+            eprintln!(
+                "M9_RESTART_ESRCH_DEFERRED tid={tid} tgid={} retired_by_exec={} exit_event_seen={}",
+                state.tgid,
+                state.retired_by_exec,
+                state.exit_event_status.is_some()
+            );
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
 '''
 
 old_event_tail = '''        }
@@ -279,7 +325,7 @@ for old, new, label, expected in [
     (old_stop_dispatch, new_stop_dispatch, "retired exec stop guard", 1),
     (old_exec_cleanup, new_exec_cleanup, "exec retirement bookkeeping", 1),
     (old_terminal_fn, new_terminal_fn, "terminal outcome factoring", 1),
-    (old_wait_error, new_wait_error, "ESRCH exact-wait exit-event reconciliation", 1),
+    (old_resume_fn, new_resume_fn, "deferred ESRCH restart handling", 1),
     (old_event_tail, new_event_tail, "PTRACE_EVENT_EXIT capture", 1),
 ]:
     count = text.count(old)
