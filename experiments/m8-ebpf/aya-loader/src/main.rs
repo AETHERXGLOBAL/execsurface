@@ -7,13 +7,23 @@ use std::time::Duration;
 
 use aya::{
     maps::{ring_buf::RingBuf, MapData, PerCpuArray},
-    programs::TracePoint,
-    Ebpf,
+    programs::{BtfTracePoint, TracePoint},
+    Btf, Ebpf,
 };
 
+const EVENT_EXEC: u32 = 1;
+const EVENT_FORK: u32 = 2;
 const ARGV_SENTINEL: &str = "AX_M8_ARGV_SENTINEL_DO_NOT_PERSIST";
 const ENV_SENTINEL: &str = "AX_M8_ENV_SENTINEL_DO_NOT_PERSIST";
 const PRESSURE_EXECS: usize = 768;
+
+#[derive(Default)]
+struct EventStats {
+    total: usize,
+    exec: usize,
+    fork: usize,
+    fork_edges: Vec<(u32, u32)>,
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let object = std::env::args_os()
@@ -38,7 +48,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing DROPPED map"))?;
     let dropped = PerCpuArray::<_, u64>::try_from(dropped_map)?;
 
-    let program: &mut TracePoint = ebpf
+    let exec_program: &mut TracePoint = ebpf
         .program_mut("execsurface_m8_exec")
         .ok_or_else(|| {
             io::Error::new(
@@ -47,11 +57,34 @@ fn main() -> Result<(), Box<dyn Error>> {
             )
         })?
         .try_into()?;
-    program.load()?;
-    let _link = program.attach("syscalls", "sys_enter_execve")?;
+    exec_program.load()?;
+
+    // M8.2 diagnostics gate: with privilege available, deliberately request a missing hook.
+    // The original kernel/library error is allowed to propagate; it must not become evidence.
+    if std::env::var_os("AX_M8_INVALID_ATTACH").is_some() {
+        let _ = exec_program.attach("syscalls", "execsurface_m8_missing_tracepoint")?;
+        return Err("invalid tracepoint unexpectedly attached".into());
+    }
+
+    let _exec_link = exec_program.attach("syscalls", "sys_enter_execve")?;
+
+    // BTF is used materially here rather than merely detected on the host: sched_process_fork
+    // provides parent/child process identity without persisting names, argv, or content.
+    let btf = Btf::from_sys_fs()?;
+    let fork_program: &mut BtfTracePoint = ebpf
+        .program_mut("execsurface_m8_fork")
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "missing execsurface_m8_fork program",
+            )
+        })?
+        .try_into()?;
+    fork_program.load("sched_process_fork", &btf)?;
+    let _fork_link = fork_program.attach()?;
 
     // Privacy sentinel: secrets are deliberately present in argv/environment of a controlled
-    // child, while the eBPF event schema contains only numeric process metadata.
+    // child, while the persisted event schema contains numeric process metadata only.
     let status = Command::new("/bin/true")
         .arg(ARGV_SENTINEL)
         .env("AX_M8_SECRET", ENV_SENTINEL)
@@ -61,15 +94,41 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     thread::sleep(Duration::from_millis(30));
-    let initial_events = drain_events(&mut events)?;
-    if initial_events == 0 {
+    let privacy_stats = drain_events(&mut events)?;
+    if privacy_stats.exec == 0 {
         return Err("attached observer produced no readable exec metadata event".into());
+    }
+
+    // Controlled lineage proof: the launched shell must fork at least one child. A parent->child
+    // edge rooted at the PID returned by spawn is enough to show that userspace can recursively
+    // scope descendants without collecting process names or arguments.
+    let mut root = Command::new("/bin/sh")
+        .arg("-c")
+        .arg("/bin/true & wait")
+        .spawn()?;
+    let root_pid = root.id();
+    let root_status = root.wait()?;
+    if !root_status.success() {
+        return Err("controlled lineage command failed".into());
+    }
+    thread::sleep(Duration::from_millis(30));
+    let lineage_stats = drain_events(&mut events)?;
+    let rooted_edges = lineage_stats
+        .fork_edges
+        .iter()
+        .filter(|(parent, _)| *parent == root_pid)
+        .count();
+    if rooted_edges == 0 {
+        return Err(format!(
+            "BTF fork evidence did not contain an edge rooted at launched pid {root_pid}"
+        )
+        .into());
     }
 
     let before_drops = total_drops(&dropped)?;
 
-    // Deliberately stop consuming and generate more execs than the 4 KiB feasibility ring can
-    // retain. The required result is not zero loss; it is explicit producer-side loss evidence.
+    // Deliberately stop consuming and generate more process events than the 4 KiB feasibility
+    // ring can retain. Required result: explicit producer-side loss evidence, not zero loss.
     for _ in 0..PRESSURE_EXECS {
         let status = Command::new("/bin/true").status()?;
         if !status.success() {
@@ -79,7 +138,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     thread::sleep(Duration::from_millis(30));
     let after_drops = total_drops(&dropped)?;
-    let pressure_events = drain_events(&mut events)?;
+    let pressure_stats = drain_events(&mut events)?;
 
     if after_drops <= before_drops {
         return Err(format!(
@@ -89,30 +148,49 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     println!("M8_AYA_ATTACH_PASS");
-    println!("M8_AYA_EVENT_TRANSPORT_PASS events={initial_events}");
     println!(
-        "M8_AYA_LOSS_ACCOUNTING_PASS dropped={} pressure_events={pressure_events}",
-        after_drops - before_drops
+        "M8_AYA_EVENT_TRANSPORT_PASS events={}",
+        privacy_stats.total + lineage_stats.total
     );
-    println!("M8_AYA_PRIVACY_SCHEMA_PASS event_bytes=8 fields=tgid,tid");
+    println!(
+        "M8_AYA_BTF_LINEAGE_PASS root_pid={root_pid} rooted_edges={rooted_edges} fork_events={}",
+        lineage_stats.fork
+    );
+    println!(
+        "M8_AYA_LOSS_ACCOUNTING_PASS dropped={} pressure_events={}",
+        after_drops - before_drops,
+        pressure_stats.total
+    );
+    println!(
+        "M8_AYA_PRIVACY_SCHEMA_PASS event_bytes=16 fields=kind,pid,related_pid,reserved"
+    );
     Ok(())
 }
 
-fn drain_events(events: &mut RingBuf<MapData>) -> Result<usize, Box<dyn Error>> {
-    let mut seen = 0usize;
+fn drain_events(events: &mut RingBuf<MapData>) -> Result<EventStats, Box<dyn Error>> {
+    let mut stats = EventStats::default();
     while let Some(sample) = events.next() {
-        if sample.len() != 8 {
-            return Err(format!("unexpected exec event size: {}", sample.len()).into());
+        if sample.len() != 16 {
+            return Err(format!("unexpected process event size: {}", sample.len()).into());
         }
-        let bytes: [u8; 8] = sample.as_ref().try_into()?;
-        let tgid = u32::from_ne_bytes(bytes[0..4].try_into()?);
-        let tid = u32::from_ne_bytes(bytes[4..8].try_into()?);
-        if tgid == 0 || tid == 0 {
-            return Err("invalid zero process identity in exec event".into());
+        let bytes: [u8; 16] = sample.as_ref().try_into()?;
+        let kind = u32::from_ne_bytes(bytes[0..4].try_into()?);
+        let pid = u32::from_ne_bytes(bytes[4..8].try_into()?);
+        let related_pid = u32::from_ne_bytes(bytes[8..12].try_into()?);
+        if pid == 0 || related_pid == 0 {
+            return Err("invalid zero process identity in process event".into());
         }
-        seen += 1;
+        stats.total += 1;
+        match kind {
+            EVENT_EXEC => stats.exec += 1,
+            EVENT_FORK => {
+                stats.fork += 1;
+                stats.fork_edges.push((pid, related_pid));
+            }
+            other => return Err(format!("unknown process event kind: {other}").into()),
+        }
     }
-    Ok(seen)
+    Ok(stats)
 }
 
 fn total_drops(dropped: &PerCpuArray<MapData, u64>) -> Result<u64, Box<dyn Error>> {
