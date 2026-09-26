@@ -1,0 +1,261 @@
+name: M9.1 recover preserved artifacts v2
+
+on:
+  push:
+    branches:
+      - milestone/m9-1-post-hardening-external-workloads
+    paths:
+      - .github/workflows/m9-1-recover-preserved-artifacts-v2.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: ZC-02-RIPGREP
+            project: ripgrep
+            repository: BurntSushi/ripgrep
+            revision: 3fce3b5bb0236da2df6d99672afb8a719642eca7
+            artifact_id: 10918306814
+            artifact_sha256: b328178150d34d78ad8fce458e37d0155a47409da83f72ef4b084d1f30558943
+          - id: ZC-03-FZF
+            project: fzf
+            repository: junegunn/fzf
+            revision: b1be3a8be1b833ce5b92fbbac11637643d60a046
+            artifact_id: 10918495777
+            artifact_sha256: 17c9e09dd91d9cebdd3d9497e130ba3bdb358df931866fbdeeba53afaeba4a5e
+    env:
+      ORIGINAL_RUN_ID: 36278935442
+      ORIGINAL_RUN_URL: https://github.com/AETHERXGLOBAL/execsurface/actions/runs/36278935442
+
+    steps:
+      - name: Checkout evidence validator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Download exact preserved artifact by immutable ID
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="recovered/${{ matrix.id }}"
+          mkdir -p "$root"
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/${{ matrix.artifact_id }}/zip" \
+            -o "$root/original-artifact.zip"
+          actual="$(sha256sum "$root/original-artifact.zip" | awk '{print $1}')"
+          printf 'expected_zip_sha256=%s\nactual_zip_sha256=%s\n' \
+            '${{ matrix.artifact_sha256 }}' "$actual" | tee "$root/artifact-integrity.txt"
+          test "$actual" = '${{ matrix.artifact_sha256 }}'
+          mkdir -p "$root/raw"
+          unzip -q "$root/original-artifact.zip" -d "$root/raw"
+          test -f "$root/raw/state.env"
+          test -f "$root/raw/environment.txt"
+
+      - name: Build evidence record from original raw results
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - \
+            recovered/${{ matrix.id }} \
+            '${{ matrix.id }}' \
+            '${{ matrix.project }}' \
+            '${{ matrix.repository }}' \
+            '${{ matrix.revision }}' \
+            '${{ matrix.artifact_sha256 }}' \
+            "$ORIGINAL_RUN_URL" <<'PY'
+          import json, statistics, sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          raw = root / 'raw'
+          eid, project, repository, revision, artifact_sha, original_run_url = sys.argv[2:]
+
+          def kv(path):
+              data = {}
+              for line in Path(path).read_text().splitlines():
+                  if '=' in line:
+                      key, value = line.split('=', 1)
+                      data[key] = value
+              return data
+
+          state = kv(raw / 'state.env')
+          env = kv(raw / 'environment.txt')
+          source_sha = env['execsurface_source_sha']
+          install = state.get('install_status', 'NOT_RUN')
+          doctor = state.get('doctor_status', 'NOT_RUN')
+          baseline = state.get('baseline_status', 'NOT_RUN')
+          rerun = state.get('check_status', 'NOT_RUN')
+          perf_status = state.get('performance_status', 'NOT_RUN')
+          op_error = state.get('operational_error') or None
+          version = (raw/'execsurface-version.txt').read_text().strip() if (raw/'execsurface-version.txt').exists() else 'unavailable'
+
+          performance = None
+          if perf_status == 'PASS':
+              def numbers(name):
+                  return [float(x) for x in (raw/name).read_text().splitlines() if x.strip()]
+              wd = numbers('warmup-direct-ms.txt')
+              wp = numbers('warmup-ptrace-ms.txt')
+              d = numbers('measured-direct-ms.txt')
+              p = numbers('measured-ptrace-ms.txt')
+              assert len(wd) == len(wp) == 3
+              assert len(d) == len(p) == 15
+              md = float(statistics.median(d))
+              mp = float(statistics.median(p))
+              overhead = mp - md
+              ratio = mp / md
+              performance = {
+                  'warmup_direct_ms': wd,
+                  'warmup_ptrace_ms': wp,
+                  'measured_direct_ms': d,
+                  'measured_ptrace_ms': p,
+                  'median_direct_ms': md,
+                  'median_ptrace_ms': mp,
+                  'median_absolute_overhead_ms': overhead,
+                  'slowdown_ratio': ratio,
+                  'timeout_seconds': 120.0,
+                  'm65_trigger_crossed': ((md >= 100.0 and ratio > 2.0) or overhead > 500.0),
+                  'excluded_samples': [],
+              }
+
+          if eid == 'ZC-03-FZF':
+              comparable = True
+              complete = True
+              verdict = 'review'
+              friction = (
+                  'Two unchanged reruns returned REVIEW with 701 and 699 findings; '
+                  'most were randomized Go build temporary/cache paths. This is retained as workload noise evidence, not normalized post hoc.'
+              )
+              notes = (
+                  'Recovered from the exact original raw artifact after the state.env shell-quoting defect. '
+                  'No raw run was repeated or altered. Exact unchanged-rerun PASS was not achieved.'
+              )
+          else:
+              comparable = False
+              complete = False
+              verdict = None
+              friction = (
+                  'The frozen direct ripgrep command failed before ExecSurface observation. '
+                  'A separate direct-only diagnostic run established that the pinned revision requires Rust 1.96 while the frozen protocol used Rust 1.90.'
+              )
+              notes = (
+                  'Recovered from the exact original raw artifact after the state.env shell-quoting defect. '
+                  'The external workload failed directly before baseline/check/performance collection.'
+              )
+
+          failures = []
+          if op_error:
+              failures.append({'kind':'retained_operational_failure','description':op_error,'retained':True})
+          if eid == 'ZC-02-RIPGREP':
+              failures.append({
+                  'kind':'external_toolchain_incompatibility',
+                  'description':'Direct-only diagnostic run 36279218262 reproduced rc=101 with execsurface_involved=false: pinned ripgrep dependencies require rustc 1.96, but the frozen batch used rustc 1.90.0.',
+                  'retained':True,
+              })
+          if eid == 'ZC-03-FZF':
+              failures.append({
+                  'kind':'unchanged_workload_surface_noise',
+                  'description':'Unchanged go test reruns produced REVIEW with 701 and 699 findings; preserved rather than normalized after observation.',
+                  'retained':True,
+              })
+
+          record = {
+              'schema_version':'m9-evidence-v1',
+              'evidence_id':f'M9-{eid}-POSTHARDENING-001',
+              'timestamp_utc':'2026-09-26T23:18:30Z',
+              'independence_class':'ZERO_CONTACT_EXTERNAL_REPRO',
+              'claim_status':'PARTIAL',
+              'external_reference':f'https://github.com/{repository}/commit/{revision}',
+              'provenance':{
+                  'initiated_by':'AETHER_X','executed_by':'AETHER_X',
+                  'aether_x_material_involvement':True,'third_party_attestation':None,
+              },
+              'project':{
+                  'name':project,'repository':f'https://github.com/{repository}',
+                  'revision':revision,'modified_by_aether_x':False,
+              },
+              'execsurface':{
+                  'version':version,'source_sha':source_sha,
+                  'install_path':'cargo install --locked --path crates/execsurface-cli from the exact M9.1 source checkout',
+                  'backend':'ptrace',
+              },
+              'host':{
+                  'os':'Ubuntu 24.04 GitHub-hosted runner','kernel':env.get('kernel','unknown'),
+                  'architecture':env.get('architecture','unknown'),'cpu_description':env.get('cpu','unknown'),
+                  'runner_image':'ubuntu-24.04',
+              },
+              'workflow':{
+                  'command':env.get('command','unknown'),
+                  'baseline_attempted':baseline != 'NOT_RUN',
+                  'rerun_check_attempted':rerun != 'NOT_RUN',
+                  'drift_case_attempted':False,
+                  'notes':notes,
+              },
+              'outcome':{
+                  'installation':install,'doctor':doctor,'baseline':baseline,'rerun_check':rerun,
+                  'drift_case':'NOT_RUN','verdict':verdict,'comparable':comparable,'complete':complete,
+                  'operational_error':op_error,'false_positive_reported':False,
+                  'suspected_false_negative':False,'usability_friction':friction,
+              },
+              'privacy':{
+                  'metadata_only_confirmed':True,'prohibited_sensitive_payload_collected':False,
+                  'notes':'Accepted evidence is metadata-only; no file contents, environment values, stdin, network payloads, secrets, credentials, or unrestricted argv were collected.',
+              },
+              'performance':performance,
+              'artifacts':[{
+                  'name':f'original M9.1 raw artifact id ${{ matrix.artifact_id }}',
+                  'sha256':artifact_sha,
+                  'location':original_run_url,
+              }],
+              'failures_exclusions':failures,
+              'reproduction':{
+                  'instructions':f'Checkout {repository}@{revision}; use ExecSurface source {source_sha}; reproduce the frozen command shown in workflow.command under the original M9.1 protocol.',
+                  'expected_scope':'Zero-contact external reproduction on GitHub-hosted Ubuntu 24.04. This is not independent adoption and is not a universal Linux claim.',
+              },
+          }
+          (root/'evidence.json').write_text(json.dumps(record, indent=2, sort_keys=True)+'\n')
+          PY
+
+          python3 scripts/m9_validate_evidence.py recovered/${{ matrix.id }}/evidence.json \
+            | tee recovered/${{ matrix.id }}/validator.txt
+          python3 -m json.tool recovered/${{ matrix.id }}/evidence.json >/dev/null
+          sha256sum recovered/${{ matrix.id }}/evidence.json > recovered/${{ matrix.id }}/evidence.sha256
+
+      - name: Print accepted recovery summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - recovered/${{ matrix.id }}/evidence.json <<'PY'
+          import json, sys
+          d=json.load(open(sys.argv[1]))
+          print('evidence_id='+d['evidence_id'])
+          print('claim_status='+d['claim_status'])
+          print('baseline='+d['outcome']['baseline'])
+          print('rerun_check='+d['outcome']['rerun_check'])
+          print('complete='+str(d['outcome']['complete']))
+          if d.get('performance'):
+              p=d['performance']
+              print('median_direct_ms='+str(p['median_direct_ms']))
+              print('median_ptrace_ms='+str(p['median_ptrace_ms']))
+              print('slowdown_ratio='+str(p['slowdown_ratio']))
+              print('m65_trigger_crossed='+str(p['m65_trigger_crossed']))
+          PY
+
+      - name: Upload recovered validated evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-1-recovered-v2-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: recovered/${{ matrix.id }}
+          if-no-files-found: error
+          retention-days: 30

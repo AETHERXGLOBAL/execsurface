@@ -1,0 +1,220 @@
+name: M9.1 recover original Batch 2 records
+
+on:
+  push:
+    branches:
+      - milestone/m9-1-post-hardening-external-workloads
+    paths:
+      - .github/workflows/m9-1-batch2-recover-original-records.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: ZC-04-JUST-CLI
+            project: just
+            repository: casey/just
+            revision: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+            artifact_id: 10918950136
+            artifact_sha256: 98b25c76d66e6d0e717d2add9dbf995ff947de5308251310be2338faafb120df
+            mode: stable_then_incomparable_drift
+          - id: ZC-05-FZF-CLI
+            project: fzf
+            repository: junegunn/fzf
+            revision: b1be3a8be1b833ce5b92fbbac11637643d60a046
+            artifact_id: 10917958670
+            artifact_sha256: b51ce2167a9d95a52b2ea09ead1e9c9f6fb474b7e6ce72dc57d0d4cc9f215794
+            mode: full_success
+          - id: ZC-06-RIPGREP-CLI
+            project: ripgrep
+            repository: BurntSushi/ripgrep
+            revision: 3fce3b5bb0236da2df6d99672afb8a719642eca7
+            artifact_id: 10918078399
+            artifact_sha256: 4a57c761eebbe6e1013430973d5d6d5b5b75e264fc9003178345aa25d767a4d1
+            mode: stable_then_incomparable_drift
+          - id: ZC-07-FD-CLI
+            project: fd
+            repository: sharkdp/fd
+            revision: ce97e473ebaec49697c07daa50a7bc2b32f713d2
+            artifact_id: 10918276882
+            artifact_sha256: dba53196066e119f6c6f1b646e0a31ccb8b5b700c20c0049015ca6def4428cff
+            mode: setup_workspace_failure
+    env:
+      ORIGINAL_RUN_URL: https://github.com/AETHERXGLOBAL/execsurface/actions/runs/36279780165
+      SOURCE_SHA: 8538ced46f8ee940c9064a09035edecb60b1beb7
+
+    steps:
+      - name: Checkout validator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Download and verify immutable original artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="recovered-b2/${{ matrix.id }}"
+          mkdir -p "$root/raw"
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/${{ matrix.artifact_id }}/zip" \
+            -o "$root/original-artifact.zip"
+          actual="$(sha256sum "$root/original-artifact.zip" | awk '{print $1}')"
+          printf 'expected=%s\nactual=%s\n' '${{ matrix.artifact_sha256 }}' "$actual" \
+            | tee "$root/artifact-integrity.txt"
+          test "$actual" = '${{ matrix.artifact_sha256 }}'
+          unzip -q "$root/original-artifact.zip" -d "$root/raw"
+          test -f "$root/raw/evidence.json"
+
+      - name: Recover semantically accurate evidence record
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - \
+            recovered-b2/${{ matrix.id }} \
+            '${{ matrix.id }}' '${{ matrix.project }}' '${{ matrix.repository }}' \
+            '${{ matrix.revision }}' '${{ matrix.mode }}' \
+            '${{ matrix.artifact_id }}' '${{ matrix.artifact_sha256 }}' \
+            "$SOURCE_SHA" "$ORIGINAL_RUN_URL" <<'PY'
+          import json, sys
+          from pathlib import Path
+
+          root=Path(sys.argv[1]); raw=root/'raw'
+          eid, project, repository, revision, mode = sys.argv[2:7]
+          artifact_id, artifact_sha, source_sha, run_url = sys.argv[7:11]
+          old=json.loads((raw/'evidence.json').read_text())
+          old['evidence_id']=f'M9-{eid}-ORIGINAL-001'
+          old['claim_status']='PARTIAL'
+          old['execsurface']['source_sha']=source_sha
+          old['external_reference']=f'https://github.com/{repository}/commit/{revision}'
+          old['project']['name']=project
+          old['project']['repository']=f'https://github.com/{repository}'
+          old['project']['revision']=revision
+          old['artifacts']=[{
+              'name':f'original Batch 2 raw artifact id {artifact_id}',
+              'sha256':artifact_sha,
+              'location':run_url,
+          }]
+
+          failures=[]
+          if mode == 'full_success':
+              state=json.loads((raw/'state.json').read_text())
+              assert state['stable'] is True
+              assert [x['findings'] for x in state['checks']] == [0,0]
+              assert [x['verdict'] for x in state['checks']] == ['pass','pass']
+              assert state['drift']['sha256sum_visible'] is True
+              assert state['drift']['verdict'] == 'review'
+              assert state['performance'] == 'PASS'
+              old['claim_status']='COMPUTATIONAL_EVIDENCE'
+              old['outcome']['baseline']='PASS'
+              old['outcome']['rerun_check']='PASS'
+              old['outcome']['drift_case']='PASS'
+              old['outcome']['verdict']='pass'
+              old['outcome']['comparable']=True
+              old['outcome']['complete']=True
+              old['outcome']['operational_error']=None
+              old['outcome']['usability_friction']=None
+              old['workflow']['notes']=(
+                  'Recovered from the immutable original Batch 2 artifact. '
+                  'Two unchanged checks were zero-finding PASS, controlled sha256sum drift was surfaced as REVIEW, '
+                  'and the frozen 3+15 performance series completed. Only the original evidence-record artifact list was defective.'
+              )
+          elif mode == 'stable_then_incomparable_drift':
+              c1=json.loads((raw/'check-1.json').read_text())
+              c2=json.loads((raw/'check-2.json').read_text())
+              assert c1['verdict']=='pass' and c2['verdict']=='pass'
+              assert len(c1.get('findings',[]))==0 and len(c2.get('findings',[]))==0
+              err=(raw/'drift.stderr').read_text(errors='replace')
+              assert 'baseline and candidate are not comparable' in err
+              old['performance']=None
+              old['outcome']['baseline']='PASS'
+              old['outcome']['rerun_check']='PASS'
+              old['outcome']['drift_case']='FAIL'
+              old['outcome']['verdict']='pass'
+              old['outcome']['comparable']=True
+              old['outcome']['complete']=False
+              old['outcome']['operational_error']=(
+                  'Controlled-drift harness changed the root command from the learned executable to /bin/bash; '
+                  'ExecSurface correctly rejected the candidate as non-comparable before writing drift.json.'
+              )
+              old['outcome']['usability_friction']='None observed in the two unchanged user-like reruns; controlled-drift harness was mechanically invalid.'
+              old['workflow']['baseline_attempted']=True
+              old['workflow']['rerun_check_attempted']=True
+              old['workflow']['drift_case_attempted']=True
+              old['workflow']['notes']=(
+                  'Original preregistered user-like baseline and two unchanged checks completed and were zero-finding PASS. '
+                  'The separately preregistered controlled-drift command was mechanically non-comparable because the harness changed the root executable to bash. '
+                  'No performance series was reached after that harness error. Original raw outputs are preserved without reinterpretation.'
+              )
+              failures.append({
+                  'kind':'controlled_drift_harness_incomparable',
+                  'description':'The drift test changed root executable/argument shape, so the product fail-closed comparability guard rejected it. This is a harness defect, not a missed drift finding.',
+                  'retained':True,
+              })
+          elif mode == 'setup_workspace_failure':
+              old['performance']=None
+              old['outcome']['baseline']='NOT_RUN'
+              old['outcome']['rerun_check']='NOT_RUN'
+              old['outcome']['drift_case']='NOT_RUN'
+              old['outcome']['verdict']=None
+              old['outcome']['comparable']=False
+              old['outcome']['complete']=False
+              old['outcome']['operational_error']=(
+                  'External fd setup failed before observation because Cargo treated external/project as belonging to the parent ExecSurface workspace. '
+                  'No ExecSurface learn/check/observe result was produced for this case.'
+              )
+              old['outcome']['usability_friction']=None
+              old['workflow']['baseline_attempted']=False
+              old['workflow']['rerun_check_attempted']=False
+              old['workflow']['drift_case_attempted']=False
+              old['workflow']['notes']='External setup failed before the observed command; this record is retained as a harness/setup failure only.'
+              failures.append({
+                  'kind':'external_setup_parent_workspace_collision',
+                  'description':'Cargo rejected the nested sharkdp/fd checkout because the parent ExecSurface Cargo.toml was discovered as a workspace. The external project must be staged outside the parent workspace for the repair run.',
+                  'retained':True,
+              })
+          else:
+              raise SystemExit('unknown recovery mode')
+
+          old['failures_exclusions']=failures
+          (root/'evidence.json').write_text(json.dumps(old,indent=2,sort_keys=True)+'\n')
+          PY
+
+          python3 scripts/m9_validate_evidence.py "recovered-b2/${{ matrix.id }}/evidence.json" \
+            | tee "recovered-b2/${{ matrix.id }}/validator.txt"
+          sha256sum "recovered-b2/${{ matrix.id }}/evidence.json" \
+            > "recovered-b2/${{ matrix.id }}/evidence.sha256"
+          python3 - "recovered-b2/${{ matrix.id }}/evidence.json" <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1]))
+          print('evidence_id='+d['evidence_id'])
+          print('claim_status='+d['claim_status'])
+          print('baseline='+d['outcome']['baseline'])
+          print('rerun_check='+d['outcome']['rerun_check'])
+          print('drift_case='+d['outcome']['drift_case'])
+          print('complete='+str(d['outcome']['complete']))
+          if d.get('performance'):
+              p=d['performance']
+              print('median_direct_ms='+str(p['median_direct_ms']))
+              print('median_ptrace_ms='+str(p['median_ptrace_ms']))
+              print('m65_trigger_crossed='+str(p['m65_trigger_crossed']))
+          PY
+
+      - name: Upload recovered validated record
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-1-batch2-recovered-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: recovered-b2/${{ matrix.id }}
+          if-no-files-found: error
+          retention-days: 30

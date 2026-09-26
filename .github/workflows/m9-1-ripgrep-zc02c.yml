@@ -1,0 +1,193 @@
+name: M9.1 ZC-02C ripgrep upstream-CI evidence
+
+on:
+  push:
+    branches:
+      - milestone/m9-1-post-hardening-external-workloads
+    paths:
+      - .github/workflows/m9-1-ripgrep-zc02c.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ripgrep-zc02c:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      EXECSURFACE_RUST: 1.90.0
+      WORKLOAD_RUST: 1.96.0
+      RIPGREP_SHA: 3fce3b5bb0236da2df6d99672afb8a719642eca7
+      WORK_ROOT: /tmp/execsurface-m9-ripgrep-zc02c
+      EVIDENCE: m9-evidence/ZC-02C-RIPGREP
+    steps:
+      - name: Checkout ExecSurface evidence branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified ripgrep
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: BurntSushi/ripgrep
+          ref: ${{ env.RIPGREP_SHA }}
+          path: external/ripgrep
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install upstream Linux packages and exact toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd external/ripgrep && ci/ubuntu-install-packages)
+          rustup toolchain install "$EXECSURFACE_RUST" --profile minimal
+          rustup toolchain install "$WORKLOAD_RUST" --profile minimal
+          cargo "+$EXECSURFACE_RUST" build --locked -p execsurface
+          rm -rf "$WORK_ROOT"
+          cp -a external/ripgrep "$WORK_ROOT"
+          test "$(git -C "$WORK_ROOT" rev-parse HEAD)" = "$RIPGREP_SHA"
+          test -z "$(git -C "$WORK_ROOT" status --porcelain)"
+          mkdir -p "$EVIDENCE"
+          {
+            printf 'evidence_id=M9-ZC-02C-RIPGREP-POSTHARDENING-001\n'
+            printf 'independence_class=ZERO_CONTACT_EXTERNAL_REPRO\n'
+            printf 'source_sha=%s\n' "$GITHUB_SHA"
+            printf 'ripgrep_sha=%s\n' "$RIPGREP_SHA"
+            printf 'workload=cargo test --workspace --features pcre2\n'
+            printf 'upstream_ci_source=.github/workflows/ci.yml\n'
+            printf 'workload_rust=%s\n' "$(rustc +$WORKLOAD_RUST --version)"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > "$EVIDENCE/environment.txt"
+
+      - name: Prove direct upstream-CI workload
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=5s 180s bash -lc \
+            "cd '$WORK_ROOT' && cargo +$WORKLOAD_RUST test --workspace --features pcre2" \
+            > "$EVIDENCE/direct.stdout" 2> "$EVIDENCE/direct.stderr"
+
+      - name: Doctor and learn
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/debug/execsurface doctor > "$EVIDENCE/doctor.stdout" 2> "$EVIDENCE/doctor.stderr"
+          cmd="cd '$WORK_ROOT' && cargo +$WORKLOAD_RUST test --workspace --features pcre2 >/dev/null 2>&1"
+          target/debug/execsurface learn --output "$EVIDENCE/ripgrep.lock.json" -- /bin/bash -lc "$cmd"
+
+      - name: Collect two unchanged checks without erasing REVIEW
+        id: compat
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmd="cd '$WORK_ROOT' && cargo +$WORKLOAD_RUST test --workspace --features pcre2 >/dev/null 2>&1"
+          : > "$EVIDENCE/check-summary.jsonl"
+          compatible=true
+          for n in 1 2; do
+            set +e
+            target/debug/execsurface check \
+              --baseline "$EVIDENCE/ripgrep.lock.json" \
+              --json-output "$EVIDENCE/check-${n}.json" \
+              --markdown-output "$EVIDENCE/check-${n}.md" \
+              -- /bin/bash -lc "$cmd" \
+              > "$EVIDENCE/check-${n}.stdout" 2> "$EVIDENCE/check-${n}.stderr"
+            rc=$?
+            set -e
+            row="$(python3 - "$EVIDENCE" "$n" "$rc" <<'PY'
+          import json, sys
+          from pathlib import Path
+          root, n, rc = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+          d=json.loads((root/f'check-{n}.json').read_text())
+          print(json.dumps({'check':int(n),'rc':rc,'verdict':d.get('verdict'),'findings':len(d.get('findings',[]))}, sort_keys=True))
+          PY
+          )"
+            printf '%s\n' "$row" | tee -a "$EVIDENCE/check-summary.jsonl"
+            if ! python3 - "$row" <<'PY'; then
+          import json, sys
+          r=json.loads(sys.argv[1])
+          raise SystemExit(0 if r['rc']==0 and r['verdict']=='pass' and r['findings']==0 else 1)
+          PY
+              compatible=false
+            fi
+          done
+          echo "pass=$compatible" >> "$GITHUB_OUTPUT"
+
+      - name: Run frozen 3 plus 15 performance protocol only if compatibility is stable
+        if: steps.compat.outputs.pass == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmd="cd '$WORK_ROOT' && cargo +$WORKLOAD_RUST test --workspace --features pcre2 >/dev/null 2>&1"
+          : > "$EVIDENCE/warmup-direct-ms.txt"
+          : > "$EVIDENCE/warmup-ptrace-ms.txt"
+          : > "$EVIDENCE/measured-direct-ms.txt"
+          : > "$EVIDENCE/measured-ptrace-ms.txt"
+          measure() {
+            mode="$1"; out="$2"
+            start="$(python3 -c 'import time; print(time.perf_counter_ns())')"
+            if [ "$mode" = direct ]; then
+              timeout --signal=TERM --kill-after=5s 180s /bin/bash -lc "$cmd" >/dev/null 2>&1
+            else
+              timeout --signal=TERM --kill-after=5s 180s target/debug/execsurface observe -- /bin/bash -lc "$cmd" >/dev/null 2>&1
+            fi
+            end="$(python3 -c 'import time; print(time.perf_counter_ns())')"
+            python3 - "$start" "$end" >> "$out" <<'PY'
+          import sys
+          print((int(sys.argv[2])-int(sys.argv[1]))/1_000_000.0)
+          PY
+          }
+          for n in 1 2 3; do measure direct "$EVIDENCE/warmup-direct-ms.txt"; measure ptrace "$EVIDENCE/warmup-ptrace-ms.txt"; done
+          for n in $(seq 1 15); do measure direct "$EVIDENCE/measured-direct-ms.txt"; measure ptrace "$EVIDENCE/measured-ptrace-ms.txt"; done
+          python3 - "$EVIDENCE" <<'PY' > "$EVIDENCE/performance.json"
+          import json, statistics, sys
+          from pathlib import Path
+          root=Path(sys.argv[1]); vals=lambda n:[float(x) for x in (root/n).read_text().splitlines() if x.strip()]
+          d,p=vals('measured-direct-ms.txt'),vals('measured-ptrace-ms.txt')
+          md,mp=float(statistics.median(d)),float(statistics.median(p)); delta=mp-md; ratio=mp/md
+          print(json.dumps({'median_direct_ms':md,'median_ptrace_ms':mp,'median_absolute_overhead_ms':delta,'slowdown_ratio':ratio,'m65_trigger_crossed':((md>=100 and ratio>2.0) or delta>500),'direct_samples':len(d),'ptrace_samples':len(p)}, indent=2, sort_keys=True))
+          PY
+
+      - name: Seal self-contained evidence status
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          python3 - "$EVIDENCE" <<'PY'
+          import json, sys
+          from pathlib import Path
+          root=Path(sys.argv[1]); rows=[]
+          p=root/'check-summary.jsonl'
+          if p.exists(): rows=[json.loads(x) for x in p.read_text().splitlines() if x.strip()]
+          status={
+            'evidence_id':'M9-ZC-02C-RIPGREP-POSTHARDENING-001',
+            'independence_class':'ZERO_CONTACT_EXTERNAL_REPRO',
+            'upstream':'BurntSushi/ripgrep','revision':'3fce3b5bb0236da2df6d99672afb8a719642eca7',
+            'workload':'cargo test --workspace --features pcre2','checks':rows,
+            'compatibility_pass':bool(rows) and all(r['rc']==0 and r['verdict']=='pass' and r['findings']==0 for r in rows),
+            'performance_collected':(root/'performance.json').exists(),
+            'claim_boundary':'zero-contact compatibility/performance evidence only; not adoption'
+          }
+          (root/'status.json').write_text(json.dumps(status,indent=2,sort_keys=True)+'\n')
+          PY
+          find "$EVIDENCE" -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > "$EVIDENCE/SHA256SUMS"
+
+      - name: Upload complete ZC-02C bundle
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-zc02c-ripgrep-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce compatibility result after preserving evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$EVIDENCE/status.json" <<'PY'
+          import json, sys
+          d=json.load(open(sys.argv[1]))
+          assert d['compatibility_pass'] is True, d
+          assert d['performance_collected'] is True, d
+          PY

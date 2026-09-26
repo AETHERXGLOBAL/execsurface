@@ -1,0 +1,126 @@
+name: M9.1 recover preserved just evidence
+
+on:
+  push:
+    branches:
+      - milestone/m9-1-post-hardening-external-workloads
+    paths:
+      - .github/workflows/m9-1-recover-just-preserved-artifact.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  recover-just:
+    runs-on: ubuntu-24.04
+    env:
+      ARTIFACT_ID: 10918581109
+      ARTIFACT_SHA256: e20a0ed1a1566b287032096a925894e50537dd1f836ed9e5dc8f36f1411122ab
+      ORIGINAL_RUN_URL: https://github.com/AETHERXGLOBAL/execsurface/actions/runs/36278935442
+      REVISION: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+
+    steps:
+      - name: Checkout evidence validator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Download and verify immutable original artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p recovered/just/raw
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" \
+            -o recovered/just/original-artifact.zip
+          actual="$(sha256sum recovered/just/original-artifact.zip | awk '{print $1}')"
+          printf 'expected=%s\nactual=%s\n' "$ARTIFACT_SHA256" "$actual" \
+            | tee recovered/just/artifact-integrity.txt
+          test "$actual" = "$ARTIFACT_SHA256"
+          unzip -q recovered/just/original-artifact.zip -d recovered/just/raw
+          test -f recovered/just/raw/state.env
+          test -f recovered/just/raw/check-1.json
+          test -f recovered/just/raw/check-2.json
+
+      - name: Build and validate recovered just record
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, statistics
+          from pathlib import Path
+
+          root=Path('recovered/just')
+          raw=root/'raw'
+          def kv(path):
+              out={}
+              for line in Path(path).read_text().splitlines():
+                  if '=' in line:
+                      k,v=line.split('=',1); out[k]=v
+              return out
+          state=kv(raw/'state.env')
+          env=kv(raw/'environment.txt')
+          c1=json.loads((raw/'check-1.json').read_text())
+          c2=json.loads((raw/'check-2.json').read_text())
+          assert c1.get('verdict') == 'review' and len(c1.get('findings',[])) == 50774
+          assert c2.get('verdict') == 'review' and len(c2.get('findings',[])) == 50783
+          def vals(name): return [float(x) for x in (raw/name).read_text().splitlines() if x.strip()]
+          wd=vals('warmup-direct-ms.txt'); wp=vals('warmup-ptrace-ms.txt')
+          d=vals('measured-direct-ms.txt'); p=vals('measured-ptrace-ms.txt')
+          assert len(wd)==len(wp)==3 and len(d)==len(p)==15
+          md=float(statistics.median(d)); mp=float(statistics.median(p))
+          overhead=mp-md; ratio=mp/md
+          trigger=((md>=100.0 and ratio>2.0) or overhead>500.0)
+          assert trigger is True
+          failures=[
+              {'kind':'retained_operational_failure','description':state['operational_error'],'retained':True},
+              {'kind':'unchanged_workload_surface_noise','description':'Two unchanged cargo test reruns produced REVIEW with 50,774 and 50,783 findings. The raw differences are preserved; no post-hoc normalization is applied.','retained':True},
+          ]
+          record={
+              'schema_version':'m9-evidence-v1',
+              'evidence_id':'M9-ZC-01-JUST-POSTHARDENING-001',
+              'timestamp_utc':'2026-09-26T23:24:48Z',
+              'independence_class':'ZERO_CONTACT_EXTERNAL_REPRO',
+              'claim_status':'PARTIAL',
+              'external_reference':f"https://github.com/casey/just/commit/{env['revision']}",
+              'provenance':{'initiated_by':'AETHER_X','executed_by':'AETHER_X','aether_x_material_involvement':True,'third_party_attestation':None},
+              'project':{'name':'just','repository':'https://github.com/casey/just','revision':env['revision'],'modified_by_aether_x':False},
+              'execsurface':{'version':(raw/'execsurface-version.txt').read_text().strip(),'source_sha':env['execsurface_source_sha'],'install_path':'cargo install --locked --path crates/execsurface-cli from the exact M9.1 source checkout','backend':'ptrace'},
+              'host':{'os':'Ubuntu 24.04 GitHub-hosted runner','kernel':env['kernel'],'architecture':env['architecture'],'cpu_description':env['cpu'],'runner_image':'ubuntu-24.04'},
+              'workflow':{'command':env['command'],'baseline_attempted':True,'rerun_check_attempted':True,'drift_case_attempted':False,'notes':'Recovered from the exact original raw artifact after the state.env shell-quoting defect. Observer execution and the frozen 3+15 performance series completed; exact unchanged-rerun PASS was not achieved.'},
+              'outcome':{'installation':'PASS','doctor':'PASS','baseline':'PASS','rerun_check':'FAIL','drift_case':'NOT_RUN','verdict':'review','comparable':True,'complete':True,'operational_error':state['operational_error'],'false_positive_reported':False,'suspected_false_negative':False,'usability_friction':'The full cargo test workload produces a very large changing runtime surface across unchanged reruns, making exact baseline stability noisy at this granularity.'},
+              'privacy':{'metadata_only_confirmed':True,'prohibited_sensitive_payload_collected':False,'notes':'Accepted evidence is metadata-only; no file contents, environment values, stdin, network payloads, secrets, credentials, or unrestricted argv were collected.'},
+              'performance':{'warmup_direct_ms':wd,'warmup_ptrace_ms':wp,'measured_direct_ms':d,'measured_ptrace_ms':p,'median_direct_ms':md,'median_ptrace_ms':mp,'median_absolute_overhead_ms':overhead,'slowdown_ratio':ratio,'timeout_seconds':120.0,'m65_trigger_crossed':trigger,'excluded_samples':[]},
+              'artifacts':[{'name':'original M9.1 just raw artifact id 10918581109','sha256':'e20a0ed1a1566b287032096a925894e50537dd1f836ed9e5dc8f36f1411122ab','location':'https://github.com/AETHERXGLOBAL/execsurface/actions/runs/36278935442'}],
+              'failures_exclusions':failures,
+              'reproduction':{'instructions':f"Checkout casey/just@{env['revision']}; use ExecSurface source {env['execsurface_source_sha']}; run the frozen cargo test command, doctor, learn, two unchanged checks, and the frozen 3+15 timing protocol.",'expected_scope':'Zero-contact external reproduction on GitHub-hosted Ubuntu 24.04. This is not independent adoption and is not a universal Linux claim.'},
+          }
+          (root/'evidence.json').write_text(json.dumps(record,indent=2,sort_keys=True)+'\n')
+          PY
+          python3 scripts/m9_validate_evidence.py recovered/just/evidence.json \
+            | tee recovered/just/validator.txt
+          sha256sum recovered/just/evidence.json > recovered/just/evidence.sha256
+          python3 - recovered/just/evidence.json <<'PY'
+          import json,sys
+          d=json.load(open(sys.argv[1])); p=d['performance']
+          print('claim_status='+d['claim_status'])
+          print('rerun_check='+d['outcome']['rerun_check'])
+          print('median_direct_ms='+str(p['median_direct_ms']))
+          print('median_ptrace_ms='+str(p['median_ptrace_ms']))
+          print('slowdown_ratio='+str(p['slowdown_ratio']))
+          print('m65_trigger_crossed='+str(p['m65_trigger_crossed']))
+          PY
+
+      - name: Upload recovered just evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-1-recovered-just-${{ github.run_id }}-${{ github.run_attempt }}
+          path: recovered/just
+          if-no-files-found: error
+          retention-days: 30

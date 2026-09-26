@@ -1,0 +1,403 @@
+name: M9.1 Batch B external runtime workloads
+
+on:
+  push:
+    branches:
+      - milestone/m9-1-post-hardening-external-workloads
+    paths:
+      - .github/workflows/m9-1-batch-b-runtime-workloads.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-workload:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: ZC-04-RIPGREP-RUNTIME
+            project: ripgrep
+            repository: BurntSushi/ripgrep
+            revision: 3fce3b5bb0236da2df6d99672afb8a719642eca7
+          - id: ZC-05-FZF-RUNTIME
+            project: fzf
+            repository: junegunn/fzf
+            revision: b1be3a8be1b833ce5b92fbbac11637643d60a046
+    env:
+      EXECSURFACE_RUST_TOOLCHAIN: 1.90.0
+      RIPGREP_RUST_TOOLCHAIN: 1.96.0
+      SAMPLE_TIMEOUT: 120
+      INSTALL_ROOT: /tmp/execsurface-m9-b-install
+      WORK_ROOT: /tmp/execsurface-m9-b-external
+      FREEZE_COMMIT: b020369a6a6861cc8b530fc9e63a7db428999466
+
+    steps:
+      - name: Checkout ExecSurface evidence branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified external project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.revision }}
+          path: external/project
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify pre-execution freeze and prepare isolated checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$FREEZE_COMMIT" "$GITHUB_SHA"
+          test -f docs/milestones/M9_1_BATCH_B_RUNTIME_WORKLOADS.md
+          test "$(git -C external/project rev-parse HEAD)" = "${{ matrix.revision }}"
+          test -z "$(git -C external/project status --porcelain)"
+
+          rustup toolchain install "$EXECSURFACE_RUST_TOOLCHAIN" --profile minimal
+          if [ "${{ matrix.project }}" = "ripgrep" ]; then
+            rustup toolchain install "$RIPGREP_RUST_TOOLCHAIN" --profile minimal
+          fi
+
+          rm -rf "$WORK_ROOT" "$INSTALL_ROOT"
+          cp -a external/project "$WORK_ROOT"
+          test "$(git -C "$WORK_ROOT" rev-parse HEAD)" = "${{ matrix.revision }}"
+          test -z "$(git -C "$WORK_ROOT" status --porcelain)"
+          evidence="m9-batch-b/${{ matrix.id }}"
+          mkdir -p "$evidence" "$INSTALL_ROOT"
+
+          if [ "${{ matrix.project }}" = "ripgrep" ]; then
+            printf '%s\n' "cd '$WORK_ROOT' && ./target/release/rg --no-heading --line-number 'ripgrep' README.md >/dev/null" > /tmp/m9-b-runtime-command
+            printf '%s\n' "cargo +$RIPGREP_RUST_TOOLCHAIN build --locked --release" > /tmp/m9-b-build-command
+          else
+            printf '%s\n' "cd '$WORK_ROOT' && printf 'alpha\\nbeta\\ngamma\\n' | ./target/fzf --filter=beta --select-1 --exit-0 >/dev/null" > /tmp/m9-b-runtime-command
+            printf '%s\n' "make" > /tmp/m9-b-build-command
+          fi
+
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'execsurface_source_sha=%s\n' "$GITHUB_SHA"
+            printf 'freeze_commit=%s\n' "$FREEZE_COMMIT"
+            printf 'project=%s\n' '${{ matrix.repository }}'
+            printf 'revision=%s\n' '${{ matrix.revision }}'
+            printf 'kernel=%s\n' "$(uname -srmo)"
+            printf 'architecture=%s\n' "$(uname -m)"
+            printf 'cpu=%s\n' "$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)"
+            printf 'execsurface_rustc=%s\n' "$(rustc +$EXECSURFACE_RUST_TOOLCHAIN --version)"
+            printf 'external_rustc=%s\n' "$(rustc +$RIPGREP_RUST_TOOLCHAIN --version 2>/dev/null || echo NOT_APPLICABLE)"
+            printf 'go=%s\n' "$(go version 2>/dev/null || echo NOT_APPLICABLE)"
+            printf 'build_command=%s\n' "$(cat /tmp/m9-b-build-command)"
+            printf 'runtime_command=%s\n' "$(cat /tmp/m9-b-runtime-command)"
+          } > "$evidence/environment.txt"
+
+      - name: Install ExecSurface from exact source
+        shell: bash
+        run: |
+          set +e
+          evidence="m9-batch-b/${{ matrix.id }}"
+          cargo "+$EXECSURFACE_RUST_TOOLCHAIN" install --locked --path crates/execsurface-cli --root "$INSTALL_ROOT" \
+            > "$evidence/install.stdout" 2> "$evidence/install.stderr"
+          rc=$?
+          printf 'install_rc=%s\n' "$rc" > "$evidence/install.status"
+          if [ "$rc" -eq 0 ]; then
+            "$INSTALL_ROOT/bin/execsurface" --version > "$evidence/execsurface-version.txt" 2>&1 || true
+          fi
+          exit 0
+
+      - name: Build pinned external project before measurement
+        shell: bash
+        run: |
+          set +e
+          evidence="m9-batch-b/${{ matrix.id }}"
+          if [ "${{ matrix.project }}" = "ripgrep" ]; then
+            (cd "$WORK_ROOT" && cargo "+$RIPGREP_RUST_TOOLCHAIN" build --locked --release) \
+              > "$evidence/build.stdout" 2> "$evidence/build.stderr"
+          else
+            (cd "$WORK_ROOT" && make) \
+              > "$evidence/build.stdout" 2> "$evidence/build.stderr"
+          fi
+          rc=$?
+          printf 'build_rc=%s\n' "$rc" > "$evidence/build.status"
+          git -C "$WORK_ROOT" status --porcelain --untracked-files=no > "$evidence/tracked-status-after-build.txt"
+          exit 0
+
+      - name: Collect runtime compatibility and frozen performance evidence
+        shell: bash
+        run: |
+          set -uo pipefail
+          evidence="m9-batch-b/${{ matrix.id }}"
+          exe="$INSTALL_ROOT/bin/execsurface"
+          cmd="$(cat /tmp/m9-b-runtime-command)"
+          install_rc="$(sed -n 's/^install_rc=//p' "$evidence/install.status")"
+          build_rc="$(sed -n 's/^build_rc=//p' "$evidence/build.status")"
+
+          install_status=FAIL; [ "$install_rc" -eq 0 ] && install_status=PASS
+          build_status=FAIL; [ "$build_rc" -eq 0 ] && build_status=PASS
+          source_clean=FAIL; [ ! -s "$evidence/tracked-status-after-build.txt" ] && source_clean=PASS
+          direct_status=NOT_RUN
+          doctor_status=NOT_RUN
+          baseline_status=NOT_RUN
+          check_status=NOT_RUN
+          performance_status=NOT_RUN
+          operational_error=''
+
+          if [ "$install_status" != PASS ]; then
+            operational_error='ExecSurface source installation failed'
+          elif [ "$build_status" != PASS ]; then
+            operational_error="external project build failed rc=$build_rc"
+          elif [ "$source_clean" != PASS ]; then
+            operational_error='external build modified tracked upstream source files'
+          else
+            set +e
+            timeout --signal=TERM --kill-after=5s "${SAMPLE_TIMEOUT}s" bash -lc "$cmd" \
+              > "$evidence/direct.stdout" 2> "$evidence/direct.stderr"
+            direct_rc=$?
+            set -e
+            printf 'direct_rc=%s\n' "$direct_rc" > "$evidence/direct.status"
+            if [ "$direct_rc" -eq 0 ]; then
+              direct_status=PASS
+            else
+              direct_status=FAIL
+              operational_error="direct frozen runtime workload failed rc=$direct_rc"
+            fi
+
+            set +e
+            "$exe" doctor > "$evidence/doctor.stdout" 2> "$evidence/doctor.stderr"
+            doctor_rc=$?
+            set -e
+            printf 'doctor_rc=%s\n' "$doctor_rc" > "$evidence/doctor.status"
+            if [ "$doctor_rc" -eq 0 ]; then doctor_status=PASS; else doctor_status=FAIL; fi
+
+            if [ "$direct_status" = PASS ]; then
+              set +e
+              timeout --signal=TERM --kill-after=5s "${SAMPLE_TIMEOUT}s" \
+                "$exe" learn --output "$evidence/baseline.lock.json" -- /bin/bash -lc "$cmd" \
+                > "$evidence/learn.stdout" 2> "$evidence/learn.stderr"
+              learn_rc=$?
+              set -e
+              printf 'learn_rc=%s\n' "$learn_rc" > "$evidence/learn.status"
+
+              if [ "$learn_rc" -eq 0 ]; then
+                baseline_status=PASS
+                check_fail=0
+                : > "$evidence/check.status"
+                for n in 1 2; do
+                  set +e
+                  timeout --signal=TERM --kill-after=5s "${SAMPLE_TIMEOUT}s" \
+                    "$exe" check --baseline "$evidence/baseline.lock.json" \
+                    --json-output "$evidence/check-${n}.json" \
+                    --markdown-output "$evidence/check-${n}.md" \
+                    -- /bin/bash -lc "$cmd" \
+                    > "$evidence/check-${n}.stdout" 2> "$evidence/check-${n}.stderr"
+                  rc=$?
+                  set -e
+                  printf 'check_%s_rc=%s\n' "$n" "$rc" >> "$evidence/check.status"
+                  if [ "$rc" -ne 0 ]; then check_fail=1; fi
+                done
+
+                python3 - "$evidence" > "$evidence/check-verdicts.txt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          for n in (1,2):
+              p=root/f'check-{n}.json'
+              if not p.exists():
+                  print(f'check{n}=MISSING findings=-1')
+                  continue
+              d=json.loads(p.read_text())
+              print(f"check{n}={d.get('verdict')} findings={len(d.get('findings', []))}")
+          PY
+                v1="$(sed -n 's/^check1=\([^ ]*\).*/\1/p' "$evidence/check-verdicts.txt")"
+                v2="$(sed -n 's/^check2=\([^ ]*\).*/\1/p' "$evidence/check-verdicts.txt")"
+                f1="$(sed -n 's/^check1=[^ ]* findings=//p' "$evidence/check-verdicts.txt")"
+                f2="$(sed -n 's/^check2=[^ ]* findings=//p' "$evidence/check-verdicts.txt")"
+                if [ "$check_fail" -eq 0 ] && [ "$v1" = pass ] && [ "$v2" = pass ] && [ "$f1" = 0 ] && [ "$f2" = 0 ]; then
+                  check_status=PASS
+                else
+                  check_status=FAIL
+                  operational_error="${operational_error:+$operational_error; }unchanged runtime checks did not produce two zero-finding PASS results"
+                fi
+              else
+                baseline_status=FAIL
+                operational_error="${operational_error:+$operational_error; }baseline creation failed rc=$learn_rc"
+              fi
+
+              set +e
+              timeout --signal=TERM --kill-after=5s "${SAMPLE_TIMEOUT}s" \
+                "$exe" observe -- /bin/bash -lc "$cmd" \
+                > "$evidence/preperf-observe.json" 2> "$evidence/preperf-observe.stderr"
+              preperf_rc=$?
+              set -e
+              printf 'preperf_rc=%s\n' "$preperf_rc" > "$evidence/preperf.status"
+              preperf_complete=0
+              if [ "$preperf_rc" -eq 0 ]; then
+                python3 - "$evidence/preperf-observe.json" <<'PY' && preperf_complete=1 || preperf_complete=0
+          import json, sys
+          d=json.load(open(sys.argv[1]))
+          assert d.get('complete') is True, d.get('warnings')
+          o=d.get('outcome', {})
+          assert o.get('exit_code') == 0 and o.get('signal') is None, o
+          PY
+              fi
+
+              if [ "$preperf_complete" -eq 1 ]; then
+                : > "$evidence/warmup-direct-ms.txt"
+                : > "$evidence/warmup-ptrace-ms.txt"
+                : > "$evidence/measured-direct-ms.txt"
+                : > "$evidence/measured-ptrace-ms.txt"
+                perf_fail=0
+
+                measure_direct() {
+                  python3 - "$cmd" "$SAMPLE_TIMEOUT" "$1" <<'PY'
+          import subprocess, sys, time
+          cmd, timeout_s, out=sys.argv[1], float(sys.argv[2]), sys.argv[3]
+          t0=time.perf_counter_ns()
+          try:
+              p=subprocess.run(['/bin/bash','-lc',cmd], timeout=timeout_s)
+              rc=p.returncode
+          except subprocess.TimeoutExpired:
+              rc=124
+          ms=(time.perf_counter_ns()-t0)/1_000_000
+          with open(out,'a') as f: f.write(f'{ms:.6f}\n')
+          raise SystemExit(0 if rc == 0 else 1)
+          PY
+                }
+
+                measure_ptrace() {
+                  python3 - "$exe" "$cmd" "$SAMPLE_TIMEOUT" "$1" "$2" "$3" <<'PY'
+          import json, subprocess, sys, time
+          exe, cmd, timeout_s, timings, jout, jerr=sys.argv[1:]
+          t0=time.perf_counter_ns()
+          try:
+              with open(jout,'w') as out, open(jerr,'w') as err:
+                  p=subprocess.run([exe,'observe','--','/bin/bash','-lc',cmd], stdout=out, stderr=err, timeout=float(timeout_s))
+              rc=p.returncode
+          except subprocess.TimeoutExpired:
+              rc=124
+          ms=(time.perf_counter_ns()-t0)/1_000_000
+          with open(timings,'a') as f: f.write(f'{ms:.6f}\n')
+          if rc != 0: raise SystemExit(1)
+          try:
+              d=json.load(open(jout)); assert d.get('complete') is True
+              o=d.get('outcome', {}); assert o.get('exit_code') == 0 and o.get('signal') is None
+          except Exception: raise SystemExit(1)
+          PY
+                }
+
+                for i in 1 2 3; do measure_direct "$evidence/warmup-direct-ms.txt" || perf_fail=1; done
+                for i in 1 2 3; do
+                  measure_ptrace "$evidence/warmup-ptrace-ms.txt" "$evidence/perf-warmup-${i}.json" "$evidence/perf-warmup-${i}.stderr" || perf_fail=1
+                done
+                if [ "$perf_fail" -eq 0 ]; then
+                  for i in $(seq 1 15); do
+                    if [ $((i % 2)) -eq 1 ]; then
+                      measure_direct "$evidence/measured-direct-ms.txt" || perf_fail=1
+                      measure_ptrace "$evidence/measured-ptrace-ms.txt" "$evidence/perf-measured-${i}.json" "$evidence/perf-measured-${i}.stderr" || perf_fail=1
+                    else
+                      measure_ptrace "$evidence/measured-ptrace-ms.txt" "$evidence/perf-measured-${i}.json" "$evidence/perf-measured-${i}.stderr" || perf_fail=1
+                      measure_direct "$evidence/measured-direct-ms.txt" || perf_fail=1
+                    fi
+                    [ "$perf_fail" -eq 0 ] || break
+                  done
+                fi
+                if [ "$perf_fail" -eq 0 ] && [ "$(wc -l < "$evidence/measured-direct-ms.txt")" -eq 15 ] && [ "$(wc -l < "$evidence/measured-ptrace-ms.txt")" -eq 15 ]; then
+                  performance_status=PASS
+                else
+                  performance_status=FAIL
+                  operational_error="${operational_error:+$operational_error; }performance series failed or incomplete"
+                fi
+              else
+                performance_status=FAIL
+                operational_error="${operational_error:+$operational_error; }pre-performance observed runtime was incomplete or failed"
+              fi
+            fi
+          fi
+
+          python3 - "$evidence/state.json" "$install_status" "$build_status" "$source_clean" "$direct_status" "$doctor_status" "$baseline_status" "$check_status" "$performance_status" "$operational_error" <<'PY'
+          import json, sys
+          path, install, build, source_clean, direct, doctor, baseline, check, perf, error=sys.argv[1:]
+          with open(path,'w') as f:
+              json.dump({'install_status':install,'build_status':build,'source_clean':source_clean,'direct_status':direct,'doctor_status':doctor,'baseline_status':baseline,'check_status':check,'performance_status':perf,'operational_error':error}, f, indent=2, sort_keys=True)
+              f.write('\n')
+          PY
+          exit 0
+
+      - name: Build and validate frozen M9 evidence record
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="m9-batch-b/${{ matrix.id }}"
+          find "$evidence" -maxdepth 1 -type f ! -name RAW_SHA256SUMS ! -name evidence.json -print0 | sort -z | xargs -0 sha256sum > "$evidence/RAW_SHA256SUMS"
+          manifest_sha="$(sha256sum "$evidence/RAW_SHA256SUMS" | awk '{print $1}')"
+          version="$($INSTALL_ROOT/bin/execsurface --version 2>/dev/null || echo unavailable)"
+          timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          run_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+          python3 - "$evidence" "$manifest_sha" "$version" "$timestamp" "$run_url" "$GITHUB_SHA" "$FREEZE_COMMIT" '${{ matrix.id }}' '${{ matrix.project }}' '${{ matrix.repository }}' '${{ matrix.revision }}' <<'PY'
+          import json, statistics, subprocess, sys
+          from pathlib import Path
+          root_s, manifest_sha, version, timestamp, run_url, source_sha, freeze_commit, eid, project, repository, revision=sys.argv[1:]
+          root=Path(root_s); state=json.loads((root/'state.json').read_text())
+          failures=[]
+          if state['build_status'] != 'PASS': failures.append({'kind':'external_build_failure','description':state['operational_error'] or 'external build failed','retained':True})
+          elif state['source_clean'] != 'PASS': failures.append({'kind':'external_source_modified','description':state['operational_error'] or 'tracked external source changed during build','retained':True})
+          elif state['operational_error']: failures.append({'kind':'runtime_or_measurement_failure','description':state['operational_error'],'retained':True})
+
+          performance=None
+          if state['performance_status']=='PASS':
+              vals=lambda n:[float(x) for x in (root/n).read_text().splitlines() if x.strip()]
+              wd=vals('warmup-direct-ms.txt'); wp=vals('warmup-ptrace-ms.txt'); d=vals('measured-direct-ms.txt'); p=vals('measured-ptrace-ms.txt')
+              md=float(statistics.median(d)); mp=float(statistics.median(p)); overhead=mp-md; ratio=mp/md if md>0 else float('inf')
+              performance={'warmup_direct_ms':wd,'warmup_ptrace_ms':wp,'measured_direct_ms':d,'measured_ptrace_ms':p,'median_direct_ms':md,'median_ptrace_ms':mp,'median_absolute_overhead_ms':overhead,'slowdown_ratio':ratio,'timeout_seconds':120.0,'m65_trigger_crossed':((md>=100.0 and ratio>2.0) or overhead>500.0),'excluded_samples':[]}
+
+          comparable=all(state[k]=='PASS' for k in ('install_status','build_status','source_clean','direct_status','doctor_status','baseline_status','check_status','performance_status'))
+          record={
+            'schema_version':'m9-evidence-v1','evidence_id':f'M9-{eid}-001','timestamp_utc':timestamp,
+            'independence_class':'ZERO_CONTACT_EXTERNAL_REPRO','claim_status':'COMPUTATIONAL_EVIDENCE' if comparable else 'PARTIAL',
+            'external_reference':f'https://github.com/{repository}/commit/{revision}',
+            'provenance':{'initiated_by':'AETHER_X','executed_by':'AETHER_X','aether_x_material_involvement':True,'third_party_attestation':None},
+            'project':{'name':project,'repository':f'https://github.com/{repository}','revision':revision,'modified_by_aether_x':False},
+            'execsurface':{'version':version,'source_sha':source_sha,'install_path':'cargo install --locked --path crates/execsurface-cli from main-derived M9.1 branch','backend':'ptrace'},
+            'host':{'os':'Ubuntu 24.04 GitHub-hosted runner','kernel':subprocess.check_output(['uname','-srmo'],text=True).strip(),'architecture':subprocess.check_output(['uname','-m'],text=True).strip(),'cpu_description':subprocess.check_output("lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1",shell=True,text=True).strip(),'runner_image':'ubuntu-24.04'},
+            'workflow':{'command':Path('/tmp/m9-b-runtime-command').read_text().strip(),'baseline_attempted':state['baseline_status']!='NOT_RUN','rerun_check_attempted':state['check_status']!='NOT_RUN','drift_case_attempted':False,'notes':f'Batch B runtime workload frozen before execution in {freeze_commit}; external build performed before measurement; Batch A evidence remains retained separately.'},
+            'outcome':{'installation':state['install_status'],'doctor':state['doctor_status'],'baseline':state['baseline_status'],'rerun_check':state['check_status'],'drift_case':'NOT_RUN','verdict':'PASS' if state['check_status']=='PASS' else None,'comparable':comparable,'complete':comparable,'operational_error':state['operational_error'] or None,'false_positive_reported':False,'suspected_false_negative':False,'usability_friction':None},
+            'privacy':{'metadata_only_confirmed':True,'prohibited_sensitive_payload_collected':False,'notes':'No file contents, environment-variable values, stdin contents, network payloads, secrets, credentials, or unrestricted argv were collected into accepted evidence.'},
+            'performance':performance,
+            'artifacts':[{'name':'raw evidence SHA-256 manifest','sha256':manifest_sha,'location':run_url}],
+            'failures_exclusions':failures,
+            'reproduction':{'instructions':f'Checkout {repository}@{revision}; follow frozen Batch B manifest {freeze_commit}; build before measurement; run the frozen runtime command; then doctor, learn, two unchanged checks, and frozen 3+15 alternating timing protocol.','expected_scope':'Exact pinned external runtime compatibility/performance evidence on GitHub-hosted Ubuntu 24.04; not independent adoption and not a universal Linux claim.'}
+          }
+          (root/'evidence.json').write_text(json.dumps(record, indent=2, sort_keys=True)+'\n')
+          PY
+
+          python3 scripts/m9_validate_evidence.py "$evidence/evidence.json" | tee "$evidence/validator.txt"
+          python3 -m json.tool "$evidence/evidence.json" >/dev/null
+          sha256sum "$evidence/evidence.json" > "$evidence/evidence.sha256"
+
+      - name: Upload complete Batch B evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-1-batch-b-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-batch-b/${{ matrix.id }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce accepted Batch B result after evidence preservation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "m9-batch-b/${{ matrix.id }}/state.json" <<'PY'
+          import json, sys
+          s=json.load(open(sys.argv[1]))
+          required=('install_status','build_status','source_clean','direct_status','doctor_status','baseline_status','check_status','performance_status')
+          bad={k:s[k] for k in required if s[k] != 'PASS'}
+          if bad: raise SystemExit(f'Batch B case preserved as PARTIAL: {bad}')
+          PY
