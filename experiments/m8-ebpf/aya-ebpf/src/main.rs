@@ -1,29 +1,17 @@
 #![no_std]
 #![no_main]
 
-#[allow(
-    clippy::all,
-    dead_code,
-    improper_ctypes_definitions,
-    non_camel_case_types,
-    non_snake_case,
-    non_upper_case_globals,
-    unnecessary_transmutes,
-    unsafe_op_in_unsafe_fn,
-)]
-#[rustfmt::skip]
-mod vmlinux;
-
 use aya_ebpf::{
     helpers::bpf_get_current_pid_tgid,
-    macros::{btf_tracepoint, map, tracepoint},
+    macros::{map, tracepoint},
     maps::{PerCpuArray, RingBuf},
-    programs::{BtfTracePointContext, TracePointContext},
+    programs::TracePointContext,
+    EbpfContext,
 };
-use vmlinux::task_struct;
 
 const EVENT_EXEC: u32 = 1;
 const EVENT_FORK: u32 = 2;
+const SYSCALL_EXIT_RET_OFFSET: usize = 16;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -55,26 +43,50 @@ pub fn execsurface_m8_exec(_ctx: TracePointContext) -> u32 {
     0
 }
 
-#[btf_tracepoint(function = "sched_process_fork")]
-pub fn execsurface_m8_fork(ctx: BtfTracePointContext) -> u32 {
-    let parent: *const task_struct = ctx.arg(0);
-    let child: *const task_struct = ctx.arg(1);
-    if parent.is_null() || child.is_null() {
+#[tracepoint]
+pub fn execsurface_m8_clone_exit(ctx: TracePointContext) -> u32 {
+    record_spawn_exit(&ctx)
+}
+
+#[tracepoint]
+pub fn execsurface_m8_clone3_exit(ctx: TracePointContext) -> u32 {
+    record_spawn_exit(&ctx)
+}
+
+#[tracepoint]
+pub fn execsurface_m8_fork_exit(ctx: TracePointContext) -> u32 {
+    record_spawn_exit(&ctx)
+}
+
+#[tracepoint]
+pub fn execsurface_m8_vfork_exit(ctx: TracePointContext) -> u32 {
+    record_spawn_exit(&ctx)
+}
+
+#[inline(always)]
+fn record_spawn_exit(ctx: &TracePointContext) -> u32 {
+    // Direct tracepoint-context load. Do not use TracePointContext::read_at here:
+    // aya-ebpf implements that method through bpf_probe_read_kernel, which is
+    // GPL-restricted on the M8.2 reference kernel. Offset 16 is the `ret` field
+    // in the kernel syscall_trace_exit record; CI audits the live tracepoint
+    // format before this probe is accepted.
+    let ret_ptr = unsafe {
+        (ctx.as_ptr() as *const u8)
+            .add(SYSCALL_EXIT_RET_OFFSET)
+            .cast::<i64>()
+    };
+    let child_pid = unsafe { *ret_ptr };
+    if child_pid <= 0 || child_pid > u32::MAX as i64 {
         return 0;
     }
 
-    // task_struct is generated from kernel BTF with aya-tool. No field offsets are
-    // hard-coded in ExecSurface source.
-    let parent_pid = unsafe { (*parent).pid };
-    let child_pid = unsafe { (*child).pid };
-    if parent_pid > 0 && child_pid > 0 {
-        emit(ProcessEvent {
-            kind: EVENT_FORK,
-            pid: parent_pid as u32,
-            related_pid: child_pid as u32,
-            reserved: 0,
-        });
-    }
+    let parent_pid = (bpf_get_current_pid_tgid() >> 32) as u32;
+    emit(ProcessEvent {
+        kind: EVENT_FORK,
+        pid: parent_pid,
+        related_pid: child_pid as u32,
+        reserved: 0,
+    });
     0
 }
 
