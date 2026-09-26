@@ -36,6 +36,12 @@ jobs:
           test "$RELEASE_TAG" = "$(tr -d '[:space:]' < action/release-tag.txt)"
           test -n "$CARGO_REGISTRY_TOKEN"
 
+      - name: Respect crates.io new-crate rate-limit window
+        run: |
+          # The previous attempt was explicitly rate-limited until 00:54:03 UTC.
+          # Wait beyond that server-provided retry boundary before resuming.
+          sleep 120
+
       - name: Resume crates.io publication safely
         run: |
           set -euo pipefail
