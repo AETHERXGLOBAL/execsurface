@@ -3,8 +3,10 @@ mod self_service;
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use execsurface_baseline::{
     build_lock, parse_and_verify, write_lockfile, BaselinePayload, CommandIdentity,
@@ -18,6 +20,8 @@ use execsurface_policy::{
     builtin_review_policy, error_report, evaluate, FindingAction, Policy, Verdict, VerdictReport,
 };
 use execsurface_report::render_markdown;
+
+const EXPERIMENTAL_LIBBPF_BACKEND_ID: &str = "linux-libbpf-metadata-experimental-v1";
 
 fn main() -> ExitCode {
     match run() {
@@ -68,14 +72,223 @@ fn run() -> Result<ExitCode, String> {
     }
 }
 
+#[derive(Debug)]
+enum ObserveBackend {
+    Ptrace,
+    ExperimentalLibbpf { collector: PathBuf },
+}
+
+#[derive(Debug)]
+struct ObserveArgs {
+    backend: ObserveBackend,
+    program: OsString,
+    command_args: Vec<OsString>,
+}
+
 fn run_observe(args: &[OsString]) -> Result<(), String> {
-    let (program, command_args) = parse_observe_target(args)?;
-    let spec = CommandSpec::new(program).args(command_args);
-    let observation = observe_command(&spec).map_err(|error| error.to_string())?;
-    let json = serde_json::to_string_pretty(&observation)
-        .map_err(|error| format!("cannot serialize observation: {error}"))?;
-    println!("{json}");
+    let parsed = parse_observe_args(args)?;
+    match parsed.backend {
+        ObserveBackend::Ptrace => {
+            let spec = CommandSpec::new(parsed.program).args(parsed.command_args);
+            let observation = observe_command(&spec).map_err(|error| error.to_string())?;
+            let json = serde_json::to_string_pretty(&observation)
+                .map_err(|error| format!("cannot serialize observation: {error}"))?;
+            println!("{json}");
+            Ok(())
+        }
+        ObserveBackend::ExperimentalLibbpf { collector } => run_experimental_libbpf_observe(
+            &collector,
+            &parsed.program,
+            &parsed.command_args,
+        ),
+    }
+}
+
+fn run_experimental_libbpf_observe(
+    collector: &PathBuf,
+    program: &OsStr,
+    command_args: &[OsString],
+) -> Result<(), String> {
+    let report_dir = create_experimental_report_dir()?;
+    let report_path = report_dir.join("report.json");
+
+    let result = (|| {
+        let status = Command::new(collector)
+            .arg("--report")
+            .arg(&report_path)
+            .arg("--")
+            .arg(program)
+            .args(command_args)
+            .status()
+            .map_err(|error| {
+                format!(
+                    "cannot launch experimental libbpf collector {}: {error}; no ptrace fallback was attempted",
+                    collector.display()
+                )
+            })?;
+
+        if !status.success() {
+            return Err(format!(
+                "experimental libbpf collector {} failed with status {status}; no ptrace fallback was attempted",
+                collector.display()
+            ));
+        }
+
+        let report_bytes = fs::read(&report_path).map_err(|error| {
+            format!(
+                "experimental libbpf collector completed but report {} is unavailable: {error}",
+                report_path.display()
+            )
+        })?;
+        let report: serde_json::Value = serde_json::from_slice(&report_bytes).map_err(|error| {
+            format!(
+                "experimental libbpf collector report {} is invalid JSON: {error}",
+                report_path.display()
+            )
+        })?;
+        validate_experimental_libbpf_report(&report)?;
+
+        let json = serde_json::to_string_pretty(&report)
+            .map_err(|error| format!("cannot serialize experimental libbpf report: {error}"))?;
+        println!("{json}");
+        Ok(())
+    })();
+
+    let _ = fs::remove_dir_all(&report_dir);
+    result
+}
+
+fn create_experimental_report_dir() -> Result<PathBuf, String> {
+    let epoch_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("cannot derive temporary report identity: {error}"))?
+        .as_nanos();
+    let base = env::temp_dir();
+
+    for attempt in 0..16u8 {
+        let path = base.join(format!(
+            "execsurface-ebpf-{}-{epoch_nanos}-{attempt}",
+            std::process::id()
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "cannot create experimental libbpf report directory {}: {error}",
+                    path.display()
+                ))
+            }
+        }
+    }
+
+    Err("cannot allocate a unique experimental libbpf report directory".to_owned())
+}
+
+fn validate_experimental_libbpf_report(report: &serde_json::Value) -> Result<(), String> {
+    if report.get("protocol_version").and_then(|value| value.as_u64()) != Some(1) {
+        return Err("experimental libbpf report has unsupported protocol_version".to_owned());
+    }
+
+    let backend_id = report
+        .pointer("/backend/id")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "experimental libbpf report is missing backend.id".to_owned())?;
+    if backend_id != EXPERIMENTAL_LIBBPF_BACKEND_ID {
+        return Err(format!(
+            "experimental libbpf backend identity mismatch: {backend_id}"
+        ));
+    }
+
+    if report
+        .get("observation_complete")
+        .and_then(|value| value.as_bool())
+        != Some(false)
+    {
+        return Err(
+            "experimental libbpf report attempted to claim complete/PASS-eligible observation before the parity gate"
+                .to_owned(),
+        );
+    }
+
+    let completeness = report
+        .get("completeness")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "experimental libbpf report is missing completeness".to_owned())?;
+    if !matches!(
+        completeness,
+        "incomplete_capability" | "incomplete_loss" | "incomplete_limit"
+    ) {
+        return Err(format!(
+            "experimental libbpf report has unauthorized completeness state: {completeness}"
+        ));
+    }
+
+    if !report
+        .pointer("/backend/capabilities")
+        .is_some_and(|value| value.is_array())
+        || !report
+            .pointer("/backend/unsupported_capabilities")
+            .is_some_and(|value| value.is_array())
+    {
+        return Err(
+            "experimental libbpf report is missing explicit supported/unsupported capability sets"
+                .to_owned(),
+        );
+    }
+
     Ok(())
+}
+
+fn parse_observe_args(args: &[OsString]) -> Result<ObserveArgs, String> {
+    let mut backend = "ptrace".to_owned();
+    let mut collector = None;
+    let mut index = 0usize;
+
+    while index < args.len() {
+        if args[index] == "--" {
+            let program = args
+                .get(index + 1)
+                .cloned()
+                .ok_or_else(|| usage("missing target command after `--`"))?;
+            let command_args = args[index + 2..].to_vec();
+            let backend = match backend.as_str() {
+                "ptrace" => {
+                    if collector.is_some() {
+                        return Err(usage(
+                            "--collector is valid only with --backend experimental-libbpf",
+                        ));
+                    }
+                    ObserveBackend::Ptrace
+                }
+                "experimental-libbpf" => ObserveBackend::ExperimentalLibbpf {
+                    collector: collector.ok_or_else(|| {
+                        usage("--backend experimental-libbpf requires --collector PATH")
+                    })?,
+                },
+                other => return Err(usage(&format!("unknown observe backend: {other}"))),
+            };
+            return Ok(ObserveArgs {
+                backend,
+                program,
+                command_args,
+            });
+        }
+
+        match args[index].to_string_lossy().as_ref() {
+            "--backend" => {
+                backend = path_string(option_value(args, index, "--backend")?);
+                index += 2;
+            }
+            "--collector" => {
+                collector = Some(PathBuf::from(option_value(args, index, "--collector")?));
+                index += 2;
+            }
+            other => return Err(usage(&format!("unknown observe option: {other}"))),
+        }
+    }
+
+    Err(usage("expected `--` before the target command"))
 }
 
 fn run_learn(args: &[OsString]) -> Result<(), String> {
@@ -417,17 +630,6 @@ fn print_diff_report(report: &DiffReport) -> Result<(), String> {
     Ok(())
 }
 
-fn parse_observe_target(args: &[OsString]) -> Result<(OsString, Vec<OsString>), String> {
-    if args.first().is_none_or(|arg| arg != "--") {
-        return Err(usage("expected `--` before the target command"));
-    }
-    let program = args
-        .get(1)
-        .cloned()
-        .ok_or_else(|| usage("missing target command after `--`"))?;
-    Ok((program, args[2..].to_vec()))
-}
-
 struct CheckArgs {
     baseline: PathBuf,
     policy: Option<PathBuf>,
@@ -720,7 +922,7 @@ fn path_string(value: &OsStr) -> String {
 
 fn usage(error: &str) -> String {
     format!(
-        "{error}\n\nusage:\n  execsurface observe -- COMMAND [ARGS...]\n  execsurface learn [OPTIONS] -- COMMAND [ARGS...]\n\nlearn options:\n  --output PATH       output lockfile (default: execsurface.lock.json)\n  --overwrite         explicitly replace an existing lockfile\n  --label LABEL       privacy-safe logical command label\n  --workspace PATH    declared workspace root\n  --home PATH         declared home root\n  --tmp PATH          declared temp root; repeatable\n  --run-tmp PATH      declared run-specific temp root\n  --cache NAME=PATH   declared named cache root; repeatable
+        "{error}\n\nusage:\n  execsurface observe -- COMMAND [ARGS...]\n  execsurface observe --backend experimental-libbpf --collector PATH -- COMMAND [ARGS...]\n  execsurface learn [OPTIONS] -- COMMAND [ARGS...]\n\nobserve options:\n  --backend NAME      ptrace (default) or experimental-libbpf\n  --collector PATH    explicit companion path; required for experimental-libbpf\n\nlearn options:\n  --output PATH       output lockfile (default: execsurface.lock.json)\n  --overwrite         explicitly replace an existing lockfile\n  --label LABEL       privacy-safe logical command label\n  --workspace PATH    declared workspace root\n  --home PATH         declared home root\n  --tmp PATH          declared temp root; repeatable\n  --run-tmp PATH      declared run-specific temp root\n  --cache NAME=PATH   declared named cache root; repeatable
 
 check options:
   --baseline PATH     baseline lockfile (default: execsurface.lock.json)
