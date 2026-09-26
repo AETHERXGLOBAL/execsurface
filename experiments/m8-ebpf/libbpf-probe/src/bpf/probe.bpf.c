@@ -5,19 +5,19 @@
 
 #define EVENT_EXEC 1
 #define EVENT_FORK 2
+#define EVENT_FILE_OPEN 3
 
-struct process_event {
+struct metadata_event {
     __u32 kind;
     __u32 pid;
-    __u32 related_pid;
+    __u32 value;
     __u32 reserved;
 };
 
 /*
  * Syscall-exit trace records use the kernel syscall_trace_exit layout:
  * trace_entry (8 bytes), syscall number (4 bytes + alignment), then return value.
- * The feasibility workflow also records the host tracepoint format so this
- * assumption is explicit evidence rather than an invisible ABI dependency.
+ * CI audits the live tracepoint formats before these events count as evidence.
  */
 struct syscall_exit_ctx {
     __u16 common_type;
@@ -49,16 +49,16 @@ static __always_inline void record_drop(void)
         (*count)++;
 }
 
-static __always_inline int submit_event(__u32 kind, __u32 pid, __u32 related_pid)
+static __always_inline int submit_event(__u32 kind, __u32 pid, __u32 value)
 {
-    struct process_event *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
+    struct metadata_event *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
     if (!event) {
         record_drop();
         return 0;
     }
     event->kind = kind;
     event->pid = pid;
-    event->related_pid = related_pid;
+    event->value = value;
     event->reserved = 0;
     bpf_ringbuf_submit(event, 0);
     return 0;
@@ -68,8 +68,8 @@ SEC("tracepoint/syscalls/sys_enter_execve")
 int execsurface_m8_exec(void *ctx)
 {
     (void)ctx;
-    __u32 pid = (__u32)(bpf_get_current_pid_tgid() >> 32);
-    return submit_event(EVENT_EXEC, pid, pid);
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    return submit_event(EVENT_EXEC, (__u32)(pid_tgid >> 32), (__u32)pid_tgid);
 }
 
 static __always_inline int record_spawn_exit(struct syscall_exit_ctx *ctx)
@@ -77,7 +77,6 @@ static __always_inline int record_spawn_exit(struct syscall_exit_ctx *ctx)
     __s64 child_pid = ctx->ret;
     __u32 parent_pid;
 
-    /* Parent-side successful fork/clone returns the positive child pid. */
     if (child_pid <= 0 || child_pid > 0xffffffffLL)
         return 0;
 
@@ -85,12 +84,6 @@ static __always_inline int record_spawn_exit(struct syscall_exit_ctx *ctx)
     return submit_event(EVENT_FORK, parent_pid, (__u32)child_pid);
 }
 
-/*
- * Apache-compatible lineage: observe successful process-creation syscall
- * returns instead of dereferencing task_struct. This avoids GPL-restricted
- * kernel-struct access and avoids the hosted-runner sched tracepoint policy
- * boundary while retaining explicit parent -> child process identity.
- */
 SEC("tracepoint/syscalls/sys_exit_clone")
 int execsurface_m8_clone_exit(struct syscall_exit_ctx *ctx)
 {
@@ -113,6 +106,23 @@ SEC("tracepoint/syscalls/sys_exit_vfork")
 int execsurface_m8_vfork_exit(struct syscall_exit_ctx *ctx)
 {
     return record_spawn_exit(ctx);
+}
+
+/*
+ * E9 file-metadata probe: persist only the successful returned fd and process
+ * identity. No filename pointer, file content, argv, or user-memory read is used.
+ */
+SEC("tracepoint/syscalls/sys_exit_openat")
+int execsurface_m8_openat_exit(struct syscall_exit_ctx *ctx)
+{
+    __s64 fd = ctx->ret;
+    __u32 pid;
+
+    if (fd < 0 || fd > 0xffffffffLL)
+        return 0;
+
+    pid = (__u32)(bpf_get_current_pid_tgid() >> 32);
+    return submit_event(EVENT_FILE_OPEN, pid, (__u32)fd);
 }
 
 char LICENSE[] SEC("license") = "Apache-2.0";
