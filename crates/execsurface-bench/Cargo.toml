@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Reproducible observer overhead probe for AETHER X ExecSurface"
+publish = false
 
 [dependencies]
 execsurface-normalize = { path = "../execsurface-normalize" }
