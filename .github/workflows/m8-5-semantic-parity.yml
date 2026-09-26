@@ -5,6 +5,7 @@ on:
     branches:
       - "milestone/m8-5-semantic-parity"
     paths:
+      - "Cargo.lock"
       - "experiments/m8-ebpf/parity-harness/**"
       - "experiments/m8-ebpf/libbpf-observer/**"
       - "crates/execsurface-observe/**"
