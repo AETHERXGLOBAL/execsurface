@@ -17,7 +17,7 @@ on:
       - ".github/workflows/registry-packaging.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   registry-packaging:
@@ -43,12 +43,63 @@ jobs:
           cargo clippy --locked --workspace --all-targets -- -D warnings
           cargo test --locked --workspace --all-targets
 
-      - name: Prove registry metadata and package boundaries
+      - name: Prove registry metadata and dependency boundaries
         run: |
           set -euo pipefail
+
+          # Before the first registry publication, only the leaf crate can be
+          # fully packaged and verified against crates.io.
           cargo package -p execsurface-model --allow-dirty
-          for crate in             execsurface-observe             execsurface-normalize             execsurface-baseline             execsurface-diff             execsurface-policy             execsurface-report             execsurface
-          do
-            cargo package -p "$crate" --allow-dirty --no-verify
-          done
-          ! cargo package -p execsurface-bench --allow-dirty --no-verify
+
+          # Dependent crates will package successfully only after their exact
+          # prerelease dependencies are present in the registry. Validate the
+          # intended publish graph and metadata now; the publication workflow
+          # proves each dependent crate after its predecessors are published.
+          python - <<'PY'
+          from pathlib import Path
+          import tomllib
+
+          version = "0.1.0-alpha.2"
+          publishable = {
+              "execsurface-model",
+              "execsurface-observe",
+              "execsurface-normalize",
+              "execsurface-baseline",
+              "execsurface-diff",
+              "execsurface-policy",
+              "execsurface-report",
+              "execsurface",
+          }
+
+          manifests = {}
+          for path in Path("crates").glob("*/Cargo.toml"):
+              data = tomllib.loads(path.read_text())
+              manifests[data["package"]["name"]] = (path, data)
+
+          assert publishable.issubset(manifests)
+          assert manifests["execsurface-bench"][1]["package"].get("publish") is False
+
+          for name in publishable:
+              path, data = manifests[name]
+              package = data["package"]
+              assert package["description"]
+              assert package["license"]["workspace"] is True
+              assert package["repository"]["workspace"] is True
+              assert package["readme"]["workspace"] is True
+
+              for section in ("dependencies", "dev-dependencies", "build-dependencies"):
+                  for dep_name, dep in data.get(section, {}).items():
+                      if (
+                          dep_name.startswith("execsurface-")
+                          and isinstance(dep, dict)
+                          and "path" in dep
+                      ):
+                          assert dep.get("version") == f"={version}", (
+                              f"{path}: {section}.{dep_name} must pin ={version}"
+                          )
+
+          cli = manifests["execsurface"][1]["package"]
+          assert cli["keywords"]
+          assert cli["categories"]
+          print("Registry manifest graph verified")
+          PY
