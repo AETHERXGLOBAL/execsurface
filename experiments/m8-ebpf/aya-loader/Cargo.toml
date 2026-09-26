@@ -1,0 +1,12 @@
+[package]
+name = "execsurface-m8-aya-loader"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.87"
+publish = false
+
+[dependencies]
+anyhow = "1"
+aya = "=0.14.0"
+
+[workspace]
