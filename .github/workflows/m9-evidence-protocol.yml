@@ -38,6 +38,11 @@ jobs:
           set -euo pipefail
           python scripts/m9_validate_evidence.py tests/fixtures/m9/valid_zero_contact.json
 
+      - name: Exercise frozen M6.5 performance trigger formula
+        run: |
+          set -euo pipefail
+          python scripts/m9_validate_evidence.py tests/fixtures/m9/valid_performance_trigger.json
+
       - name: Reject AETHER X-controlled evidence mislabeled independent
         run: |
           set -euo pipefail
