@@ -66,5 +66,5 @@ jobs:
           grep -q 'FROZEN BEFORE M9.2 DISCOVERY RESULTS' docs/milestones/M9_2_INDEPENDENT_ADOPTION_GATE.md
           grep -q 'stars, forks, watchers or traffic' docs/milestones/M9_2_INDEPENDENT_ADOPTION_GATE.md
           grep -q 'AETHER X-authored PR' docs/milestones/M9_2_INDEPENDENT_ADOPTION_GATE.md
-          grep -q 'NO ACCEPTED INDEPENDENT EVIDENCE FOUND' docs/milestones/M9_2_INDEPENDENT_ADOPTION_GATE.md
+          grep -q 'NO ACCEPTED INDEPENDENT EVIDENCE IN DECLARED SEARCH SCOPE' docs/milestones/M9_2_INDEPENDENT_ADOPTION_GATE.md
           echo "M9_2_PROTOCOL_FREEZE_PASS"
