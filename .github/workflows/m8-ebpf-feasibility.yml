@@ -89,13 +89,33 @@ jobs:
           file "$BIN"
           sha256sum "$BIN"
           ldd "$BIN" || true
-      - name: Load / attach / detach probe
+      - name: Prove unprivileged denial is explicit
         shell: bash
         run: |
           set -euxo pipefail
           OBJ=experiments/m8-ebpf/aya-ebpf/target/bpfel-unknown-none/release/execsurface-m8-aya-ebpf
           BIN=experiments/m8-ebpf/aya-loader/target/release/execsurface-m8-aya-loader
-          sudo "$BIN" "$OBJ"
+          set +e
+          "$BIN" "$OBJ" >"$RUNNER_TEMP/aya-unprivileged.log" 2>&1
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/aya-unprivileged.log"
+          test "$rc" -ne 0
+          echo "M8_AYA_UNPRIVILEGED_DENIAL_PASS exit=$rc"
+      - name: Prove transport loss accounting and persisted-output privacy
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBJ=experiments/m8-ebpf/aya-ebpf/target/bpfel-unknown-none/release/execsurface-m8-aya-ebpf
+          BIN=experiments/m8-ebpf/aya-loader/target/release/execsurface-m8-aya-loader
+          sudo "$BIN" "$OBJ" 2>&1 | tee "$RUNNER_TEMP/aya-proof.log"
+          grep -q '^M8_AYA_ATTACH_PASS$' "$RUNNER_TEMP/aya-proof.log"
+          grep -q '^M8_AYA_EVENT_TRANSPORT_PASS ' "$RUNNER_TEMP/aya-proof.log"
+          grep -q '^M8_AYA_LOSS_ACCOUNTING_PASS ' "$RUNNER_TEMP/aya-proof.log"
+          grep -q '^M8_AYA_PRIVACY_SCHEMA_PASS ' "$RUNNER_TEMP/aya-proof.log"
+          ! grep -Fq 'AX_M8_ARGV_SENTINEL_DO_NOT_PERSIST' "$RUNNER_TEMP/aya-proof.log"
+          ! grep -Fq 'AX_M8_ENV_SENTINEL_DO_NOT_PERSIST' "$RUNNER_TEMP/aya-proof.log"
+          echo 'M8_AYA_PERSISTED_OUTPUT_PRIVACY_PASS'
 
   libbpf:
     name: libbpf-rs / build + lifecycle probe
