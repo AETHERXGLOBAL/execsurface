@@ -6,6 +6,7 @@ on:
       - hardening/m9-ptrace-esrch-just
     paths:
       - scripts/m9_apply_ptrace_esrch_fix.py
+      - scripts/m9_apply_ptrace_exit_lifecycle.py
       - scripts/m9_instrument_ptrace_esrch.py
       - .github/workflows/m9-ptrace-esrch-fix-gate.yml
   workflow_dispatch:
@@ -51,6 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_apply_ptrace_exit_lifecycle.py
           python3 scripts/m9_instrument_ptrace_esrch.py
           cargo "+$RUST_TOOLCHAIN" fmt --all
           git diff --check
