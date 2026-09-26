@@ -103,6 +103,17 @@ jobs:
           test -x "$FIX"
           sha256sum "$OBS" "$FIX"
 
+      - name: Prove state-machine adversaries fail closed
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo +1.82.0 test \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml \
+            --release --locked \
+            --test state_machine \
+            -- --nocapture
+          echo M8_7B3_STATE_MACHINE_ADVERSARIES_PASS
+
       - name: Prove sequential epochs and 64-descendant post-root drain
         shell: bash
         run: |
