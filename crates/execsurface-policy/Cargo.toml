@@ -6,8 +6,9 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Deterministic policy and verdict engine for AETHER X ExecSurface"
+readme.workspace = true
 
 [dependencies]
-execsurface-diff = { path = "../execsurface-diff" }
-execsurface-model = { path = "../execsurface-model" }
+execsurface-diff = { path = "../execsurface-diff", version = "=0.1.0-alpha.2" }
+execsurface-model = { path = "../execsurface-model", version = "=0.1.0-alpha.2" }
 serde.workspace = true
