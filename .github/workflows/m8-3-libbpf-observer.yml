@@ -1,0 +1,202 @@
+name: M8.3 Real libbpf Observer
+
+on:
+  push:
+    branches:
+      - "milestone/m8-3-libbpf-observer"
+    paths:
+      - "experiments/m8-ebpf/libbpf-observer/**"
+      - "experiments/m8-ebpf/libbpf-path-bridge/**"
+      - "docs/milestones/M8_3C_COLLECTOR.md"
+      - ".github/workflows/m8-3-libbpf-observer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-observer:
+    name: isolated real libbpf observer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Audit host and post-exec/open tracepoints
+        shell: bash
+        run: |
+          set -euxo pipefail
+          uname -a
+          id
+          test -r /sys/kernel/btf/vmlinux
+          cat /proc/sys/kernel/unprivileged_bpf_disabled || true
+          sudo test -r /sys/kernel/tracing/events/sched/sched_process_exec/format
+          sudo head -80 /sys/kernel/tracing/events/sched/sched_process_exec/format
+          open_format="$RUNNER_TEMP/sys_exit_openat.format"
+          sudo cat /sys/kernel/tracing/events/syscalls/sys_exit_openat/format | tee "$open_format"
+          grep -Eq 'field:long ret;[[:space:]]+offset:16;[[:space:]]+size:8;' "$open_format"
+          echo 'M8_3C_TRACEPOINT_CONTRACT_PASS'
+
+      - name: Install declared native build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          clang --version
+          pkg-config --modversion libelf
+
+      - name: Install resolver and product-MSRV Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          cargo +1.87.0 --version
+          rustc +1.82.0 --version --verbose
+          rustfmt +1.82.0 --version
+
+      - name: Resolve Rust-1.82-compatible isolated locks
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for manifest in \
+            experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            experiments/m8-ebpf/libbpf-path-bridge/Cargo.toml
+          do
+            rm -f "$(dirname "$manifest")/Cargo.lock"
+            CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+              cargo +1.87.0 generate-lockfile --manifest-path "$manifest"
+          done
+
+      - name: Format check isolated observer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo +1.82.0 fmt \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            -- --check
+
+      - name: Build isolated observer and deterministic fixture on Rust 1.82
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            --release --locked
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/libbpf-path-bridge/Cargo.toml \
+            --release --locked
+
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          FIX=experiments/m8-ebpf/libbpf-path-bridge/target/release/execsurface-m8-libbpf-path-bridge
+          test -x "$OBS"
+          test -x "$FIX"
+          file "$OBS"
+          sha256sum "$OBS"
+          ldd "$OBS" || true
+
+      - name: Prove unprivileged failure occurs before target launch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          REPORT="$RUNNER_TEMP/unprivileged-report.json"
+          SENTINEL_FILE="$RUNNER_TEMP/target-must-not-run"
+          rm -f "$REPORT" "$SENTINEL_FILE"
+
+          set +e
+          "$OBS" --report "$REPORT" -- /bin/sh -c "touch '$SENTINEL_FILE'" \
+            >"$RUNNER_TEMP/unprivileged.stdout" \
+            2>"$RUNNER_TEMP/unprivileged.stderr"
+          rc=$?
+          set -e
+
+          cat "$RUNNER_TEMP/unprivileged.stderr"
+          test "$rc" -ne 0
+          test ! -e "$SENTINEL_FILE"
+          test ! -e "$REPORT"
+          echo "M8_3C_UNPRIVILEGED_PRELAUNCH_DENIAL_PASS exit=$rc"
+
+      - name: Prove real exec and successful-open evidence
+        shell: bash
+        env:
+          AX_M8_3C_PRIVACY_SENTINEL: AX_M8_3C_SECRET_DO_NOT_PERSIST
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          FIX=experiments/m8-ebpf/libbpf-path-bridge/target/release/execsurface-m8-libbpf-path-bridge
+          REPORT="$RUNNER_TEMP/open-report.json"
+
+          sudo --preserve-env=AX_M8_3C_PRIVACY_SENTINEL \
+            "$OBS" --report "$REPORT" --event-limit 10000 -- \
+            "$FIX" --hold-open-child \
+            2>&1 | tee "$RUNNER_TEMP/open-observer.log"
+
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert report['protocol_version'] == 1
+          assert report['backend']['id'] == 'linux-libbpf-metadata-experimental-v1'
+          assert report['completeness'] == 'incomplete_capability'
+          assert report['observation_complete'] is False
+          assert report['outcome']['exit_code'] == 0
+          assert isinstance(report['dropped_events'], int)
+          assert report['dropped_events'] == 0
+          events = report['events']
+          execs = [e for e in events if e['event_type'] == 'process_exec_occurrence']
+          opens = [e for e in events if e['event_type'] == 'successful_open_identity']
+          assert any(e.get('path') and 'execsurface-m8-libbpf-path-bridge' in e['path'] for e in execs), execs
+          assert any(e.get('path') == '/dev/null' for e in opens), opens
+          print('M8_3C_REAL_EXEC_OPEN_REPORT_PASS')
+          PY
+
+          ! grep -Fq 'AX_M8_3C_SECRET_DO_NOT_PERSIST' "$REPORT"
+          echo 'M8_3C_REPORT_PRIVACY_PASS'
+
+      - name: Prove launched-tree lineage evidence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          REPORT="$RUNNER_TEMP/lineage-report.json"
+
+          sudo "$OBS" --report "$REPORT" --event-limit 10000 -- \
+            /bin/sh -c '/bin/sleep 0.1 & wait' \
+            2>&1 | tee "$RUNNER_TEMP/lineage-observer.log"
+
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          root = report['root_pid']
+          spawns = [e for e in report['events'] if e['event_type'] == 'process_spawn']
+          execs = [e for e in report['events'] if e['event_type'] == 'process_exec_occurrence']
+          rooted = [e for e in spawns if e['parent_pid'] == root]
+          assert rooted, spawns
+          child_ids = {e['child_pid'] for e in rooted}
+          assert any(e['pid'] in child_ids for e in execs), execs
+          assert report['outcome']['exit_code'] == 0
+          print('M8_3C_LINEAGE_REPORT_PASS')
+          PY
+
+      - name: Prove event budget fails closed
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          FIX=experiments/m8-ebpf/libbpf-path-bridge/target/release/execsurface-m8-libbpf-path-bridge
+          REPORT="$RUNNER_TEMP/limit-report.json"
+
+          sudo "$OBS" --report "$REPORT" --event-limit 1 -- \
+            "$FIX" --hold-open-child \
+            2>&1 | tee "$RUNNER_TEMP/limit-observer.log"
+
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert report['completeness'] == 'incomplete_limit', report['completeness']
+          assert report['observation_complete'] is False
+          assert any(w['code'] == 'event_limit_exceeded' for w in report['warnings'])
+          assert len(report['events']) <= 1
+          print('M8_3C_EVENT_LIMIT_FAIL_CLOSED_PASS')
+          PY
