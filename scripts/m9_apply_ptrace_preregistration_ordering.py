@@ -42,7 +42,13 @@ new_echild_prefix = '''            if error.raw_os_error() == Some(libc::ECHILD)
             if error.raw_os_error() == Some(libc::ECHILD) {
 '''
 
-old_terminal_dispatch = '''        if record_terminal_wait_status(root, tid, wait_status, &mut tracees, &mut root_outcome) {
+old_terminal_dispatch = '''        if record_terminal_wait_status(
+            root,
+            tid,
+            wait_status,
+            &mut tracees,
+            &mut root_outcome,
+        ) {
             continue;
         }
 
@@ -56,7 +62,13 @@ new_terminal_dispatch = '''        if (libc::WIFEXITED(wait_status) || libc::WIF
             )));
         }
 
-        if record_terminal_wait_status(root, tid, wait_status, &mut tracees, &mut root_outcome) {
+        if record_terminal_wait_status(
+            root,
+            tid,
+            wait_status,
+            &mut tracees,
+            &mut root_outcome,
+        ) {
             continue;
         }
 
