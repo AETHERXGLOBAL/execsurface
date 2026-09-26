@@ -1,0 +1,135 @@
+name: M8 eBPF Feasibility
+
+on:
+  push:
+    branches:
+      - "milestone/m8-ebpf-feasibility"
+    paths:
+      - "experiments/m8-ebpf/**"
+      - "docs/milestones/M8_EBPF_FEASIBILITY.md"
+      - ".github/workflows/m8-ebpf-feasibility.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-audit:
+    name: Host / BTF / privilege audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Record host contract
+        shell: bash
+        run: |
+          set -euxo pipefail
+          uname -a
+          id
+          rustc --version --verbose
+          cargo --version
+          clang --version
+          test -r /sys/kernel/btf/vmlinux
+          stat /sys/kernel/btf/vmlinux
+          sha256sum /sys/kernel/btf/vmlinux
+          cat /proc/sys/kernel/unprivileged_bpf_disabled || true
+          ulimit -l
+          mount | grep -E 'tracefs|debugfs' || true
+          test -d /sys/kernel/tracing/events || test -d /sys/kernel/debug/tracing/events
+
+  aya:
+    name: Aya / build + lifecycle probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install pinned Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install nightly-2026-09-14 --profile minimal --component rust-src
+          rustc +1.87.0 --version --verbose
+          rustc +nightly-2026-09-14 --version --verbose
+      - name: Install versioned bpf-linker binary
+        shell: bash
+        run: |
+          set -euxo pipefail
+          VERSION=0.11.1
+          ASSET=bpf-linker-x86_64-unknown-linux-musl.tar.zst
+          curl -fL "https://github.com/aya-rs/bpf-linker/releases/download/v${VERSION}/${ASSET}" -o "$RUNNER_TEMP/$ASSET"
+          sha256sum "$RUNNER_TEMP/$ASSET"
+          mkdir -p "$RUNNER_TEMP/bpf-linker"
+          tar --zstd -xf "$RUNNER_TEMP/$ASSET" -C "$RUNNER_TEMP/bpf-linker"
+          find "$RUNNER_TEMP/bpf-linker" -maxdepth 2 -type f -print
+          echo "$RUNNER_TEMP/bpf-linker" >> "$GITHUB_PATH"
+      - name: Build Aya eBPF object
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PATH="$RUNNER_TEMP/bpf-linker:$PATH"
+          bpf-linker --version
+          cargo +nightly-2026-09-14 build \
+            --manifest-path experiments/m8-ebpf/aya-ebpf/Cargo.toml \
+            --target bpfel-unknown-none \
+            -Z build-std=core \
+            --release
+          OBJ=experiments/m8-ebpf/aya-ebpf/target/bpfel-unknown-none/release/execsurface-m8-aya-ebpf
+          test -f "$OBJ"
+          file "$OBJ"
+          sha256sum "$OBJ"
+          readelf -h "$OBJ"
+      - name: Build Aya userspace loader
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo +1.87.0 build --manifest-path experiments/m8-ebpf/aya-loader/Cargo.toml --release
+          BIN=experiments/m8-ebpf/aya-loader/target/release/execsurface-m8-aya-loader
+          test -x "$BIN"
+          file "$BIN"
+          sha256sum "$BIN"
+          ldd "$BIN" || true
+      - name: Load / attach / detach probe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBJ=experiments/m8-ebpf/aya-ebpf/target/bpfel-unknown-none/release/execsurface-m8-aya-ebpf
+          BIN=experiments/m8-ebpf/aya-loader/target/release/execsurface-m8-aya-loader
+          sudo "$BIN" "$OBJ"
+
+  libbpf:
+    name: libbpf-rs / build + lifecycle probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install declared native build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          clang --version
+          pkg-config --modversion libelf
+      - name: Install product-MSRV Rust toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.82.0 --profile minimal
+          rustc +1.82.0 --version --verbose
+      - name: Build libbpf-rs probe and generated skeleton
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo +1.82.0 build --manifest-path experiments/m8-ebpf/libbpf-probe/Cargo.toml --release
+          BIN=experiments/m8-ebpf/libbpf-probe/target/release/execsurface-m8-libbpf-probe
+          test -x "$BIN"
+          file "$BIN"
+          sha256sum "$BIN"
+          ldd "$BIN" || true
+      - name: Load / attach / detach probe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=experiments/m8-ebpf/libbpf-probe/target/release/execsurface-m8-libbpf-probe
+          sudo "$BIN"
