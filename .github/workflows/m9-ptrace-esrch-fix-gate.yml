@@ -8,6 +8,7 @@ on:
       - scripts/m9_apply_ptrace_esrch_fix.py
       - scripts/m9_apply_ptrace_exit_lifecycle.py
       - scripts/m9_instrument_ptrace_esrch.py
+      - scripts/m9_instrument_untracked_exit.py
       - .github/workflows/m9-ptrace-esrch-fix-gate.yml
   workflow_dispatch:
 
@@ -54,6 +55,7 @@ jobs:
           python3 scripts/m9_apply_ptrace_esrch_fix.py
           python3 scripts/m9_apply_ptrace_exit_lifecycle.py
           python3 scripts/m9_instrument_ptrace_esrch.py
+          python3 scripts/m9_instrument_untracked_exit.py
           cargo "+$RUST_TOOLCHAIN" fmt --all
           git diff --check
           git diff -- crates/execsurface-observe/src/linux_ptrace.rs | tee /tmp/m9-esrch-fix.diff
