@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - "release/crates-io-distribution"
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**/Cargo.toml"
+      - ".github/workflows/registry-packaging.yml"
   pull_request:
     paths:
       - "Cargo.toml"
