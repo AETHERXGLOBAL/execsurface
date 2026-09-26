@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::{Child, Command, ExitStatus};
 use std::rc::Rc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -33,6 +33,7 @@ const SPAWN_CLONE: u32 = 3;
 const POLL_INTERVAL_MS: u64 = 10;
 const QUIESCENCE_GRACE_MS: u64 = 100;
 const QUIESCENCE_POLLS: usize = 4;
+const CONTROLLED_POST_START_FAILURE_DELAY_MS: u64 = 50;
 
 #[derive(Debug, Clone, Copy)]
 struct MetadataEvent {
@@ -49,6 +50,7 @@ struct CollectorOptions {
     consumer_lag_ms: u64,
     lifecycle_timeout_ms: u64,
     inject_decode_error: bool,
+    inject_poll_error: bool,
     target: Vec<OsString>,
 }
 
@@ -83,7 +85,7 @@ struct BackendReport {
     unsupported_capabilities: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct OutcomeReport {
     exit_code: Option<i32>,
     signal: Option<i32>,
@@ -94,6 +96,7 @@ struct CollectorFailureReport {
     stage: String,
     message: String,
     target_started: bool,
+    target_terminated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -363,6 +366,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let root_pid = child.id();
     tracker.borrow_mut().set_root(root_pid);
 
+    if options.inject_poll_error {
+        thread::sleep(Duration::from_millis(
+            CONTROLLED_POST_START_FAILURE_DELAY_MS,
+        ));
+        return fail_after_target(
+            &options,
+            "poll",
+            "controlled M8.4d post-start poll failure".to_owned(),
+            &mut child,
+            root_pid,
+            None,
+            &tracker,
+        );
+    }
+
     if options.consumer_lag_ms > 0 {
         tracker.borrow_mut().warning(
             None,
@@ -376,11 +394,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let status = loop {
-        ring.poll(Duration::from_millis(POLL_INTERVAL_MS))?;
+        if let Err(error) = ring.poll(Duration::from_millis(POLL_INTERVAL_MS)) {
+            return fail_after_target(
+                &options,
+                "poll",
+                error.to_string(),
+                &mut child,
+                root_pid,
+                None,
+                &tracker,
+            );
+        }
         if let Some(status) = child.try_wait()? {
             break status;
         }
     };
+    let outcome = outcome_report(&status);
 
     let drain_started = Instant::now();
     let drain_timeout = Duration::from_millis(options.lifecycle_timeout_ms);
@@ -402,7 +431,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             break;
         }
 
-        ring.poll(Duration::from_millis(POLL_INTERVAL_MS))?;
+        if let Err(error) = ring.poll(Duration::from_millis(POLL_INTERVAL_MS)) {
+            return fail_after_target(
+                &options,
+                "post_root_poll",
+                error.to_string(),
+                &mut child,
+                root_pid,
+                Some(outcome.clone()),
+                &tracker,
+            );
+        }
         let (sequence, active_descendants) = {
             let state = tracker.borrow();
             (state.sequence, state.active_descendant_count())
@@ -424,7 +463,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let dropped_events = total_drops(&skel.maps.dropped)?;
+    let dropped_events = match total_drops(&skel.maps.dropped) {
+        Ok(value) => value,
+        Err(error) => {
+            return fail_after_target(
+                &options,
+                "drop_counter_read",
+                error.to_string(),
+                &mut child,
+                root_pid,
+                Some(outcome.clone()),
+                &tracker,
+            )
+        }
+    };
     let mut state = tracker.borrow_mut();
     state.warning(
         None,
@@ -463,7 +515,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         completeness: completeness.to_owned(),
         observation_complete: false,
         root_pid: Some(root_pid),
-        outcome: outcome_report(status),
+        outcome,
         dropped_events,
         consumer_lag_ms: options.consumer_lag_ms,
         lifecycle_timeout_ms: options.lifecycle_timeout_ms,
@@ -511,6 +563,7 @@ fn fail_before_target(
             stage: stage.to_owned(),
             message: message.clone(),
             target_started: false,
+            target_terminated: false,
         }),
         events: Vec::new(),
         warnings: vec![WarningReport {
@@ -523,6 +576,101 @@ fn fail_before_target(
     Err(format!("experimental libbpf collector failed during {stage}: {message}").into())
 }
 
+fn fail_after_target(
+    options: &CollectorOptions,
+    stage: &str,
+    message: String,
+    child: &mut Child,
+    root_pid: u32,
+    known_outcome: Option<OutcomeReport>,
+    tracker: &Rc<RefCell<Tracker>>,
+) -> Result<(), Box<dyn Error>> {
+    let mut target_terminated = false;
+    let mut termination_warning = None;
+
+    let outcome = if let Some(outcome) = known_outcome {
+        outcome
+    } else {
+        match child.try_wait() {
+            Ok(Some(status)) => outcome_report(&status),
+            Ok(None) => {
+                match child.kill() {
+                    Ok(()) => target_terminated = true,
+                    Err(error) => {
+                        termination_warning = Some(format!(
+                            "failed to terminate target after collector failure: {error}"
+                        ));
+                    }
+                }
+                match child.wait() {
+                    Ok(status) => outcome_report(&status),
+                    Err(error) => {
+                        termination_warning = Some(format!(
+                            "failed to reap target after collector failure: {error}"
+                        ));
+                        OutcomeReport {
+                            exit_code: None,
+                            signal: None,
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                termination_warning = Some(format!(
+                    "failed to inspect target after collector failure: {error}"
+                ));
+                OutcomeReport {
+                    exit_code: None,
+                    signal: None,
+                }
+            }
+        }
+    };
+
+    let mut state = tracker.borrow_mut();
+    state.warning(
+        None,
+        "collector_stage_failure",
+        format!("experimental libbpf collector failed during {stage}: {message}"),
+    );
+    if target_terminated {
+        state.warning(
+            Some(root_pid),
+            "target_terminated_after_collector_failure",
+            "target was terminated and reaped after post-start collector failure",
+        );
+    }
+    if let Some(warning) = termination_warning {
+        state.warning(Some(root_pid), "target_termination_uncertain", warning);
+    }
+
+    let report = CollectorReport {
+        protocol_version: 1,
+        backend: backend_report(),
+        completeness: "incomplete_collector".to_owned(),
+        observation_complete: false,
+        root_pid: Some(root_pid),
+        outcome,
+        dropped_events: 0,
+        consumer_lag_ms: options.consumer_lag_ms,
+        lifecycle_timeout_ms: options.lifecycle_timeout_ms,
+        lifecycle_drain_complete: false,
+        decode_failure_injected: options.inject_decode_error,
+        collector_failure: Some(CollectorFailureReport {
+            stage: stage.to_owned(),
+            message: message.clone(),
+            target_started: true,
+            target_terminated,
+        }),
+        events: std::mem::take(&mut state.events),
+        warnings: std::mem::take(&mut state.warnings),
+    };
+    drop(state);
+
+    write_report(&options.report_path, &report)?;
+    Err(format!("experimental libbpf collector failed during {stage}: {message}").into())
+}
+
 fn parse_args() -> Result<CollectorOptions, Box<dyn Error>> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
     let mut report_path = None;
@@ -530,6 +678,7 @@ fn parse_args() -> Result<CollectorOptions, Box<dyn Error>> {
     let mut consumer_lag_ms = 0_u64;
     let mut lifecycle_timeout_ms = 2_000_u64;
     let mut inject_decode_error = false;
+    let mut inject_poll_error = false;
     let mut index = 0usize;
 
     while index < args.len() {
@@ -544,6 +693,7 @@ fn parse_args() -> Result<CollectorOptions, Box<dyn Error>> {
                 consumer_lag_ms,
                 lifecycle_timeout_ms,
                 inject_decode_error,
+                inject_poll_error,
                 target,
             });
         }
@@ -597,6 +747,11 @@ fn parse_args() -> Result<CollectorOptions, Box<dyn Error>> {
             index += 1;
             continue;
         }
+        if args[index] == "--inject-poll-error" {
+            inject_poll_error = true;
+            index += 1;
+            continue;
+        }
         return Err(format!("unknown observer option: {}", args[index].to_string_lossy()).into());
     }
 
@@ -606,7 +761,7 @@ fn parse_args() -> Result<CollectorOptions, Box<dyn Error>> {
 fn backend_report() -> BackendReport {
     BackendReport {
         id: "linux-libbpf-metadata-experimental-v1".to_owned(),
-        implementation_version: "m8.4c-experimental-v1".to_owned(),
+        implementation_version: "m8.4d-experimental-v1".to_owned(),
         platform: "linux".to_owned(),
         architecture: "x86_64".to_owned(),
         kernel_release: fs::read_to_string("/proc/sys/kernel/osrelease")
@@ -638,7 +793,7 @@ fn backend_report() -> BackendReport {
     }
 }
 
-fn outcome_report(status: ExitStatus) -> OutcomeReport {
+fn outcome_report(status: &ExitStatus) -> OutcomeReport {
     OutcomeReport {
         exit_code: status.code(),
         #[cfg(unix)]
