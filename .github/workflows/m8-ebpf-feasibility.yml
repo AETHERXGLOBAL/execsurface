@@ -111,17 +111,31 @@ jobs:
           sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
           clang --version
           pkg-config --modversion libelf
-      - name: Install product-MSRV Rust toolchain
+      - name: Install resolver and product-MSRV Rust toolchains
         shell: bash
         run: |
           set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
           rustup toolchain install 1.82.0 --profile minimal
+          cargo +1.87.0 --version
           rustc +1.82.0 --version --verbose
-      - name: Build libbpf-rs probe and generated skeleton
+      - name: Resolve a Rust-1.82-compatible dependency lock
         shell: bash
         run: |
           set -euxo pipefail
-          cargo +1.82.0 build --manifest-path experiments/m8-ebpf/libbpf-probe/Cargo.toml --release
+          rm -f experiments/m8-ebpf/libbpf-probe/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile \
+            --manifest-path experiments/m8-ebpf/libbpf-probe/Cargo.toml
+          grep -A2 -E '^name = "(getrandom|clap_lex|libbpf-rs|libbpf-cargo)"' \
+            experiments/m8-ebpf/libbpf-probe/Cargo.lock
+      - name: Build libbpf-rs probe and generated skeleton on Rust 1.82
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/libbpf-probe/Cargo.toml \
+            --release --locked
           BIN=experiments/m8-ebpf/libbpf-probe/target/release/execsurface-m8-libbpf-probe
           test -x "$BIN"
           file "$BIN"
