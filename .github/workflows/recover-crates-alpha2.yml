@@ -40,8 +40,8 @@ jobs:
         run: |
           set -euo pipefail
           # crates.io explicitly asked this publication chain not to retry
-          # another new crate before 2026-09-26 01:04:03 UTC.
-          target="$(date -u -d '2026-09-26 01:04:10 UTC' +%s)"
+          # the final new crate before 2026-09-26 01:14:03 UTC.
+          target="$(date -u -d '2026-09-26 01:14:10 UTC' +%s)"
           now="$(date -u +%s)"
           if [ "$now" -lt "$target" ]; then
             sleep "$((target - now))"
