@@ -84,4 +84,25 @@ mod state_machine_adversaries {
         assert!(decode_event(&[0_u8; 31]).is_err());
         assert!(decode_event(&[0_u8; 33]).is_err());
     }
+
+    #[test]
+    fn target_launch_failure_happens_before_session_activation() {
+        let tracker = Tracker::default();
+        let missing = PathBuf::from("/definitely/missing/execsurface-m8-7-fixture");
+
+        let result = spawn_blocked(&missing);
+
+        assert!(result.is_err());
+        assert!(tracker.active.is_none());
+        assert_eq!(tracker.unexpected_without_session, 0);
+        assert_eq!(tracker.decode_errors, 0);
+    }
+
+    #[test]
+    fn barrier_release_failure_is_explicit_error() {
+        let result = release_target(-1);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "failed to release root-registration launch barrier");
+    }
 }
