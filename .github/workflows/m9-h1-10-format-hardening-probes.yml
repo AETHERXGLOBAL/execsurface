@@ -1,0 +1,64 @@
+name: M9-H1.10 normalize hardening probe formatting
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - .github/workflows/m9-h1-10-format-hardening-probes.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  rustfmt-probes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install frozen rustfmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+
+      - name: Format diagnostic probes only
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            crates/execsurface-observe/src/bin/ptrace-esrch-probe.rs
+            crates/execsurface-observe/src/bin/ptrace-esrch-recovery-probe.rs
+          )
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "${files[@]}"
+          git diff --check -- "${files[@]}"
+          changed="$(git diff --name-only)"
+          printf 'changed_files=\n%s\n' "$changed"
+          test "$changed" = $'crates/execsurface-observe/src/bin/ptrace-esrch-probe.rs\ncrates/execsurface-observe/src/bin/ptrace-esrch-recovery-probe.rs'
+          cargo "+$RUST_TOOLCHAIN" fmt --all -- --check
+
+      - name: Commit formatting only with remote-head lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin hardening/m9-ptrace-esrch-just
+          remote="$(git rev-parse origin/hardening/m9-ptrace-esrch-just)"
+          test "$remote" = "$GITHUB_SHA"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            crates/execsurface-observe/src/bin/ptrace-esrch-probe.rs \
+            crates/execsurface-observe/src/bin/ptrace-esrch-recovery-probe.rs
+          git diff --cached --check
+          test "$(git diff --cached --name-only)" = $'crates/execsurface-observe/src/bin/ptrace-esrch-probe.rs\ncrates/execsurface-observe/src/bin/ptrace-esrch-recovery-probe.rs'
+          git commit -m "chore(hardening): rustfmt ptrace diagnostic probes"
+          git push origin HEAD:hardening/m9-ptrace-esrch-just
