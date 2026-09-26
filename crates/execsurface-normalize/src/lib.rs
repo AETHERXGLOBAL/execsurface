@@ -411,6 +411,7 @@ fn canonical_path(path: &str, roots: &[RootRule]) -> CanonicalPath {
             } else {
                 format!("{}{suffix}", root.token)
             };
+            let value = normalize_ephemeral_temp_path(value, root.class);
             let class = classify_tokenized_path(&value, root.class);
             return CanonicalPath {
                 value,
@@ -431,6 +432,26 @@ fn canonical_kernel_fd_path(path: &str, roots: &[RootRule]) -> CanonicalPath {
     let mut canonical = canonical_path(path, roots);
     canonical.resolution = PathResolution::KernelFdResolved;
     canonical
+}
+
+fn normalize_ephemeral_temp_path(value: String, class: PathClass) -> String {
+    if class != PathClass::Temp {
+        return value;
+    }
+
+    let Some(rest) = value.strip_prefix("$TMP/go-build") else {
+        return value;
+    };
+    let digit_count = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digit_count == 0 {
+        return value;
+    }
+    let (_, suffix) = rest.split_at(digit_count);
+    if !suffix.is_empty() && !suffix.starts_with('/') {
+        return value;
+    }
+
+    format!("$TMP/go-build<ephemeral>{suffix}")
 }
 
 fn root_suffix<'a>(path: &'a str, root: &str) -> Option<&'a str> {
@@ -728,6 +749,40 @@ mod tests {
         assert_eq!(curl.value, "$RUN_TMP/plugin/curl");
         assert_eq!(ssh.value, "$RUN_TMP/plugin/ssh");
         assert_ne!(curl, ssh);
+    }
+
+    #[test]
+    fn randomized_go_build_roots_collapse_but_suffix_remains_specific() {
+        let roots = build_root_rules(&config_a()).unwrap();
+        let first = canonical_path("/tmp/go-build3008370933/b001/vet.cfg", &roots);
+        let second = canonical_path("/tmp/go-build1915336995/b001/vet.cfg", &roots);
+        let distinct_suffix = canonical_path("/tmp/go-build1915336995/b002/vet.cfg", &roots);
+
+        assert_eq!(first.value, "$TMP/go-build<ephemeral>/b001/vet.cfg");
+        assert_eq!(first, second);
+        assert_ne!(first, distinct_suffix);
+        assert_eq!(first.class, PathClass::Temp);
+    }
+
+    #[test]
+    fn go_build_normalization_is_digit_only_and_plain_tmp_only() {
+        let roots = build_root_rules(&config_a()).unwrap();
+        assert_eq!(
+            canonical_path("/tmp/go-buildabc/b001", &roots).value,
+            "$TMP/go-buildabc/b001"
+        );
+        assert_eq!(
+            canonical_path("/tmp/go-build123abc/b001", &roots).value,
+            "$TMP/go-build123abc/b001"
+        );
+        assert_eq!(
+            canonical_path("/tmp/not-go-build123/b001", &roots).value,
+            "$TMP/not-go-build123/b001"
+        );
+        assert_eq!(
+            canonical_path("/tmp/run-A/go-build123/b001", &roots).value,
+            "$RUN_TMP/go-build123/b001"
+        );
     }
 
     #[test]
