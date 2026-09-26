@@ -1,0 +1,265 @@
+name: M9-V1 same-workload eBPF value experiment
+
+on:
+  push:
+    branches:
+      - research/m9-v1-ebpf-value-experiment
+    paths:
+      - docs/milestones/M9_V1_EBPF_VALUE_EXPERIMENT.md
+      - experiments/m8-ebpf/persistent-observer/m9_v1_command_fixture.c
+      - experiments/m8-ebpf/persistent-observer/m9_v1_performance.py
+      - scripts/m9_v1_apply_persistent_external_adapter.py
+      - .github/workflows/m9-v1-ebpf-value-experiment.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  value-experiment:
+    name: ${{ matrix.id }} same-workload value evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: V1-JUST
+            project: just
+            repository: casey/just
+            revision: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+            workload_rust: 1.90.0
+          - id: V1-RIPGREP
+            project: ripgrep
+            repository: BurntSushi/ripgrep
+            revision: 3fce3b5bb0236da2df6d99672afb8a719642eca7
+            workload_rust: 1.96.0
+          - id: V1-FD
+            project: fd
+            repository: sharkdp/fd
+            revision: ce97e473ebaec49697c07daa50a7bc2b32f713d2
+            workload_rust: 1.90.0
+    env:
+      PRODUCT_RUST: 1.90.0
+      EBPF_BUILD_RUST: 1.82.0
+      EBPF_RESOLVER_RUST: 1.87.0
+
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified upstream
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.revision }}
+          path: external/${{ matrix.project }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install native eBPF dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+          clang --version
+          pkg-config --modversion libelf
+
+      - name: Install frozen Rust toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$PRODUCT_RUST" --profile minimal
+          rustup toolchain install "$EBPF_RESOLVER_RUST" --profile minimal
+          rustup toolchain install "$EBPF_BUILD_RUST" --profile minimal --component rustfmt
+          rustup toolchain install "${{ matrix.workload_rust }}" --profile minimal
+          rustc +$PRODUCT_RUST --version --verbose
+          rustc +$EBPF_BUILD_RUST --version --verbose
+          rustc +${{ matrix.workload_rust }} --version --verbose
+
+      - name: Apply research-only persistent external adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/m9_v1_apply_persistent_external_adapter.py
+          cargo +$EBPF_BUILD_RUST fmt \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml
+          git diff --check
+          changed="$(git diff --name-only)"
+          test "$changed" = "experiments/m8-ebpf/persistent-observer/src/main.rs"
+          grep -F 'session.exec_count >= 1' experiments/m8-ebpf/persistent-observer/src/main.rs >/dev/null
+          grep -F 'session.exit_count >= 1' experiments/m8-ebpf/persistent-observer/src/main.rs >/dev/null
+          if grep -F 'session.spawn_count >= 1' experiments/m8-ebpf/persistent-observer/src/main.rs >/dev/null; then
+            echo 'fixture-specific spawn gate remains' >&2
+            exit 1
+          fi
+
+      - name: Resolve isolated Rust-1.82-compatible eBPF locks
+        shell: bash
+        run: |
+          set -euo pipefail
+          for manifest in \
+            experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            experiments/m8-ebpf/persistent-observer/Cargo.toml
+          do
+            rm -f "$(dirname "$manifest")/Cargo.lock"
+            CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+              cargo +$EBPF_RESOLVER_RUST generate-lockfile --manifest-path "$manifest"
+          done
+          mkdir -p "$RUNNER_TEMP/m9-v1-${{ matrix.project }}"
+          sha256sum \
+            experiments/m8-ebpf/libbpf-observer/Cargo.lock \
+            experiments/m8-ebpf/persistent-observer/Cargo.lock \
+            > "$RUNNER_TEMP/m9-v1-${{ matrix.project }}/ebpf-lock-SHA256SUMS"
+
+      - name: Build product and research subjects
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile experiments/m8-ebpf/persistent-observer/m9_v1_performance.py
+          cargo +$EBPF_BUILD_RUST test \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml \
+            --locked
+          cargo +$EBPF_BUILD_RUST build \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            --release --locked
+          cargo +$EBPF_BUILD_RUST build \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml \
+            --release --locked
+          cargo +$PRODUCT_RUST build --locked -p execsurface --release
+          cc -std=c11 -O2 -Wall -Wextra -Werror \
+            experiments/m8-ebpf/persistent-observer/m9_v1_command_fixture.c \
+            -o "$RUNNER_TEMP/m9_v1_command_fixture"
+
+          CLI="$PWD/target/release/execsurface"
+          COLLECTOR="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer"
+          PERSISTENT="$PWD/experiments/m8-ebpf/persistent-observer/target/release/execsurface-m8-persistent-observer"
+          LAUNCHER="$RUNNER_TEMP/m9_v1_command_fixture"
+          test -x "$CLI" && test -x "$COLLECTOR" && test -x "$PERSISTENT" && test -x "$LAUNCHER"
+          sha256sum "$CLI" "$COLLECTOR" "$PERSISTENT" "$LAUNCHER" \
+            > "$RUNNER_TEMP/m9-v1-${{ matrix.project }}/binary-SHA256SUMS"
+
+      - name: Prepare exact pinned external workload outside ExecSurface workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK_ROOT="$RUNNER_TEMP/m9-v1-work-${{ matrix.project }}"
+          rm -rf "$WORK_ROOT"
+          cp -a "external/${{ matrix.project }}" "$WORK_ROOT"
+          test "$(git -C "$WORK_ROOT" rev-parse HEAD)" = "${{ matrix.revision }}"
+          test -z "$(git -C "$WORK_ROOT" status --porcelain)"
+
+          case "${{ matrix.project }}" in
+            just)
+              (cd "$WORK_ROOT" && cargo +1.90.0 build --locked --release)
+              SCRIPT='./target/release/just --list >/dev/null'
+              ;;
+            ripgrep)
+              (cd "$WORK_ROOT" && cargo +1.96.0 build --locked --release)
+              SCRIPT='./target/release/rg --files . >/dev/null'
+              ;;
+            fd)
+              (cd "$WORK_ROOT" && cargo +1.90.0 build --locked --release --all-features)
+              SCRIPT='./target/release/fd --hidden --type f --exclude target . >/dev/null'
+              ;;
+            *)
+              echo 'unknown project' >&2
+              exit 1
+              ;;
+          esac
+
+          /bin/bash -lc "cd '$WORK_ROOT' && $SCRIPT"
+          {
+            printf 'WORK_ROOT=%q\n' "$WORK_ROOT"
+            printf 'WORKLOAD_SCRIPT=%q\n' "$SCRIPT"
+          } >> "$GITHUB_ENV"
+          {
+            printf 'experiment=M9-V1\n'
+            printf 'workload_id=%s\n' '${{ matrix.id }}'
+            printf 'upstream=%s\n' '${{ matrix.repository }}'
+            printf 'upstream_sha=%s\n' '${{ matrix.revision }}'
+            printf 'research_sha=%s\n' "$GITHUB_SHA"
+            printf 'main_baseline=a77f7ed7b2bed381bcdfe95605e4cd57f368685a\n'
+            printf 'kernel=%s\n' "$(uname -srmo)"
+            printf 'btf_readable=%s\n' "$(test -r /sys/kernel/btf/vmlinux && echo true || echo false)"
+            printf 'cpu_count=%s\n' "$(nproc)"
+          } > "$RUNNER_TEMP/m9-v1-${{ matrix.project }}/environment.txt"
+
+      - name: Execute frozen same-workload value protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLI="$PWD/target/release/execsurface"
+          COLLECTOR="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer"
+          PERSISTENT="$PWD/experiments/m8-ebpf/persistent-observer/target/release/execsurface-m8-persistent-observer"
+          LAUNCHER="$RUNNER_TEMP/m9_v1_command_fixture"
+          OUT="$RUNNER_TEMP/m9-v1-${{ matrix.project }}/evidence.json"
+
+          sudo env \
+            PATH="$PATH" \
+            RUNNER_NAME="${RUNNER_NAME:-}" \
+            RUNNER_OS="${RUNNER_OS:-}" \
+            RUNNER_ARCH="${RUNNER_ARCH:-}" \
+            python3 experiments/m8-ebpf/persistent-observer/m9_v1_performance.py \
+              --cli "$CLI" \
+              --collector "$COLLECTOR" \
+              --persistent "$PERSISTENT" \
+              --launcher "$LAUNCHER" \
+              --workdir "$WORK_ROOT" \
+              --script "$WORKLOAD_SCRIPT" \
+              --workload-id '${{ matrix.id }}' \
+              --upstream '${{ matrix.repository }}' \
+              --upstream-sha '${{ matrix.revision }}' \
+              --commit-sha "$GITHUB_SHA" \
+              --output "$OUT" \
+              --warmups 3 \
+              --samples 15 \
+              | tee "$RUNNER_TEMP/m9-v1-${{ matrix.project }}/harness.stdout"
+
+          cat "$OUT"
+
+      - name: Verify authority and evidence boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/m9-v1-${{ matrix.project }}/evidence.json" <<'PY'
+          import json, sys
+          d=json.load(open(sys.argv[1]))
+          assert d['protocol']['warmups_per_mode'] == 3, d
+          assert d['protocol']['timed_samples_per_mode'] == 15, d
+          assert d['protocol']['persistent_sessions_per_invocation'] == 2, d
+          assert d['authority'] == {
+              'ptrace_correctness_reference': True,
+              'full_surface_comparable': False,
+              'ebpf_pass_authorized': False,
+              'product_integration_authorized': False,
+          }, d['authority']
+          for mode, rows in d['samples'].items():
+              assert len(rows) == 15, (mode, len(rows))
+              assert all(r['clean'] is True for r in rows), mode
+          print('M9_V1_BOUNDARY_PASS')
+          print('summary=', json.dumps(d['summary'], sort_keys=True))
+          print('value_signal=', json.dumps(d['value_signal'], sort_keys=True))
+          PY
+
+      - name: Seal raw evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          DIR="$RUNNER_TEMP/m9-v1-${{ matrix.project }}"
+          find "$DIR" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > "$DIR/SHA256SUMS"
+
+      - name: Upload M9-V1 raw evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-v1-${{ matrix.project }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m9-v1-${{ matrix.project }}
+          if-no-files-found: error
+          retention-days: 30
