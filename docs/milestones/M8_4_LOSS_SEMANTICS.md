@@ -1,7 +1,7 @@
 # M8.4 — Fail-Closed Loss, Lag, Teardown & Lifecycle Semantics
 
 Date: 2026-09-26
-Status: **M8.4a–M8.4b CLOSED / PROVED — M8.4c UNDER EXECUTION**
+Status: **CLOSED / PROVED — M8.5 NEXT**
 Tracking: #40
 Parent: `docs/milestones/M8_EBPF_ARCHITECTURE.md`
 M8.3 closure: `docs/milestones/M8_3C_COLLECTOR.md`, `docs/milestones/M8_3C2_CLI_BRIDGE.md`
@@ -55,17 +55,48 @@ All M8.4b substantive gates passed. One intermediate aggregate-harness run faile
 
 ## M8.4c — machine-readable collector failure states
 
-**UNDER EXECUTION — no closure claim until CI passes.**
+**CLOSED / PROVED.**
 
-Current target:
+The collector now preserves explicit failure evidence instead of collapsing important failure channels into stderr-only errors:
 
-- pre-target BPF open/load/attach failure must write a machine-readable report and must not run the target;
-- malformed/decode failure must remain explicit and produce incomplete evidence rather than disappearing into an abrupt poll error;
-- lifecycle failure remains machine-readable as established in M8.4b;
-- the experimental CLI bridge must accept authorized incomplete states while continuing to reject complete/PASS-eligible claims;
-- no ptrace fallback is permitted.
+- pre-target BPF open/load/attach/ring-buffer setup failure writes a report with `completeness=incomplete_collector`, `observation_complete=false`, `root_pid=null`, `collector_failure.target_started=false`, and no target execution;
+- malformed/decode failure is recorded as `incomplete_decode` with explicit warning evidence rather than terminating polling before a report is written;
+- lifecycle timeout remains `incomplete_lifecycle` as established in M8.4b;
+- all failure reports remain ineligible for PASS.
 
-Proposed completeness additions are narrowly scoped to the experimental path: `incomplete_collector`, `incomplete_decode`, and the already-proved `incomplete_lifecycle`.
+A controlled unprivileged run proved that BPF setup failure occurs before the target is launched and still produces machine-readable evidence. A controlled decode-failure run proved that malformed-event state is surfaced without being mistaken for clean evidence.
+
+The current M8.3 CLI bridge intentionally remains an observation-only experimental integration surface. Product-level surfacing of the expanded M8.4 incomplete-state vocabulary is reserved for **M8.7 public-alpha integration**, where CLI/schema/documentation/release compatibility are evaluated together. This does not weaken M8.4 acceptance: Issue #40 requires the collector failure classes themselves to be explicit, machine-readable, bounded, and fail-closed.
+
+## M8.4d — independent red-team closure
+
+**CLOSED / PROVED.**
+
+The independent red-team review found one material lifecycle gap before merge: a `ring.poll()` failure after target launch could previously return abruptly before writing a machine-readable report and could leave the launched workload running.
+
+The design was hardened before closure:
+
+1. the experimental target is launched in its own process group;
+2. post-start collector failure writes `incomplete_collector` with `collector_failure.target_started=true`;
+3. the target process group is terminated and the root is reaped before returning failure;
+4. the report records whether termination was completed;
+5. actual runtime poll and post-root poll failures route through the same fail-closed path;
+6. drop-counter read failure after target execution also routes through machine-readable collector failure;
+7. a controlled post-start failure test launches a background descendant and proves neither the root completion sentinel nor descendant leak sentinel can appear after containment.
+
+The final M8.4 adversarial workflow passed all gates together:
+
+- pre-target collector failure safety;
+- post-start process-group containment;
+- event-budget truncation;
+- real kernel-side ring-buffer loss;
+- controlled consumer lag;
+- post-root descendant drain;
+- lifecycle timeout;
+- decode failure;
+- aggregate no-PASS authority preservation.
+
+Normal repository CI on the same implementation also passed Format, Clippy, Tests, and Lockfile integrity.
 
 ## M8.4 files
 
@@ -75,17 +106,36 @@ Proposed completeness additions are narrowly scoped to the experimental path: `i
 - `experiments/m8-ebpf/libbpf-observer/src/bin/m8_4_teardown_race.rs`
 - `.github/workflows/m8-4-loss-semantics.yml`
 
-These remain inside the experimental observer path except for narrowly bounded validation logic in the observation-only CLI bridge. They do not change the default ptrace backend, baseline format, policy semantics, or release packaging.
+These remain inside the experimental observer path. They do not change the default ptrace backend, baseline format, policy semantics, or release packaging.
 
-## Remaining M8.4 gates
+## Closure decision
 
-- **M8.4c:** attach/load/decode/lifecycle failure machine-readable evidence — UNDER EXECUTION.
-- **M8.4d:** independent red-team closure and regression preservation.
+**M8.4 is CLOSED / PROVED.**
+
+What M8.4 establishes:
+
+- known producer loss cannot silently become clean evidence;
+- userspace truncation cannot silently become clean evidence;
+- consumer lag cannot silently hide producer loss;
+- post-root descendant activity is drained or explicitly timed out;
+- pre-target and post-start collector failures are machine-readable and bounded;
+- decode failure is explicit;
+- controlled failure never grants PASS authority.
+
+What M8.4 does **not** establish:
+
+- ptrace/eBPF semantic parity;
+- cross-backend evidence equivalence;
+- production or public-alpha eBPF readiness;
+- performance superiority;
+- broad kernel/platform compatibility.
+
+Those remain M8.5–M8.7 work.
 
 ## Non-negotiable boundaries
 
 - eBPF PASS authority: **NOT AUTHORIZED**.
-- cross-backend parity: **OPEN / M8.5**.
+- cross-backend parity: **OPEN / M8.5 NEXT**.
 - ptrace default/reference: **RETAINED**.
 - missing/lost/uncertain events may never be interpreted as clean evidence.
 - an internal lifecycle marker does not imply public ProcessExit capability.
