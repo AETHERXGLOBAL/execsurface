@@ -1,4 +1,4 @@
-name: M9-H1.5 bounded exit-group recovery proof
+name: M9-H1.5B bounded exit-group recovery proof
 
 on:
   push:
@@ -6,6 +6,8 @@ on:
       - hardening/m9-ptrace-esrch-just
     paths:
       - scripts/m9_apply_get_syscall_info_exit_group_fix.py
+      - tests/fixtures/m9/exit_group_sched_getaffinity_race.c
+      - tests/fixtures/m9/thread_lifecycle_repro.c
       - .github/workflows/m9-h1-5-exit-group-recovery-proof.yml
   workflow_dispatch:
 
@@ -15,7 +17,7 @@ permissions:
 jobs:
   prove-bounded-recovery:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 45
     env:
       RUST_TOOLCHAIN: 1.90.0
       JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
@@ -45,11 +47,11 @@ jobs:
           test "$(git -C external/just rev-parse HEAD)" = "$JUST_SHA"
           test -z "$(git -C external/just status --porcelain)"
 
-      - name: Build deterministic lifecycle fixtures
+      - name: Build amplified lifecycle fixtures
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p m9-h1-5-evidence
+          mkdir -p m9-h1-5b-evidence
           cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
             tests/fixtures/m9/exit_group_sched_getaffinity_race.c \
             -o /tmp/m9-h1-4b-exit-group-race
@@ -65,7 +67,7 @@ jobs:
             tests/fixtures/m9/thread_lifecycle_repro.c \
             /tmp/m9-h1-4b-exit-group-race \
             /tmp/m9-h1-thread-lifecycle-repro \
-            > m9-h1-5-evidence/fixture-SHA256SUMS
+            > m9-h1-5b-evidence/fixture-SHA256SUMS
 
       - name: Apply bounded product candidate
         shell: bash
@@ -78,74 +80,88 @@ jobs:
           cargo "+$RUST_TOOLCHAIN" fmt --all
           git diff --check
           git diff -- crates/execsurface-observe/src/linux_ptrace.rs \
-            > m9-h1-5-evidence/candidate.diff
+            > m9-h1-5b-evidence/candidate.diff
           cp crates/execsurface-observe/src/linux_ptrace.rs \
-            m9-h1-5-evidence/linux_ptrace.candidate.rs
-          test -s m9-h1-5-evidence/candidate.diff
+            m9-h1-5b-evidence/linux_ptrace.candidate.rs
+          test -s m9-h1-5b-evidence/candidate.diff
 
       - name: Run unchanged observer regression suite
         shell: bash
         run: |
           set -euo pipefail
           cargo "+$RUST_TOOLCHAIN" test -p execsurface-observe \
-            2>&1 | tee m9-h1-5-evidence/observer-tests.log
+            2>&1 | tee m9-h1-5b-evidence/observer-tests.log
           cargo "+$RUST_TOOLCHAIN" build -p execsurface \
-            2>&1 | tee m9-h1-5-evidence/build.log
+            2>&1 | tee m9-h1-5b-evidence/build.log
 
-      - name: Prove bounded recovery on exact exit-group reproducer
+      - name: Prove bounded recovery on amplified exit-group reproducer
         shell: bash
         run: |
-          set -euo pipefail
-          : > m9-h1-5-evidence/exit-group-summary.txt
+          set -uo pipefail
+          : > m9-h1-5b-evidence/exit-group-summary.txt
           exercised=0
-          for attempt in $(seq 1 40); do
+          complete=0
+          for attempt in $(seq 1 120); do
+            set +e
             target/debug/execsurface observe -- /tmp/m9-h1-4b-exit-group-race \
-              > "m9-h1-5-evidence/exit-group-${attempt}.json" \
-              2> "m9-h1-5-evidence/exit-group-${attempt}.stderr"
+              > "m9-h1-5b-evidence/exit-group-${attempt}.json" \
+              2> "m9-h1-5b-evidence/exit-group-${attempt}.stderr"
+            rc=$?
+            set -e
+
+            deferred=$(grep -c 'M9_GET_SYSCALL_INFO_EXIT_GROUP_DEATH_DEFERRED' \
+              "m9-h1-5b-evidence/exit-group-${attempt}.stderr" || true)
+            exercised=$((exercised + deferred))
+            printf 'attempt=%s rc=%s deferred=%s\n' \
+              "$attempt" "$rc" "$deferred" >> m9-h1-5b-evidence/exit-group-summary.txt
+
+            if [ "$rc" -ne 0 ]; then
+              cat "m9-h1-5b-evidence/exit-group-${attempt}.stderr"
+              exit 1
+            fi
+
             python3 - "$attempt" <<'PY'
           import json
           import sys
           from pathlib import Path
           attempt = sys.argv[1]
-          path = Path(f"m9-h1-5-evidence/exit-group-{attempt}.json")
+          path = Path(f"m9-h1-5b-evidence/exit-group-{attempt}.json")
           data = json.loads(path.read_text(encoding="utf-8"))
           assert data.get("complete") is True, (path, data.get("warnings"))
           outcome = data.get("outcome", {})
           assert outcome.get("exit_code") == 0, (path, outcome)
           assert outcome.get("signal") is None, (path, outcome)
           PY
-            deferred=$(grep -c 'M9_GET_SYSCALL_INFO_EXIT_GROUP_DEATH_DEFERRED' \
-              "m9-h1-5-evidence/exit-group-${attempt}.stderr" || true)
-            exercised=$((exercised + deferred))
+
             if grep -Eq 'ExecSurface: ERROR|observer protocol error|observer OS error|M9_(UNTRACKED|UNEXPECTED|DUPLICATE|INVALID|STALE|PREREGISTRATION_STOPS_AT_ECHILD)' \
-              "m9-h1-5-evidence/exit-group-${attempt}.stderr"; then
-              cat "m9-h1-5-evidence/exit-group-${attempt}.stderr"
+              "m9-h1-5b-evidence/exit-group-${attempt}.stderr"; then
+              cat "m9-h1-5b-evidence/exit-group-${attempt}.stderr"
               exit 1
             fi
-            printf 'attempt=%s complete=true exit=0 deferred=%s\n' \
-              "$attempt" "$deferred" >> m9-h1-5-evidence/exit-group-summary.txt
+            complete=$((complete + 1))
           done
-          printf 'bounded_recovery_exercised=%s\n' "$exercised" \
-            >> m9-h1-5-evidence/exit-group-summary.txt
+          printf 'bounded_recovery_exercised=%s\ncomplete_runs=%s\n' \
+            "$exercised" "$complete" >> m9-h1-5b-evidence/exit-group-summary.txt
+          cat m9-h1-5b-evidence/exit-group-summary.txt
+          test "$complete" -eq 120
           test "$exercised" -gt 0
-          cat m9-h1-5-evidence/exit-group-summary.txt
 
       - name: Re-prove pre-registration lifecycle fixture
         shell: bash
         run: |
           set -euo pipefail
-          : > m9-h1-5-evidence/prereg-summary.txt
+          : > m9-h1-5b-evidence/prereg-summary.txt
           for attempt in $(seq 1 12); do
             target/debug/execsurface observe -- \
               /tmp/m9-h1-thread-lifecycle-repro 12 16 4 \
-              > "m9-h1-5-evidence/prereg-${attempt}.stdout" \
-              2> "m9-h1-5-evidence/prereg-${attempt}.stderr"
+              > "m9-h1-5b-evidence/prereg-${attempt}.stdout" \
+              2> "m9-h1-5b-evidence/prereg-${attempt}.stderr"
             python3 - "$attempt" <<'PY'
           import json
           import sys
           from pathlib import Path
           attempt = sys.argv[1]
-          raw = Path(f"m9-h1-5-evidence/prereg-{attempt}.stdout").read_text(encoding="utf-8")
+          raw = Path(f"m9-h1-5b-evidence/prereg-{attempt}.stdout").read_text(encoding="utf-8")
           marker = raw.find("\n{")
           assert marker >= 0, raw[:300]
           data = json.loads(raw[marker + 1:])
@@ -155,9 +171,9 @@ jobs:
           assert outcome.get("signal") is None, outcome
           PY
             reconciled=$(grep -c 'M9_PREREGISTRATION_STOP_RECONCILED' \
-              "m9-h1-5-evidence/prereg-${attempt}.stderr" || true)
+              "m9-h1-5b-evidence/prereg-${attempt}.stderr" || true)
             printf 'attempt=%s complete=true exit=0 prereg_reconciled=%s\n' \
-              "$attempt" "$reconciled" >> m9-h1-5-evidence/prereg-summary.txt
+              "$attempt" "$reconciled" >> m9-h1-5b-evidence/prereg-summary.txt
           done
 
       - name: Prime pinned external workload directly
@@ -169,21 +185,28 @@ jobs:
       - name: Prove pinned casey just five consecutive times
         shell: bash
         run: |
-          set -euo pipefail
-          : > m9-h1-5-evidence/just-summary.txt
+          set -uo pipefail
+          : > m9-h1-5b-evidence/just-summary.txt
           total_deferred=0
           for attempt in 1 2 3 4 5; do
+            set +e
             target/debug/execsurface observe -- \
               /bin/bash -lc \
               "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
-              > "m9-h1-5-evidence/just-${attempt}.json" \
-              2> "m9-h1-5-evidence/just-${attempt}.stderr"
+              > "m9-h1-5b-evidence/just-${attempt}.json" \
+              2> "m9-h1-5b-evidence/just-${attempt}.stderr"
+            rc=$?
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              cat "m9-h1-5b-evidence/just-${attempt}.stderr"
+              exit 1
+            fi
             python3 - "$attempt" <<'PY'
           import json
           import sys
           from pathlib import Path
           attempt = sys.argv[1]
-          path = Path(f"m9-h1-5-evidence/just-{attempt}.json")
+          path = Path(f"m9-h1-5b-evidence/just-{attempt}.json")
           data = json.loads(path.read_text(encoding="utf-8"))
           assert data.get("complete") is True, (path, data.get("warnings"))
           outcome = data.get("outcome", {})
@@ -191,20 +214,20 @@ jobs:
           assert outcome.get("signal") is None, (path, outcome)
           PY
             if grep -Eq 'ExecSurface: ERROR|observer protocol error|observer OS error|M9_(UNTRACKED|UNEXPECTED|DUPLICATE|INVALID|STALE|PREREGISTRATION_STOPS_AT_ECHILD)' \
-              "m9-h1-5-evidence/just-${attempt}.stderr"; then
-              cat "m9-h1-5-evidence/just-${attempt}.stderr"
+              "m9-h1-5b-evidence/just-${attempt}.stderr"; then
+              cat "m9-h1-5b-evidence/just-${attempt}.stderr"
               exit 1
             fi
             prereg=$(grep -c 'M9_PREREGISTRATION_STOP_RECONCILED' \
-              "m9-h1-5-evidence/just-${attempt}.stderr" || true)
+              "m9-h1-5b-evidence/just-${attempt}.stderr" || true)
             deferred=$(grep -c 'M9_GET_SYSCALL_INFO_EXIT_GROUP_DEATH_DEFERRED' \
-              "m9-h1-5-evidence/just-${attempt}.stderr" || true)
+              "m9-h1-5b-evidence/just-${attempt}.stderr" || true)
             total_deferred=$((total_deferred + deferred))
             printf 'attempt=%s complete=true exit=0 prereg_reconciled=%s deferred=%s\n' \
-              "$attempt" "$prereg" "$deferred" >> m9-h1-5-evidence/just-summary.txt
+              "$attempt" "$prereg" "$deferred" >> m9-h1-5b-evidence/just-summary.txt
           done
-          printf 'total_deferred=%s\n' "$total_deferred" >> m9-h1-5-evidence/just-summary.txt
-          cat m9-h1-5-evidence/just-summary.txt
+          printf 'total_deferred=%s\n' "$total_deferred" >> m9-h1-5b-evidence/just-summary.txt
+          cat m9-h1-5b-evidence/just-summary.txt
 
       - name: Seal evidence
         if: always()
@@ -217,15 +240,15 @@ jobs:
             printf 'just_sha=%s\n' "$JUST_SHA"
             printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
             printf 'kernel=%s\n' "$(uname -srmo)"
-          } > m9-h1-5-evidence/environment.txt
-          find m9-h1-5-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
-            | sort -z | xargs -0 sha256sum > m9-h1-5-evidence/SHA256SUMS
+          } > m9-h1-5b-evidence/environment.txt
+          find m9-h1-5b-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-h1-5b-evidence/SHA256SUMS
 
       - name: Upload proof evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: m9-h1-5-bounded-recovery-${{ github.run_id }}-${{ github.run_attempt }}
-          path: m9-h1-5-evidence
+          name: m9-h1-5b-bounded-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-h1-5b-evidence
           if-no-files-found: error
           retention-days: 30
