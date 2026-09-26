@@ -85,6 +85,7 @@ jobs:
           grep -q '^M8_LIBBPF_ATTACH_PASS$' "$RUNNER_TEMP/libbpf-vendored-proof.log"
           grep -q '^M8_LIBBPF_EVENT_TRANSPORT_PASS ' "$RUNNER_TEMP/libbpf-vendored-proof.log"
           grep -q '^M8_LIBBPF_LINEAGE_PASS ' "$RUNNER_TEMP/libbpf-vendored-proof.log"
+          grep -q '^M8_LIBBPF_FILE_METADATA_PASS ' "$RUNNER_TEMP/libbpf-vendored-proof.log"
           grep -q '^M8_LIBBPF_LOSS_ACCOUNTING_PASS ' "$RUNNER_TEMP/libbpf-vendored-proof.log"
           grep -q '^M8_LIBBPF_PRIVACY_SCHEMA_PASS ' "$RUNNER_TEMP/libbpf-vendored-proof.log"
           echo 'M8_LIBBPF_VENDORED_SEMANTICS_PASS'
