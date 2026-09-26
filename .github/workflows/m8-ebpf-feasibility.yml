@@ -102,7 +102,21 @@ jobs:
           cat "$RUNNER_TEMP/aya-unprivileged.log"
           test "$rc" -ne 0
           echo "M8_AYA_UNPRIVILEGED_DENIAL_PASS exit=$rc"
-      - name: Prove transport loss accounting and persisted-output privacy
+      - name: Prove invalid attach remains an explicit diagnostic
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBJ=experiments/m8-ebpf/aya-ebpf/target/bpfel-unknown-none/release/execsurface-m8-aya-ebpf
+          BIN=experiments/m8-ebpf/aya-loader/target/release/execsurface-m8-aya-loader
+          set +e
+          sudo env AX_M8_INVALID_ATTACH=1 "$BIN" "$OBJ" >"$RUNNER_TEMP/aya-invalid-attach.log" 2>&1
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/aya-invalid-attach.log"
+          test "$rc" -ne 0
+          test -s "$RUNNER_TEMP/aya-invalid-attach.log"
+          echo "M8_AYA_INVALID_ATTACH_DIAGNOSTIC_PASS exit=$rc"
+      - name: Prove transport lineage loss accounting and persisted-output privacy
         shell: bash
         run: |
           set -euxo pipefail
@@ -111,6 +125,7 @@ jobs:
           sudo "$BIN" "$OBJ" 2>&1 | tee "$RUNNER_TEMP/aya-proof.log"
           grep -q '^M8_AYA_ATTACH_PASS$' "$RUNNER_TEMP/aya-proof.log"
           grep -q '^M8_AYA_EVENT_TRANSPORT_PASS ' "$RUNNER_TEMP/aya-proof.log"
+          grep -q '^M8_AYA_BTF_LINEAGE_PASS ' "$RUNNER_TEMP/aya-proof.log"
           grep -q '^M8_AYA_LOSS_ACCOUNTING_PASS ' "$RUNNER_TEMP/aya-proof.log"
           grep -q '^M8_AYA_PRIVACY_SCHEMA_PASS ' "$RUNNER_TEMP/aya-proof.log"
           ! grep -Fq 'AX_M8_ARGV_SENTINEL_DO_NOT_PERSIST' "$RUNNER_TEMP/aya-proof.log"
