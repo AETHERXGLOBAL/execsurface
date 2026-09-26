@@ -91,7 +91,7 @@ jobs:
           for attempt in $(seq 1 12); do
             target/debug/execsurface observe -- \
               /tmp/m9-thread-lifecycle-repro 12 16 4 \
-              > "m9-h1-evidence/repro-${attempt}.json" \
+              > "m9-h1-evidence/repro-${attempt}.stdout" \
               2> "m9-h1-evidence/repro-${attempt}.stderr"
 
             python3 - "$attempt" <<'PY'
@@ -99,12 +99,20 @@ jobs:
           import sys
           from pathlib import Path
           attempt = sys.argv[1]
-          path = Path(f"m9-h1-evidence/repro-{attempt}.json")
-          data = json.loads(path.read_text(encoding="utf-8"))
-          assert data.get("complete") is True, (path, data.get("warnings"))
+          raw_path = Path(f"m9-h1-evidence/repro-{attempt}.stdout")
+          raw = raw_path.read_text(encoding="utf-8")
+          lines = raw.splitlines()
+          assert lines and lines[0].startswith("M9_H1_1_FIXTURE_PASS "), raw[:200]
+          json_start = raw.find("\n{")
+          assert json_start >= 0, raw[:400]
+          payload = raw[json_start + 1:]
+          data = json.loads(payload)
+          assert data.get("complete") is True, (raw_path, data.get("warnings"))
           outcome = data.get("outcome", {})
-          assert outcome.get("exit_code") == 0, (path, outcome)
-          assert outcome.get("signal") is None, (path, outcome)
+          assert outcome.get("exit_code") == 0, (raw_path, outcome)
+          assert outcome.get("signal") is None, (raw_path, outcome)
+          normalized = Path(f"m9-h1-evidence/repro-{attempt}.json")
+          normalized.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
           PY
 
             if grep -Eq 'M9_(UNTRACKED|UNEXPECTED|DUPLICATE|INVALID|STALE|PREREGISTRATION_STOPS_AT_ECHILD)|ExecSurface: ERROR|observer protocol error|observer OS error' \
