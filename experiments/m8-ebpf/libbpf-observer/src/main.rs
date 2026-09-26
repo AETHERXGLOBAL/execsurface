@@ -48,6 +48,7 @@ struct CollectorOptions {
     event_limit: usize,
     consumer_lag_ms: u64,
     lifecycle_timeout_ms: u64,
+    inject_decode_error: bool,
     target: Vec<OsString>,
 }
 
@@ -57,12 +58,14 @@ struct CollectorReport {
     backend: BackendReport,
     completeness: String,
     observation_complete: bool,
-    root_pid: u32,
+    root_pid: Option<u32>,
     outcome: OutcomeReport,
     dropped_events: u64,
     consumer_lag_ms: u64,
     lifecycle_timeout_ms: u64,
     lifecycle_drain_complete: bool,
+    decode_failure_injected: bool,
+    collector_failure: Option<CollectorFailureReport>,
     events: Vec<ReportEvent>,
     warnings: Vec<WarningReport>,
 }
@@ -84,6 +87,13 @@ struct BackendReport {
 struct OutcomeReport {
     exit_code: Option<i32>,
     signal: Option<i32>,
+}
+
+#[derive(Debug, Serialize)]
+struct CollectorFailureReport {
+    stage: String,
+    message: String,
+    target_started: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -126,6 +136,7 @@ struct Tracker {
     event_limit: usize,
     event_limit_hit: bool,
     path_resolution_failed: bool,
+    decode_failed: bool,
 }
 
 impl Tracker {
@@ -141,6 +152,7 @@ impl Tracker {
             event_limit,
             event_limit_hit: false,
             path_resolution_failed: false,
+            decode_failed: false,
         }
     }
 
@@ -281,6 +293,11 @@ impl Tracker {
         });
     }
 
+    fn record_decode_failure(&mut self, message: impl Into<String>) {
+        self.decode_failed = true;
+        self.warning(None, "event_decode_error", message);
+    }
+
     fn active_descendant_count(&self) -> usize {
         self.active_pids
             .iter()
@@ -294,30 +311,55 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let builder = ObserverSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
-    let open_skel = builder.open(&mut open_object)?;
-    let mut skel = open_skel.load()?;
-    skel.attach()?;
+    let open_skel = match builder.open(&mut open_object) {
+        Ok(value) => value,
+        Err(error) => return fail_before_target(&options, "open", error.to_string()),
+    };
+    let mut skel = match open_skel.load() {
+        Ok(value) => value,
+        Err(error) => return fail_before_target(&options, "load", error.to_string()),
+    };
+    if let Err(error) = skel.attach() {
+        return fail_before_target(&options, "attach", error.to_string());
+    }
 
     let tracker = Rc::new(RefCell::new(Tracker::new(options.event_limit)));
     let callback_tracker = Rc::clone(&tracker);
     let mut ring_builder = RingBufferBuilder::new();
-    ring_builder.add(&skel.maps.events, move |data| match decode_event(data) {
+    if let Err(error) = ring_builder.add(&skel.maps.events, move |data| match decode_event(data) {
         Ok(event) => {
             callback_tracker.borrow_mut().ingest(event);
             0
         }
         Err(message) => {
-            callback_tracker
-                .borrow_mut()
-                .warning(None, "event_decode_error", message);
-            -1
+            callback_tracker.borrow_mut().record_decode_failure(message);
+            0
         }
-    })?;
-    let ring = ring_builder.build()?;
+    }) {
+        return fail_before_target(&options, "ring_buffer_register", error.to_string());
+    }
+    let ring = match ring_builder.build() {
+        Ok(value) => value,
+        Err(error) => return fail_before_target(&options, "ring_buffer_build", error.to_string()),
+    };
+
+    if options.inject_decode_error {
+        tracker.borrow_mut().warning(
+            None,
+            "decode_failure_injected",
+            "M8.4c controlled malformed-event decode failure was injected",
+        );
+        tracker
+            .borrow_mut()
+            .record_decode_failure("controlled malformed metadata event for M8.4c");
+    }
 
     let mut command = Command::new(&options.target[0]);
     command.args(&options.target[1..]);
-    let mut child = command.spawn()?;
+    let mut child = match command.spawn() {
+        Ok(value) => value,
+        Err(error) => return fail_before_target(&options, "target_spawn", error.to_string()),
+    };
     let root_pid = child.id();
     tracker.borrow_mut().set_root(root_pid);
 
@@ -397,6 +439,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             format!("libbpf producer drop counter reported {dropped_events} lost events"),
         );
         "incomplete_loss"
+    } else if state.decode_failed {
+        "incomplete_decode"
     } else if !lifecycle_drain_complete {
         "incomplete_lifecycle"
     } else if state.event_limit_hit {
@@ -418,12 +462,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         backend: backend_report(),
         completeness: completeness.to_owned(),
         observation_complete: false,
-        root_pid,
+        root_pid: Some(root_pid),
         outcome: outcome_report(status),
         dropped_events,
         consumer_lag_ms: options.consumer_lag_ms,
         lifecycle_timeout_ms: options.lifecycle_timeout_ms,
         lifecycle_drain_complete,
+        decode_failure_injected: options.inject_decode_error,
+        collector_failure: None,
         events: std::mem::take(&mut state.events),
         warnings: std::mem::take(&mut state.warnings),
     };
@@ -431,7 +477,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     write_report(&options.report_path, &report)?;
     eprintln!(
-        "M8_4_LIBBPF_OBSERVATION_PASS root_pid={} completeness={} events={} dropped={} lifecycle_drain_complete={}",
+        "M8_4_LIBBPF_OBSERVATION_PASS root_pid={:?} completeness={} events={} dropped={} lifecycle_drain_complete={}",
         report.root_pid,
         report.completeness,
         report.events.len(),
@@ -441,12 +487,49 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn fail_before_target(
+    options: &CollectorOptions,
+    stage: &str,
+    message: String,
+) -> Result<(), Box<dyn Error>> {
+    let report = CollectorReport {
+        protocol_version: 1,
+        backend: backend_report(),
+        completeness: "incomplete_collector".to_owned(),
+        observation_complete: false,
+        root_pid: None,
+        outcome: OutcomeReport {
+            exit_code: None,
+            signal: None,
+        },
+        dropped_events: 0,
+        consumer_lag_ms: options.consumer_lag_ms,
+        lifecycle_timeout_ms: options.lifecycle_timeout_ms,
+        lifecycle_drain_complete: false,
+        decode_failure_injected: options.inject_decode_error,
+        collector_failure: Some(CollectorFailureReport {
+            stage: stage.to_owned(),
+            message: message.clone(),
+            target_started: false,
+        }),
+        events: Vec::new(),
+        warnings: vec![WarningReport {
+            code: "collector_stage_failure".to_owned(),
+            pid: None,
+            message: format!("experimental libbpf collector failed during {stage}: {message}"),
+        }],
+    };
+    write_report(&options.report_path, &report)?;
+    Err(format!("experimental libbpf collector failed during {stage}: {message}").into())
+}
+
 fn parse_args() -> Result<CollectorOptions, Box<dyn Error>> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
     let mut report_path = None;
     let mut event_limit = 100_000usize;
     let mut consumer_lag_ms = 0_u64;
     let mut lifecycle_timeout_ms = 2_000_u64;
+    let mut inject_decode_error = false;
     let mut index = 0usize;
 
     while index < args.len() {
@@ -460,6 +543,7 @@ fn parse_args() -> Result<CollectorOptions, Box<dyn Error>> {
                 event_limit,
                 consumer_lag_ms,
                 lifecycle_timeout_ms,
+                inject_decode_error,
                 target,
             });
         }
@@ -508,6 +592,11 @@ fn parse_args() -> Result<CollectorOptions, Box<dyn Error>> {
             index += 2;
             continue;
         }
+        if args[index] == "--inject-decode-error" {
+            inject_decode_error = true;
+            index += 1;
+            continue;
+        }
         return Err(format!("unknown observer option: {}", args[index].to_string_lossy()).into());
     }
 
@@ -517,7 +606,7 @@ fn parse_args() -> Result<CollectorOptions, Box<dyn Error>> {
 fn backend_report() -> BackendReport {
     BackendReport {
         id: "linux-libbpf-metadata-experimental-v1".to_owned(),
-        implementation_version: "m8.4-experimental-v1".to_owned(),
+        implementation_version: "m8.4c-experimental-v1".to_owned(),
         platform: "linux".to_owned(),
         architecture: "x86_64".to_owned(),
         kernel_release: fs::read_to_string("/proc/sys/kernel/osrelease")
