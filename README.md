@@ -264,6 +264,8 @@ ExecSurface detects **observed execution-surface drift under its recorded observ
 
 Use the **[Adoption / Integration issue template](https://github.com/AETHERXGLOBAL/execsurface/issues/new/choose)** and do not post secrets.
 
+You can also read the public adopter call in [Issue #28](https://github.com/AETHERXGLOBAL/execsurface/issues/28).
+
 ## Documentation
 
 - [Five-Minute Start](docs/QUICKSTART_5_MIN.md)
