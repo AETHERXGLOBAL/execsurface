@@ -44,10 +44,10 @@ For the initial publication:
 3. create a scoped API token suitable for publishing these crates;
 4. create a GitHub Environment named `crates-io`;
 5. add the token to that environment as the secret `CARGO_REGISTRY_TOKEN`;
-6. dispatch `.github/workflows/publish-crates.yml` at the immutable release tag;
+6. dispatch `.github/workflows/publish-crates.yml` from the current default branch and set `release_tag` to the immutable version tag to publish;
 7. after publication, rotate/revoke the initial token if moving to a stronger supported publisher mechanism.
 
-The workflow publishes only from a tag whose identity exactly matches Cargo metadata and `action/release-tag.txt`.
+The workflow checks out the requested immutable release tag and verifies that it exactly matches Cargo metadata and `action/release-tag.txt`. Publication is idempotent: versions already present on crates.io are skipped, so a rate-limited or interrupted dependency chain can be resumed safely.
 
 ## Permanence
 
