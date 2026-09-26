@@ -1,8 +1,15 @@
 # M8.2 — eBPF Stack Feasibility & Selection Protocol
 
 Date: 2026-09-26
-Status: **OPEN — EVIDENCE COLLECTION REQUIRED**
+Status: **CLOSED — SELECTION COMPLETE**
 Tracking: #34
+Decision record: `docs/milestones/M8_2_STACK_DECISION.md`
+
+## Closure note
+
+This file preserves the experiment protocol and its original hypotheses. M8.2 is now closed: the evidence-backed implementation choice for experimental M8.3 work is **libbpf-rs / libbpf**. Aya remains a viable preserved alternative and is not killed. eBPF-derived evidence is still **not authorized** to produce evidence-equivalent PASS; ptrace remains the correctness reference.
+
+Post-selection E9 hardening also proved the required file-related metadata event on both candidate stacks on the reference environment. The corrected common hard-gate run is `36242866289` (**SUCCESS** for Host audit, Aya, and libbpf-rs). The failed pre-correction libbpf file-event decoder run remains preserved in `M8_2_NEGATIVE_010_LIBBPF_FILE_EVENT_DECODER_GAP.md`.
 
 ## Decision to make
 
@@ -76,23 +83,25 @@ Versions above are evidence inputs, not permanent pins. Exact versions used in e
 - privacy/security red team
 - independent reproducibility reviewer
 
-## Hypotheses
+## Historical hypotheses at protocol creation
 
 ### H-A — Aya operational advantage
 
 Aya may reduce distribution complexity for a Rust-native product by avoiding a runtime libbpf dependency and by enabling Rust code sharing between userspace and eBPF components.
 
-This hypothesis is **OPEN** until build, packaging, verifier diagnostics, release and host-compatibility evidence is collected.
+This hypothesis was evaluated during M8.2. Aya feasibility was proved on the reference environment, but the final stack decision selected libbpf-rs / libbpf for M8.3 for the reasons recorded in `M8_2_STACK_DECISION.md`.
 
 ### H-L — libbpf ecosystem advantage
 
 libbpf-rs may reduce kernel-compatibility and tooling risk through closer alignment with the upstream Linux BPF/CO-RE ecosystem.
 
-This hypothesis is **OPEN** until equivalent build, packaging, diagnostics and portability evidence is collected.
+This hypothesis was evaluated during M8.2 and contributed to the accepted libbpf-rs / libbpf implementation decision together with the MSRV and packaging evidence recorded in the decision document.
 
 ### H-N — neither stack is automatically acceptable
 
 If neither candidate can meet ExecSurface's loss-accounting, fail-closed, privacy, packaging and reproducibility requirements without disproportionate complexity, M8.2 may return **KILLED / DEFERRED** for eBPF rather than forcing a selection.
+
+This contingency was not triggered: both candidates passed the common feasibility hard gates on the reference environment.
 
 ## Required experiments
 
@@ -229,6 +238,8 @@ Each candidate must demonstrate at least:
 
 This is a feasibility probe, not parity authority.
 
+Post-selection hardening result: both Aya and libbpf-rs demonstrated the file-related metadata event on the reference environment; run `36242866289` is the corrected common-gate evidence.
+
 ## Scoring model
 
 No single aggregate score can override a hard gate.
@@ -269,15 +280,15 @@ The spike should prefer documented stable tracepoints or BTF-aware attachment me
 
 Kprobes may be used as a controlled fallback experiment but are not automatically a stable product contract because kernel-internal function names/signatures can vary.
 
-## Initial implementation direction — not a decision
+## Initial implementation direction — historical ordering, not the final decision
 
-The first spike should begin with **Aya** because:
+The first spike began with **Aya** because:
 
 - ExecSurface is already Rust-native;
 - Aya provides a direct Rust userspace + Rust eBPF path;
-- it can test the strongest hypothesis for preserving a self-contained Rust distribution model.
+- it tested the strongest hypothesis for preserving a self-contained Rust distribution model.
 
-This ordering is experimental only. It is **not** an Aya selection. libbpf-rs must receive an equivalent hard-gate evaluation before M8.2 closes unless Aya is killed by a hard gate first and the evidence justifies changing the experiment sequence.
+That ordering was experimental only. It was not the final selection. libbpf-rs subsequently received equivalent hard-gate evaluation and was selected for experimental M8.3 implementation.
 
 ## Required M8.2 output
 
@@ -292,10 +303,13 @@ Before closing M8.2, commit:
 7. candidate decision or explicit defer/kill result;
 8. independent anti-drift review.
 
+These outputs are now satisfied by the committed experiment sources/workflows, preserved negative evidence, packaging evidence, and `M8_2_STACK_DECISION.md`.
+
 ## Current labels
 
-- Aya candidate: **OPEN**
-- libbpf-rs/libbpf candidate: **OPEN**
-- eBPF stack selected: **OPEN**
+- Aya feasibility: **PROVED on reference M8.2 environment**
+- libbpf-rs/libbpf feasibility: **PROVED on reference M8.2 environment**
+- E9 file-related metadata semantic: **PROVED for both candidates on reference M8.2 environment**
+- eBPF stack selected: **libbpf-rs / libbpf — ACCEPTED FOR EXPERIMENTAL M8.3**
 - eBPF PASS authority: **NOT AUTHORIZED**
 - ptrace reference backend: **PROVED / RETAINED under M6.5**
