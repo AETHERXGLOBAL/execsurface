@@ -1,9 +1,10 @@
 # M9 — Independent Adoption & Real-Workload Evidence Protocol
 
 Date: 2026-09-26
-Status: **M9.0 OPEN — PROTOCOL FROZEN BEFORE ACCEPTED EVIDENCE**
+Status: **M9.0 CLOSED / PROTOCOL FROZEN BEFORE ACCEPTED EVIDENCE — M9.1 ACTIVE**
 Tracking: #51
-Base: `8f1ec63219e084f10678655ee698fd2a482312d6`
+Protocol merge: `1decfc8672b89e05b88d20ee061fdf32033cd722`
+Frozen protocol head: `ffff35904556cd020b06369a3b272da20598b53c`
 
 ## Objective
 
@@ -162,8 +163,8 @@ For every accepted performance case:
 
 - pin project revision and command before measurement;
 - use the same host and host state for direct and ptrace-observed samples;
-- record 3 warm-up executions for each mode, excluded from statistics but retained in raw evidence;
-- record 15 measured direct samples and 15 measured ptrace samples;
+- record exactly 3 warm-up executions for each mode, excluded from statistics but retained in raw evidence;
+- record exactly 15 measured direct samples and exactly 15 measured ptrace samples;
 - alternate modes in paired order (`direct`, `ptrace`, then `ptrace`, `direct`) repeatedly to reduce monotonic host drift;
 - do not discard measured samples except for a predeclared infrastructure failure; any exclusion remains recorded with reason;
 - report median direct runtime, median observed runtime, median absolute overhead, and median ratio;
@@ -206,20 +207,20 @@ A capability-based reopen requires all of:
 
 A speculative feature idea is insufficient.
 
-## M9.0 acceptance criteria
+## M9.0 closure evidence
 
-M9.0 closes only when:
+M9.0 closed only after the protocol, schema, independence sentinels, privacy/authority sentinels and the M6.5 trigger formula were committed and tested before any **accepted** M9.1 evidence collection.
 
-- the protocol is committed before accepted M9 evidence;
-- the machine-readable schema is committed;
-- independence classes are frozen;
-- performance sample plan and trigger rules are frozen;
-- privacy and failure-preservation rules are frozen;
-- product authority invariants are restated;
-- CI remains green;
-- Red Team finds no path for self-run compatibility evidence to be mislabeled as independent adoption.
+On frozen head `ffff35904556cd020b06369a3b272da20598b53c`:
 
-## Next gate after M9.0
+- M9 Evidence Protocol run `36266376676`: **SUCCESS**;
+- normal CI run `36266376681`: **SUCCESS**;
+- PR-level CI, M9 Evidence Protocol, Distribution Probe and Action Smoke on PR #54: **SUCCESS**;
+- merge to `main`: `1decfc8672b89e05b88d20ee061fdf32033cd722`.
+
+A pre-merge `casey/just` attempt exists on the preserved superseded branch. It is recorded separately as **PRE-FREEZE / NON-ACCEPTED** negative evidence and cannot satisfy M9 performance or adoption claims.
+
+## Active gate
 
 **M9.1 — Zero-contact external workload expansion.**
 
