@@ -180,3 +180,77 @@ jobs:
                   hits.append(finding)
           assert hits, "controlled sha256sum execution was not surfaced as an added process_exec"
           PY
+
+  pinned-casey-just-source-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+    steps:
+      - name: Checkout ExecSurface
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned casey just
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: casey/just
+          ref: ${{ env.JUST_SHA }}
+          path: external/just
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain and verify upstream identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustc "+$RUST_TOOLCHAIN" --version --verbose
+          test "$(git -C external/just rev-parse HEAD)" = "$JUST_SHA"
+          test -z "$(git -C external/just status --porcelain)"
+
+      - name: Build current ExecSurface and prime isolated just workload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface
+          rm -rf /tmp/m9-just
+          cp -a external/just /tmp/m9-just
+          (cd /tmp/m9-just && cargo "+$RUST_TOOLCHAIN" test --all >/dev/null 2>&1)
+
+      - name: Prove pinned just three consecutive times
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            out="/tmp/m9-just-${attempt}.json"
+            err="/tmp/m9-just-${attempt}.stderr"
+            set +e
+            timeout --signal=TERM --kill-after=5s 120s \
+              target/debug/execsurface observe -- /bin/bash -lc \
+              "cd /tmp/m9-just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
+              >"$out" 2>"$err"
+            rc=$?
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              cat "$err" || true
+              exit "$rc"
+            fi
+            python3 - "$out" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            if grep -Eq 'ExecSurface: ERROR|observer protocol error|observer OS error' "$err"; then
+              cat "$err"
+              exit 1
+            fi
+          done
