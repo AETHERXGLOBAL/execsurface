@@ -42,6 +42,7 @@ jobs:
           test "$(git -C external/just rev-parse HEAD)" = "$JUST_SHA"
           test -z "$(git -C external/just status --porcelain)"
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
           rustc "+$RUST_TOOLCHAIN" --version --verbose
 
       - name: Apply lifecycle-confirmed candidate
