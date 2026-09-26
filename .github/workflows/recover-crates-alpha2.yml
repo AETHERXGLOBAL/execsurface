@@ -1,0 +1,112 @@
+name: Recover ExecSurface crates.io alpha.2
+
+on:
+  push:
+    branches:
+      - "fix/crates-alpha2-publication"
+    paths:
+      - ".github/workflows/recover-crates-alpha2.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    name: Resume idempotent registry publication
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: crates-io
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      RELEASE_TAG: v0.1.0-alpha.2
+      RELEASE_COMMIT: c6cabf1b4d1399898b9643a7fce011664aac0918
+    steps:
+      - name: Checkout immutable release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: v0.1.0-alpha.2
+          fetch-depth: 0
+
+      - name: Verify immutable release identity
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          version="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="execsurface"))')"
+          test "$RELEASE_TAG" = "v$version"
+          test "$RELEASE_TAG" = "$(tr -d '[:space:]' < action/release-tag.txt)"
+          test -n "$CARGO_REGISTRY_TOKEN"
+
+      - name: Resume crates.io publication safely
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+
+          published() {
+            crate="$1"
+            cargo info "$crate@$version" --registry crates-io >/dev/null 2>&1
+          }
+
+          publish_one() {
+            crate="$1"
+
+            if published "$crate"; then
+              echo "$crate $version already exists on crates.io; skipping"
+              return 0
+            fi
+
+            for attempt in $(seq 1 8); do
+              echo "Publishing $crate $version (attempt $attempt/8)"
+              if cargo publish -p "$crate" --locked; then
+                echo "$crate $version published"
+                return 0
+              fi
+
+              if published "$crate"; then
+                echo "$crate $version became visible after publish response; continuing"
+                return 0
+              fi
+
+              if [ "$attempt" -lt 8 ]; then
+                sleep 10
+              fi
+            done
+
+            echo "::error::failed to publish $crate $version"
+            return 1
+          }
+
+          publish_one execsurface-model
+          publish_one execsurface-observe
+          publish_one execsurface-normalize
+          publish_one execsurface-baseline
+          publish_one execsurface-diff
+          publish_one execsurface-policy
+          publish_one execsurface-report
+          publish_one execsurface
+
+      - name: Prove zero-contact crates.io installation
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          root="$RUNNER_TEMP/crates-io-consumer"
+
+          installed=0
+          for attempt in $(seq 1 10); do
+            rm -rf "$root"
+            if cargo install execsurface --version "=$version" --locked --root "$root"; then
+              installed=1
+              break
+            fi
+            echo "Registry install not ready yet (attempt $attempt/10)"
+            sleep 10
+          done
+          test "$installed" = "1"
+
+          test "$("$root/bin/execsurface" --version)" = "execsurface $version"
+
+          work="$RUNNER_TEMP/crates-io-work"
+          mkdir -p "$work"
+          cd "$work"
+          "$root/bin/execsurface" doctor
+          "$root/bin/execsurface" learn -- /bin/bash -lc true
+          "$root/bin/execsurface" check -- /bin/bash -lc true
