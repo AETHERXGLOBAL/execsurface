@@ -1,3 +1,4 @@
+# Rerun after rustfmt-only hardening probe cleanup.
 name: M9-H1.10 promote proved ptrace lifecycle core
 
 on:
