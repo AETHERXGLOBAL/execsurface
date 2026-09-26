@@ -1,0 +1,19 @@
+[package]
+name = "execsurface-m8-libbpf-path-bridge"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.82"
+build = "build.rs"
+publish = false
+
+[dependencies]
+libbpf-rs = "=0.27.0"
+
+[build-dependencies]
+libbpf-cargo = "=0.27.0"
+clap = "=4.5.60"
+clap_lex = "=1.0.0"
+getrandom = "=0.3.1"
+tempfile = "=3.27.0"
+
+[workspace]
