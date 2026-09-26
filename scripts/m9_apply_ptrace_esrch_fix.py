@@ -110,12 +110,13 @@ fn resume_after_observed_stop(
         Err(ObserveError::Os(resume_error))
             if resume_error.raw_os_error() == Some(libc::ESRCH) =>
         {
-            // Diagnostic candidate only: confirm a terminal wait status for exactly the
-            // same TID before treating restart ESRCH as lifecycle completion.
+            // This path is reachable only after waitpid reported a ptrace-stop for this TID.
+            // A successful informational ptrace request may be followed by restart ESRCH if the
+            // tracee enters terminal teardown before PTRACE_SYSCALL. Consume exactly that TID's
+            // next wait status once. Do not retry ptrace, poll, sleep, or accept a non-terminal
+            // status. Any ambiguity remains fail-closed.
             let mut terminal_status = 0;
-            let waited = unsafe {
-                libc::waitpid(tid, &mut terminal_status, libc::__WALL | libc::WNOHANG)
-            };
+            let waited = unsafe { libc::waitpid(tid, &mut terminal_status, libc::__WALL) };
 
             if waited == tid
                 && record_terminal_wait_status(
@@ -132,27 +133,12 @@ fn resume_after_observed_stop(
             if waited < 0 {
                 let wait_error = io::Error::last_os_error();
                 return Err(ObserveError::Protocol(format!(
-                    "M9_ESRCH_RECOVERY_WAIT_ERROR tid={tid}: PTRACE_SYSCALL returned ESRCH after an observed ptrace-stop and terminal confirmation waitpid failed: {wait_error}"
-                )));
-            }
-
-            if waited == 0 {
-                let proc_state = fs::read_to_string(format!("/proc/{tid}/status"))
-                    .ok()
-                    .and_then(|status| {
-                        status
-                            .lines()
-                            .find(|line| line.starts_with("State:"))
-                            .map(str::to_owned)
-                    })
-                    .unwrap_or_else(|| "State: unreadable".to_owned());
-                return Err(ObserveError::Protocol(format!(
-                    "M9_ESRCH_RECOVERY_NOT_YET_WAITABLE tid={tid} {proc_state}: PTRACE_SYSCALL returned ESRCH after an observed ptrace-stop but exact-TID WNOHANG returned 0"
+                    "PTRACE_SYSCALL returned ESRCH after an observed ptrace-stop for tid {tid}, and exact-TID terminal wait failed: {wait_error}"
                 )));
             }
 
             Err(ObserveError::Protocol(format!(
-                "M9_ESRCH_RECOVERY_NONTERMINAL tid={tid}: PTRACE_SYSCALL returned ESRCH after an observed ptrace-stop but terminal confirmation returned non-terminal wait status {terminal_status:#x}"
+                "PTRACE_SYSCALL returned ESRCH after an observed ptrace-stop for tid {tid}, but exact-TID wait returned non-terminal status {terminal_status:#x}"
             )))
         }
         Err(error) => Err(error),
