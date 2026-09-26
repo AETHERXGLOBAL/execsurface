@@ -164,7 +164,7 @@ Tracking: GitHub Issues #34, #37, #40, #42, #44, #46 and #49.
 
 ## M9 — Independent Adoption & Real-Workload Evidence
 
-**OPEN — M9.0 CLOSED / PROVED; M9.1 NEXT**
+**OPEN — M9.0 CLOSED / PROVED; M9.1a CLOSED / PROVED; M9.1b NEXT**
 
 The next highest-value program is independent use of the existing public product on real developer/CI workloads, not another speculative observer feature.
 
@@ -172,7 +172,7 @@ The next highest-value program is independent use of the existing public product
 
 **CLOSED / PROVED**
 
-The evidence protocol, machine-readable schema, independence provenance classes, privacy boundary, failure-preservation rules, exact-host performance protocol, and predeclared M6.5 eBPF reopen trigger were frozen before accepted M9 external evidence.
+The canonical evidence protocol, machine-readable schema, independence provenance classes, privacy boundary, failure-preservation rules, exact-host performance protocol, and predeclared M6.5 eBPF reopen trigger were frozen before accepted M9 external evidence.
 
 Red Team found and killed an initial schema design that could have allowed self-run compatibility evidence to be mislabeled as independent adoption. The hardened schema requires provenance and CI contains a negative sentinel that rejects this attack.
 
@@ -183,21 +183,41 @@ Closure evidence on protocol snapshot `ffff35904556cd020b06369a3b272da20598b53c`
 
 No accepted M9 external/adoption evidence was collected before protocol freeze.
 
-Protocol: `docs/milestones/M9_PROTOCOL.md`.
+Canonical protocol: `docs/milestones/M9_PROTOCOL.md`.
 Schema: `docs/milestones/M9_EVIDENCE_SCHEMA.json`.
+Supplementary adoption progression: `docs/milestones/M9_EXTERNAL_ADOPTION_PROTOCOL.md`.
 Tracking: GitHub Issue #51.
 
 ### M9.1 — Zero-Contact External Workload Expansion
 
+**OPEN — M9.1a CLOSED / PROVED; M9.1b NEXT**
+
+#### M9.1a — Target Qualification
+
+**CLOSED / PROVED**
+
+The initial cohort was frozen before execution results:
+
+- T1: `casey/just@5d5742cbcc50f19c99c356bc7e085acaa5f4665d`;
+- T2: `BurntSushi/ripgrep@3fce3b5bb0236da2df6d99672afb8a719642eca7`;
+- T3: `pytest-dev/pytest@8721173580390a9d297e5af06cac3f0b6841f425`;
+- C0: prior M7 `sharkdp/fd` revision as calibration only, not new M9 evidence.
+
+The three primary upstream commit identities were resolved during qualification. This proves only target identity/selection freeze, not compatibility, setup, performance, drift detection, or adoption.
+
+Qualification: `docs/milestones/M9_TARGET_QUALIFICATION.md`.
+
+#### M9.1b — Zero-Contact External Execution
+
 **NEXT**
 
-Before observing results, freeze selection criteria and pinned revisions for multiple public, unmodified external workloads. Run the unchanged public ptrace product without maintainer coordination and preserve all successes and failures. Every self-run external result remains `ZERO_CONTACT_EXTERNAL_REPRO`; it must never be represented as independent adoption.
+Execute the frozen public ptrace product against T1 first, then the remaining cohort under the canonical M9 protocol. Preserve all setup failures, observation failures, nondeterminism, false-positive/false-negative evidence, raw timing samples and usability friction. Every AETHER X-run external result remains `ZERO_CONTACT_EXTERNAL_REPRO`; it must never be represented as independent adoption.
 
 ### M9.2 — Independent Adoption Evidence
 
 **PLANNED**
 
-Accept independent-adoption claims only when third-party initiation/execution and provenance are auditable under the frozen schema.
+Accept independent-adoption claims only when third-party initiation/execution and provenance are auditable under the frozen schema. Descriptive L1/L2/L3 progression may be used only when the corresponding real external action occurred.
 
 ### M9.3 — Evidence Synthesis / Product Decision
 
