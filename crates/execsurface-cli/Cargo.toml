@@ -9,10 +9,11 @@ description = "Runtime execution-surface drift detection for Linux CI and develo
 readme.workspace = true
 keywords = ["runtime-security", "supply-chain", "devsecops", "observability", "ci"]
 categories = ["command-line-utilities", "development-tools"]
+autobins = false
 
 [[bin]]
 name = "execsurface"
-path = "src/main.rs"
+path = "src/entry.rs"
 
 [dependencies]
 execsurface-baseline = { path = "../execsurface-baseline", version = "=0.1.0-alpha.2" }
