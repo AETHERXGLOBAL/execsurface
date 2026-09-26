@@ -1,0 +1,27 @@
+[package]
+name = "execsurface-m8-parity-harness"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.82"
+publish = false
+
+[dependencies]
+execsurface-model = { path = "../../../crates/execsurface-model" }
+execsurface-observe = { path = "../../../crates/execsurface-observe" }
+libc = "=0.2.189"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+
+[[bin]]
+name = "execsurface-m8-parity-harness"
+path = "src/main.rs"
+
+[[bin]]
+name = "m8_5_parity_fixture"
+path = "src/bin/m8_5_parity_fixture.rs"
+
+[[bin]]
+name = "m8_5_nested_thread_fixture"
+path = "src/bin/m8_5_nested_thread_fixture.rs"
+
+[workspace]

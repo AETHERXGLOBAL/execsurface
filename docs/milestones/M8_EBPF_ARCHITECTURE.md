@@ -1,11 +1,13 @@
 # M8 — Pluggable Observation Backends & eBPF Evidence Architecture
 
 Date: 2026-09-26
-Status: **OPEN — M8.0–M8.4 CLOSED / M8.5 NEXT**
-Tracking: #34, #37, #40
+Status: **OPEN — M8.0–M8.5 CLOSED / M8.6 NEXT**
+Tracking: #34, #37, #40, #42
 M8.2 decision: `docs/milestones/M8_2_STACK_DECISION.md`
 M8.2 evidence: `docs/milestones/M8_2_EVIDENCE.md`
 M8.4 evidence: `docs/milestones/M8_4_LOSS_SEMANTICS.md`
+M8.5 evidence: `docs/milestones/M8_5_SEMANTIC_PARITY.md`
+M8.5 red-team: `docs/milestones/M8_5_RED_TEAM_REVIEW.md`
 
 ## Objective
 
@@ -25,6 +27,8 @@ M6.5 remains authoritative until M8 closes an explicit replacement or equivalenc
 - existing canonicalization, baseline, diff, policy, verdict, and report semantics remain authoritative;
 - an eBPF backend is not evidence-equivalent merely because it emits similar event names;
 - incomplete or uncertain observation cannot silently produce PASS.
+
+M8.5 proved only bounded semantic parity for explicitly controlled projections. It did not authorize full-surface equivalence or eBPF PASS authority.
 
 ## Team model
 
@@ -106,7 +110,7 @@ The backend boundary ends before canonical semantic interpretation. A collection
 
 ## Backend contract
 
-M8.1 must introduce an internal backend contract with these conceptual responsibilities.
+M8.1 introduced an internal backend contract with these conceptual responsibilities.
 
 ### `BackendDescriptor`
 
@@ -148,7 +152,7 @@ The backend must not invent evidence for an event class it cannot establish.
 
 ## Completeness states
 
-The backend-to-core handoff must expose an explicit completeness state. Minimum states:
+The backend-to-core handoff exposes an explicit completeness state. Minimum states:
 
 - `COMPLETE` — all selected event classes were collected under the backend's declared capability model with no known loss/truncation;
 - `INCOMPLETE_LOSS` — backend reports event loss, ring/perf buffer loss, dropped records, or equivalent collection loss;
@@ -156,7 +160,7 @@ The backend-to-core handoff must expose an explicit completeness state. Minimum 
 - `INCOMPLETE_CAPABILITY` — the host/backend cannot establish a required selected semantic;
 - `ERROR` — collection protocol, attachment, verifier, decoding, or lifecycle failure prevents reliable evidence.
 
-M8.4 operationalizes the non-complete/error family in the experimental collector with explicit machine-readable states including `incomplete_loss`, `incomplete_limit`, `incomplete_capability`, `incomplete_lifecycle`, `incomplete_decode`, and `incomplete_collector`. These remain experimental collection-health states until the public integration gate defines the stable external schema.
+M8.4 operationalized the non-complete/error family in the experimental collector with explicit machine-readable states including `incomplete_loss`, `incomplete_limit`, `incomplete_capability`, `incomplete_lifecycle`, `incomplete_decode`, and `incomplete_collector`. These remain experimental collection-health states until the public integration gate defines the stable external schema.
 
 Only `COMPLETE` may be eligible to proceed toward a normal PASS. Other states must remain fail-closed under existing comparability/verdict semantics.
 
@@ -179,19 +183,19 @@ Initial capability classes to model:
 11. causal executable chain;
 12. loss/truncation visibility.
 
-An eBPF backend may initially support a strict subset. Unsupported capability must be explicit and must participate in comparability gating.
+An eBPF backend may support a strict subset. Unsupported capability must be explicit and must participate in comparability gating.
 
 ## Cross-backend comparability
 
 A baseline learned under one backend must not automatically compare as evidence-equivalent with another backend.
 
-M8 will distinguish:
+M8 distinguishes:
 
 - **same-backend comparable** — same backend family and compatible capability/privacy contract;
-- **cross-backend parity-proven** — explicit parity evidence exists for the required semantic classes and versions;
+- **cross-backend parity-proven** — explicit parity evidence exists for the selected semantic class, proposition, versions, and controlled conditions;
 - **cross-backend non-comparable** — parity has not been established or required capabilities differ.
 
-Until an explicit M8 parity gate is accepted, ptrace-learned and eBPF-learned evidence are not interchangeable for PASS.
+M8.5 proved bounded class-local parity for recorded controlled process-lineage, exec-occurrence, and focused positive successful-open witness propositions. It explicitly did not prove full-surface parity. Ptrace-learned and eBPF-learned evidence therefore remain non-interchangeable for normal PASS.
 
 ## Privacy boundary
 
@@ -210,7 +214,7 @@ Any kernel-side temporary data required to resolve metadata must be minimized an
 
 ## eBPF transport and event loss
 
-The implementation spike must evaluate BPF ring buffer as the primary event transport because it supports shared multi-producer ordering properties useful for process lifecycle streams. However, transport choice is evidence-driven rather than assumed.
+The implementation path uses BPF ring buffer transport because it supports shared multi-producer ordering properties useful for process lifecycle streams.
 
 M8.4 proved how producer reservation failure, dropped records, user-space consumer lag, buffer saturation, attachment/setup failure, decode failure, post-start collector failure, and teardown races become visible and fail closed in the experimental collector. A post-start collector failure is additionally bounded by target process-group containment before returning failure.
 
@@ -218,41 +222,30 @@ A condition that can lose selected events without detection is a **KILLED** desi
 
 ## Portability strategy
 
-The feasibility spike must compare at least:
+M8.2 compared Aya and libbpf/libbpf-rs with executable feasibility evidence.
 
 ### Aya
 
-Potential strengths:
+Observed strengths:
 
 - Rust-native development model;
-- direct code sharing between user-space and eBPF Rust components;
-- CO-RE support;
-- no runtime dependency on BCC/libbpf.
+- direct code sharing potential between userspace and eBPF components;
+- CO-RE/BTF support;
+- no runtime dependency on libbpf.
 
-Risks to measure:
-
-- build/toolchain complexity;
-- verifier/debugging ergonomics;
-- kernel feature variance;
-- packaging and reproducible release implications;
-- CI privilege/capability availability.
+Measured costs included newer/nightly Rust-side build requirements and BPF toolchain complexity relative to the existing product MSRV.
 
 ### libbpf / libbpf-rs
 
-Potential strengths:
+Observed strengths:
 
 - close alignment with upstream Linux BPF/CO-RE ecosystem;
 - mature BTF/CO-RE model;
-- strong compatibility with kernel-native tooling.
+- compatibility with the product's Rust 1.82 line when dependency resolution is performed under the recorded fallback procedure.
 
-Risks to measure:
+Measured costs include the native clang/libelf/libbpf build surface and packaging complexity.
 
-- C/libbpf build and distribution surface;
-- Rust FFI/dependency complexity;
-- static/dynamic linking and release portability;
-- reproducibility and supply-chain implications.
-
-No library is selected by preference. M8.2 recorded a reproducible decision matrix and preserved losing-path evidence; libbpf-rs/libbpf is the selected experimental implementation path and Aya remains preserved as a viable alternative.
+M8.2 selected libbpf-rs/libbpf for the experimental implementation path. Aya remains preserved as a viable alternative rather than being declared technically invalid.
 
 ## Attachment strategy
 
@@ -272,7 +265,7 @@ An eBPF path may require capabilities, privileged execution, or host policy chan
 - expose why eBPF is unavailable;
 - retain ptrace as a safe fallback while M8 is experimental.
 
-`auto` backend selection is not authorized until its fallback and comparability semantics are proved.
+`auto` backend selection is not authorized until its fallback and comparability semantics are proved in a later integration gate.
 
 ## Release compatibility
 
@@ -328,7 +321,9 @@ Acceptance requires controlled proof that known event loss, truncation, buffer p
 
 ### M8.5 — Parity gate
 
-Acceptance requires a controlled ptrace-vs-eBPF workload matrix with semantic differences classified and machine-readable comparability rules.
+Acceptance requires a controlled ptrace-vs-eBPF workload matrix with semantic differences classified, machine-readable comparability rules, preserved counterexamples, an explicit bounded comparability decision, and independent red-team closure.
+
+**Status: CLOSED / ACCEPTED — bounded semantic parity only.** See `M8_5_SEMANTIC_PARITY.md` and `M8_5_RED_TEAM_REVIEW.md`.
 
 ### M8.6 — Performance / compatibility gate
 
@@ -340,14 +335,16 @@ Acceptance requires safe backend selection, expanded incomplete-state CLI/schema
 
 ## Current status
 
-- M8 objective: **OPEN — M8.5 NEXT**
+- M8 objective: **OPEN — M8.6 NEXT**
 - M8.0 architecture: **CLOSED / ACCEPTED**
 - M8.1 observer abstraction: **CLOSED / ACCEPTED**
 - M8.2 eBPF implementation selection: **CLOSED / ACCEPTED — libbpf-rs / libbpf selected**
 - M8.3 metadata-only eBPF observer: **CLOSED / ACCEPTED — experimental observation-only path**
 - M8.4 fail-closed loss/lifecycle gate: **CLOSED / PROVED**
-- M8.5 ptrace/eBPF parity gate: **OPEN / NEXT**
-- M8.6 performance / compatibility gate: **NOT STARTED**
+- M8.5 ptrace/eBPF parity gate: **CLOSED / ACCEPTED — bounded semantic parity only**
+- M8.6 performance / compatibility gate: **NEXT / NOT STARTED**
 - M8.7 public-alpha integration gate: **NOT STARTED**
+- eBPF full-surface comparability: **FALSE**
 - eBPF PASS authority: **NOT AUTHORIZED**
+- automatic cross-backend baseline interchangeability: **NOT AUTHORIZED**
 - ptrace correctness reference: **PROVED / RETAINED under existing M6.5 evidence**
