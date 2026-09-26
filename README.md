@@ -97,7 +97,9 @@ execsurface check \
   -- /bin/bash -lc 'cargo test --locked'
 ```
 
-For a five-minute controlled drift demonstration, see **[Five-Minute Start](docs/QUICKSTART_5_MIN.md)**.
+For independent evaluation with machine-readable PASS/REVIEW evidence, use the **[Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md)**. For the shortest controlled drift demonstration, see **[Five-Minute Start](docs/QUICKSTART_5_MIN.md)**.
+
+`SELF-EVALUATION PASS ≠ INDEPENDENT ADOPTION`
 
 ## Alternative installation paths
 
@@ -273,6 +275,7 @@ You can also read the public adopter call in [Issue #28](https://github.com/AETH
 ## Documentation
 
 - [Five-Minute Start](docs/QUICKSTART_5_MIN.md)
+- [Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Command examples](docs/EXAMPLES.md)
 - [GitHub Action](docs/GITHUB_ACTION.md)

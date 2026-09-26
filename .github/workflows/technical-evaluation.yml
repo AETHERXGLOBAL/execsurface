@@ -1,0 +1,102 @@
+name: Technical Evaluation Pack
+
+on:
+  pull_request:
+    paths:
+      - 'README.md'
+      - 'docs/TECHNICAL_EVALUATION.md'
+      - '.github/workflows/technical-evaluation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'README.md'
+      - 'docs/TECHNICAL_EVALUATION.md'
+      - '.github/workflows/technical-evaluation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-evaluator-path:
+    name: crates.io PASS and controlled-drift REVIEW
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Install exact public crates.io evaluation release
+        run: |
+          set -euo pipefail
+          cargo install execsurface --version "=0.1.0-alpha.2" --locked
+          execsurface --version
+          execsurface doctor
+
+      - name: Learn isolated baseline
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/execsurface-technical-evaluation"
+          mkdir -p "$work"
+          cd "$work"
+          execsurface learn -- /bin/bash -lc 'true'
+          test -f execsurface.lock.json
+
+      - name: Prove unchanged PASS with evidence
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/execsurface-technical-evaluation"
+          cd "$work"
+          output="$(execsurface check \
+            --json-output pass-report.json \
+            --markdown-output pass-report.md \
+            -- /bin/bash -lc 'true')"
+          printf '%s\n' "$output"
+          grep -F 'ExecSurface: PASS' <<<"$output"
+          test -s pass-report.json
+          test -s pass-report.md
+
+      - name: Prove controlled drift becomes REVIEW
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/execsurface-technical-evaluation"
+          cd "$work"
+          set +e
+          output="$(execsurface check \
+            --json-output drift-report.json \
+            --markdown-output drift-report.md \
+            -- /bin/bash -lc 'true; /bin/echo controlled-drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          test "$status" -eq 10
+          grep -F 'ExecSurface: REVIEW' <<<"$output"
+          test -s drift-report.json
+          test -s drift-report.md
+
+      - name: Capture evaluator environment
+        if: always()
+        run: |
+          set -u
+          work="$RUNNER_TEMP/execsurface-technical-evaluation"
+          mkdir -p "$work"
+          cd "$work"
+          if command -v execsurface >/dev/null 2>&1; then
+            execsurface --version > technical-evaluation-environment.txt
+          else
+            printf '%s\n' 'execsurface: NOT INSTALLED' > technical-evaluation-environment.txt
+          fi
+          uname -a >> technical-evaluation-environment.txt
+          sha256sum execsurface.lock.json pass-report.json drift-report.json >> technical-evaluation-environment.txt 2>/dev/null || true
+
+      - name: Upload evaluation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: execsurface-technical-evaluation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/execsurface-technical-evaluation/execsurface.lock.json
+            ${{ runner.temp }}/execsurface-technical-evaluation/pass-report.json
+            ${{ runner.temp }}/execsurface-technical-evaluation/pass-report.md
+            ${{ runner.temp }}/execsurface-technical-evaluation/drift-report.json
+            ${{ runner.temp }}/execsurface-technical-evaluation/drift-report.md
+            ${{ runner.temp }}/execsurface-technical-evaluation/technical-evaluation-environment.txt
+          if-no-files-found: warn
