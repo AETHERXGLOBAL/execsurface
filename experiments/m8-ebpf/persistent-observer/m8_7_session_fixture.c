@@ -5,30 +5,34 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 static int run_tree(void)
 {
+    pid_t root = getpid();
     pid_t child = fork();
     if (child < 0) {
         perror("fork");
         return 20;
     }
     if (child == 0) {
+        /*
+         * M8.7b1 adversary: the descendant is forbidden to exec/exit until
+         * it has observed that the original root process is gone and it has
+         * been reparented. A root-only lifecycle implementation therefore
+         * cannot pass this fixture cleanly.
+         */
+        for (int i = 0; i < 5000 && getppid() == root; ++i)
+            usleep(1000);
+
+        if (getppid() == root)
+            _exit(126);
+
         execl("/bin/true", "true", (char *)NULL);
         _exit(127);
     }
 
-    int status = 0;
-    if (waitpid(child, &status, 0) != child) {
-        perror("waitpid");
-        return 21;
-    }
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fprintf(stderr, "child outcome was not clean\n");
-        return 22;
-    }
+    /* Root exits immediately; the collector must continue draining child. */
     return 0;
 }
 
