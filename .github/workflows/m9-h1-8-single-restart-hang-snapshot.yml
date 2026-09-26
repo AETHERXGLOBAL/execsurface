@@ -1,0 +1,172 @@
+name: M9-H1.8 single-restart hang snapshot
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - .github/workflows/m9-h1-8-single-restart-hang-snapshot.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture-single-restart-hang:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      SOURCE: crates/execsurface-observe/src/linux_ptrace.rs
+      BASE_SHA256: 3dc656358a3675a0d78135bb83046bc45c33dca2718c8bd8b68fa090e18eac8b
+      CANDIDATE_SHA256: 157dc5feb0eaaf9ed61dd6a33048540938a3f3a8477c59b28cc283eaa1b5231a
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+
+      - name: Reconstruct exact H1.7 single-restart candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m9-h1-8-evidence
+          python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_apply_ptrace_exit_lifecycle.py
+          python3 scripts/m9_apply_ptrace_preregistration_ordering.py
+          python3 scripts/m9_apply_get_syscall_info_exit_group_fix.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          python3 scripts/m9_finalize_ptrace_lifecycle_core.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          base="$(sha256sum "$SOURCE" | awk '{print $1}')"
+          test "$base" = "$BASE_SHA256"
+          python3 scripts/m9_h1_7_apply_single_restart_after_syscall_info_esrch.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          candidate="$(sha256sum "$SOURCE" | awk '{print $1}')"
+          {
+            printf 'base_expected=%s\nbase_actual=%s\n' "$BASE_SHA256" "$base"
+            printf 'candidate_expected=%s\ncandidate_actual=%s\n' "$CANDIDATE_SHA256" "$candidate"
+          } | tee m9-h1-8-evidence/source-hash.txt
+          test "$candidate" = "$CANDIDATE_SHA256"
+
+      - name: Build observer and amplified fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface \
+            2>&1 | tee m9-h1-8-evidence/build.log
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/exit_group_sched_getaffinity_race.c \
+            -o /tmp/m9-h1-8-exit-group-race
+
+      - name: Capture first H1.7 candidate hang
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-8-evidence/summary.txt
+          hung=0
+          for attempt in $(seq 1 240); do
+            stdout="m9-h1-8-evidence/attempt-${attempt}.json"
+            stderr="m9-h1-8-evidence/attempt-${attempt}.stderr"
+            setsid target/debug/execsurface observe -- /tmp/m9-h1-8-exit-group-race \
+              >"$stdout" 2>"$stderr" &
+            observer_pid=$!
+
+            finished=0
+            for tick in $(seq 1 100); do
+              if ! kill -0 "$observer_pid" 2>/dev/null; then
+                finished=1
+                break
+              fi
+              sleep 0.1
+            done
+
+            if [ "$finished" -eq 0 ] && kill -0 "$observer_pid" 2>/dev/null; then
+              hung=1
+              snapshot="m9-h1-8-evidence/hang-${attempt}-snapshot.txt"
+              {
+                printf 'HANG_SNAPSHOT attempt=%s observer_pid=%s\n' "$attempt" "$observer_pid"
+                printf 'kernel=%s\n' "$(uname -srmo)"
+                echo '=== observer ==='
+                grep -E '^(Name|State|Tgid|Pid|PPid|TracerPid|Threads):' "/proc/$observer_pid/status" 2>/dev/null || true
+                printf 'wchan='; cat "/proc/$observer_pid/wchan" 2>/dev/null || true; echo
+                echo '=== traced tasks ==='
+                traced_count=0
+                tracing_stop_count=0
+                for status in /proc/[0-9]*/task/[0-9]*/status; do
+                  [ -r "$status" ] || continue
+                  tracer="$(awk '/^TracerPid:/{print $2}' "$status" 2>/dev/null || true)"
+                  [ "$tracer" = "$observer_pid" ] || continue
+                  traced_count=$((traced_count + 1))
+                  state="$(awk '/^State:/{print $2}' "$status" 2>/dev/null || true)"
+                  [ "$state" = "t" ] && tracing_stop_count=$((tracing_stop_count + 1))
+                  taskdir="${status%/status}"
+                  echo "--- $status ---"
+                  grep -E '^(Name|State|Tgid|Pid|PPid|TracerPid|Threads):' "$status" || true
+                  printf 'wchan='; cat "$taskdir/wchan" 2>/dev/null || true; echo
+                  printf 'syscall='; cat "$taskdir/syscall" 2>/dev/null || true; echo
+                done
+                printf 'traced_task_count=%s\n' "$traced_count"
+                printf 'tracing_stop_count=%s\n' "$tracing_stop_count"
+                echo '=== session table ==='
+                ps -eLo pid,ppid,sid,lwp,tgid,nlwp,stat,wchan:32,comm,args \
+                  | awk -v sid="$observer_pid" 'NR==1 || $3==sid' || true
+              } > "$snapshot"
+              printf 'attempt=%s HANG observer_pid=%s\n' "$attempt" "$observer_pid" \
+                | tee -a m9-h1-8-evidence/summary.txt
+              kill -TERM -- "-$observer_pid" 2>/dev/null || true
+              sleep 1
+              kill -KILL -- "-$observer_pid" 2>/dev/null || true
+              wait "$observer_pid" 2>/dev/null || true
+              cat "$snapshot"
+              break
+            fi
+
+            set +e
+            wait "$observer_pid"
+            rc=$?
+            set -e
+            printf 'attempt=%s rc=%s\n' "$attempt" "$rc" >> m9-h1-8-evidence/summary.txt
+            test "$rc" -eq 0
+            python3 - "$stdout" <<'PY'
+          import json, sys
+          from pathlib import Path
+          data = json.loads(Path(sys.argv[1]).read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+          done
+          test "$hung" -eq 1
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'head_sha=%s\n' "$GITHUB_SHA"
+            printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > m9-h1-8-evidence/environment.txt
+          find m9-h1-8-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-h1-8-evidence/SHA256SUMS
+
+      - name: Upload H1.8 snapshot evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-h1-8-single-restart-hang-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-h1-8-evidence
+          if-no-files-found: error
+          retention-days: 30
