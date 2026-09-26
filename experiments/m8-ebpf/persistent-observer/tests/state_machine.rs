@@ -103,6 +103,9 @@ mod state_machine_adversaries {
         let result = release_target(-1);
 
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "failed to release root-registration launch barrier");
+        assert_eq!(
+            result.unwrap_err(),
+            "failed to release root-registration launch barrier"
+        );
     }
 }
