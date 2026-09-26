@@ -1,0 +1,230 @@
+name: M9-H1.9 bounded exit-group race validation
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - tests/fixtures/m9/exit_group_sched_getaffinity_bounded_race.c
+      - scripts/m9_h1_9_instrument_bounded_recovery_count.py
+      - .github/workflows/m9-h1-9-bounded-race-validation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-bounded-race-and-clean-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      SOURCE: crates/execsurface-observe/src/linux_ptrace.rs
+      CLEAN_SHA256: 3dc656358a3675a0d78135bb83046bc45c33dca2718c8bd8b68fa090e18eac8b
+      JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified casey just
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: casey/just
+          ref: ${{ env.JUST_SHA }}
+          path: external/just
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+          test "$(git -C external/just rev-parse HEAD)" = "$JUST_SHA"
+          test -z "$(git -C external/just status --porcelain)"
+
+      - name: Reconstruct exact production-clean baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m9-h1-9-evidence
+          python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_apply_ptrace_exit_lifecycle.py
+          python3 scripts/m9_apply_ptrace_preregistration_ordering.py
+          python3 scripts/m9_apply_get_syscall_info_exit_group_fix.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          python3 scripts/m9_finalize_ptrace_lifecycle_core.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          actual="$(sha256sum "$SOURCE" | awk '{print $1}')"
+          printf 'clean_expected=%s\nclean_actual=%s\n' "$CLEAN_SHA256" "$actual" \
+            | tee m9-h1-9-evidence/source-hash.txt
+          test "$actual" = "$CLEAN_SHA256"
+          cp "$SOURCE" /tmp/linux_ptrace.h1_9.clean.rs
+
+      - name: Build and prove bounded fixture direct semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/exit_group_sched_getaffinity_bounded_race.c \
+            -o /tmp/m9-h1-9-bounded-race
+          for attempt in 1 2 3 4 5; do
+            timeout --signal=TERM --kill-after=2s 10s /tmp/m9-h1-9-bounded-race \
+              > "m9-h1-9-evidence/direct-${attempt}.stdout" \
+              2> "m9-h1-9-evidence/direct-${attempt}.stderr"
+          done
+          sha256sum \
+            tests/fixtures/m9/exit_group_sched_getaffinity_bounded_race.c \
+            /tmp/m9-h1-9-bounded-race \
+            > m9-h1-9-evidence/fixture-SHA256SUMS
+
+      - name: Prove bounded fixture still exercises exact GET_SYSCALL_INFO ESRCH path
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/m9_h1_9_instrument_bounded_recovery_count.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface \
+            2>&1 | tee m9-h1-9-evidence/diagnostic-build.log
+          : > m9-h1-9-evidence/diagnostic-summary.txt
+          total_recoveries=0
+          for attempt in $(seq 1 240); do
+            set +e
+            timeout --signal=TERM --kill-after=2s 10s \
+              target/debug/execsurface observe -- /tmp/m9-h1-9-bounded-race \
+              > "m9-h1-9-evidence/diagnostic-${attempt}.json" \
+              2> "m9-h1-9-evidence/diagnostic-${attempt}.stderr"
+            rc=$?
+            set -e
+            test "$rc" -eq 0
+            count="$(sed -n 's/^M9_H1_9_BOUNDED_GETINFO_ESRCH count=\([0-9][0-9]*\)$/\1/p' \
+              "m9-h1-9-evidence/diagnostic-${attempt}.stderr")"
+            test -n "$count"
+            total_recoveries=$((total_recoveries + count))
+            python3 - "$attempt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          a = sys.argv[1]
+          data = json.loads(Path(f"m9-h1-9-evidence/diagnostic-{a}.json").read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            printf 'attempt=%s complete=true exit=0 recoveries=%s\n' "$attempt" "$count" \
+              >> m9-h1-9-evidence/diagnostic-summary.txt
+          done
+          printf 'complete_runs=240\ntotal_bounded_recoveries=%s\n' "$total_recoveries" \
+            >> m9-h1-9-evidence/diagnostic-summary.txt
+          cat m9-h1-9-evidence/diagnostic-summary.txt
+          test "$total_recoveries" -gt 0
+
+      - name: Restore exact production-clean source and run unchanged regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /tmp/linux_ptrace.h1_9.clean.rs "$SOURCE"
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          test "$(sha256sum "$SOURCE" | awk '{print $1}')" = "$CLEAN_SHA256"
+          cargo "+$RUST_TOOLCHAIN" test -p execsurface-observe \
+            2>&1 | tee m9-h1-9-evidence/observer-tests.log
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface \
+            2>&1 | tee m9-h1-9-evidence/clean-build.log
+
+      - name: Stress exact production-clean source on bounded race 240 times
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-9-evidence/clean-summary.txt
+          for attempt in $(seq 1 240); do
+            set +e
+            timeout --signal=TERM --kill-after=2s 10s \
+              target/debug/execsurface observe -- /tmp/m9-h1-9-bounded-race \
+              > "m9-h1-9-evidence/clean-${attempt}.json" \
+              2> "m9-h1-9-evidence/clean-${attempt}.stderr"
+            rc=$?
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              printf 'FAIL attempt=%s rc=%s\n' "$attempt" "$rc" \
+                | tee -a m9-h1-9-evidence/clean-summary.txt
+              cat "m9-h1-9-evidence/clean-${attempt}.stderr" || true
+              exit 1
+            fi
+            python3 - "$attempt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          a = sys.argv[1]
+          data = json.loads(Path(f"m9-h1-9-evidence/clean-{a}.json").read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            printf 'attempt=%s complete=true exit=0\n' "$attempt" \
+              >> m9-h1-9-evidence/clean-summary.txt
+          done
+          test "$(wc -l < m9-h1-9-evidence/clean-summary.txt)" -eq 240
+
+      - name: Prime pinned external workload directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd external/just && cargo "+$RUST_TOOLCHAIN" test --all >/dev/null 2>&1)
+
+      - name: Re-prove pinned casey just five consecutive times
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-9-evidence/just-summary.txt
+          for attempt in 1 2 3 4 5; do
+            set +e
+            timeout --signal=TERM --kill-after=5s 120s \
+              target/debug/execsurface observe -- /bin/bash -lc \
+              "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
+              > "m9-h1-9-evidence/just-${attempt}.json" \
+              2> "m9-h1-9-evidence/just-${attempt}.stderr"
+            rc=$?
+            set -e
+            test "$rc" -eq 0
+            python3 - "$attempt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          a = sys.argv[1]
+          data = json.loads(Path(f"m9-h1-9-evidence/just-{a}.json").read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            printf 'attempt=%s complete=true exit=0\n' "$attempt" \
+              >> m9-h1-9-evidence/just-summary.txt
+          done
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'head_sha=%s\n' "$GITHUB_SHA"
+            printf 'just_sha=%s\n' "$JUST_SHA"
+            printf 'clean_source_sha256=%s\n' "$(sha256sum "$SOURCE" 2>/dev/null | awk '{print $1}')"
+            printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > m9-h1-9-evidence/environment.txt
+          find m9-h1-9-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-h1-9-evidence/SHA256SUMS
+
+      - name: Upload H1.9 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-h1-9-bounded-race-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-h1-9-evidence
+          if-no-files-found: error
+          retention-days: 30
