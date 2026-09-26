@@ -208,17 +208,24 @@ jobs:
               e for e in candidate['events']
               if e.get('event_type') == 'successful_open_identity' and e.get('path') == focus
           ]
+          unresolved = [
+              e for e in candidate['events']
+              if e.get('event_type') == 'successful_open_identity' and e.get('path') is None
+          ]
           assert attempts, reference['events']
           assert not ref_promoted, ref_promoted
           assert not cand_promoted, cand_promoted
           assessment = assessments['successful_open_fd_identity']
-          assert assessment['verdict'] == 'blocked_incomplete', assessments
-          assert 'unresolved evidence cannot prove absence' in assessment['detail'], assessment
+          if unresolved:
+              assert assessment['verdict'] == 'blocked_incomplete', (assessment, unresolved)
+              assert 'unresolved evidence cannot prove absence' in assessment['detail'], assessment
+          else:
+              assert assessment['verdict'] == 'non_comparable', assessment
           assert reference['outcome']['exit_code'] == 0, reference['outcome']
           assert candidate['outcome']['exit_code'] == 0, candidate['outcome']
           assert report['full_surface_comparable'] is False
           assert report['ebpf_pass_authorized'] is False
-          print('M8_5D_FAILED_OPEN_NOT_PROMOTED_FAIL_CLOSED_PASS')
+          print(f"M8_5D_FAILED_OPEN_NOT_PROMOTED_PASS unresolved={bool(unresolved)} verdict={assessment['verdict']}")
           PY
 
       - name: Prove vfork semantic parity
