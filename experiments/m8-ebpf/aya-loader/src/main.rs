@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use aya::{
     maps::{ring_buf::RingBuf, MapData, PerCpuArray},
-    programs::{BtfTracePoint, TracePoint},
-    Btf, Ebpf,
+    programs::TracePoint,
+    Ebpf,
 };
 
 const EVENT_EXEC: u32 = 1;
@@ -68,20 +68,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let _exec_link = exec_program.attach("syscalls", "sys_enter_execve")?;
 
-    // BTF is used materially here rather than merely detected on the host: sched_process_fork
-    // provides parent/child process identity without persisting names, argv, or content.
-    let btf = Btf::from_sys_fs()?;
-    let fork_program: &mut BtfTracePoint = ebpf
-        .program_mut("execsurface_m8_fork")
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "missing execsurface_m8_fork program",
-            )
-        })?
-        .try_into()?;
-    fork_program.load("sched_process_fork", &btf)?;
-    let _fork_link = fork_program.attach()?;
+    // Use syscall-exit lineage rather than task_struct access. This keeps the feasibility
+    // program Apache-compatible and avoids depending on GPL-restricted kernel-struct reads.
+    attach_spawn_tracepoint(&mut ebpf, "execsurface_m8_clone_exit", "sys_exit_clone")?;
+    attach_spawn_tracepoint(&mut ebpf, "execsurface_m8_clone3_exit", "sys_exit_clone3")?;
+    attach_spawn_tracepoint(&mut ebpf, "execsurface_m8_fork_exit", "sys_exit_fork")?;
+    attach_spawn_tracepoint(&mut ebpf, "execsurface_m8_vfork_exit", "sys_exit_vfork")?;
 
     // Privacy sentinel: secrets are deliberately present in argv/environment of a controlled
     // child, while the persisted event schema contains numeric process metadata only.
@@ -99,9 +91,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("attached observer produced no readable exec metadata event".into());
     }
 
-    // Controlled lineage proof: the launched shell must fork at least one child. A parent->child
-    // edge rooted at the PID returned by spawn is enough to show that userspace can recursively
-    // scope descendants without collecting process names or arguments.
+    // Controlled lineage proof: the launched shell must create at least one child. A
+    // parent->child edge rooted at the PID returned by spawn is enough to show that userspace
+    // can recursively scope descendants without collecting process names or arguments.
     let mut root = Command::new("/bin/sh")
         .arg("-c")
         .arg("/bin/true & wait")
@@ -120,7 +112,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .count();
     if rooted_edges == 0 {
         return Err(format!(
-            "BTF fork evidence did not contain an edge rooted at launched pid {root_pid}"
+            "syscall-exit lineage evidence did not contain an edge rooted at launched pid {root_pid}"
         )
         .into());
     }
@@ -153,7 +145,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         privacy_stats.total + lineage_stats.total
     );
     println!(
-        "M8_AYA_BTF_LINEAGE_PASS root_pid={root_pid} rooted_edges={rooted_edges} fork_events={}",
+        "M8_AYA_LINEAGE_PASS root_pid={root_pid} rooted_edges={rooted_edges} fork_events={}",
         lineage_stats.fork
     );
     println!(
@@ -164,6 +156,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!(
         "M8_AYA_PRIVACY_SCHEMA_PASS event_bytes=16 fields=kind,pid,related_pid,reserved"
     );
+    Ok(())
+}
+
+fn attach_spawn_tracepoint(
+    ebpf: &mut Ebpf,
+    program_name: &str,
+    tracepoint_name: &str,
+) -> Result<(), Box<dyn Error>> {
+    let program: &mut TracePoint = ebpf
+        .program_mut(program_name)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("missing {program_name} program"),
+            )
+        })?
+        .try_into()?;
+    program.load()?;
+    let _ = program.attach("syscalls", tracepoint_name)?;
     Ok(())
 }
 
