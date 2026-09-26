@@ -1,0 +1,223 @@
+name: M8.3c2 Experimental CLI Bridge
+
+on:
+  push:
+    branches:
+      - "milestone/m8-3c2-cli"
+    paths:
+      - "crates/execsurface-cli/**"
+      - "crates/execsurface-observe/**"
+      - "experiments/m8-ebpf/libbpf-observer/**"
+      - "docs/milestones/M8_3C2_CLI_BRIDGE.md"
+      - ".github/workflows/m8-3c2-cli-bridge.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bridge:
+    name: explicit CLI bridge / no-fallback evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build normal ExecSurface package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo build --locked --release -p execsurface
+          BIN=target/release/execsurface
+          test -x "$BIN"
+          file "$BIN"
+          sha256sum "$BIN"
+
+      - name: Prove default and explicit ptrace routes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=target/release/execsurface
+          "$BIN" observe -- /bin/true > "$RUNNER_TEMP/default-ptrace.json"
+          "$BIN" observe --backend ptrace -- /bin/true > "$RUNNER_TEMP/explicit-ptrace.json"
+          jq -e '.backend.name == "linux-ptrace-metadata-v2"' "$RUNNER_TEMP/default-ptrace.json"
+          jq -e '.backend.name == "linux-ptrace-metadata-v2"' "$RUNNER_TEMP/explicit-ptrace.json"
+          echo 'M8_3C2_DEFAULT_PTRACE_UNCHANGED_PASS'
+          echo 'M8_3C2_EXPLICIT_PTRACE_PASS'
+
+      - name: Prove parser rejects collector leakage and learn backend expansion
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=target/release/execsurface
+          set +e
+          "$BIN" observe --backend ptrace --collector /tmp/forbidden -- /bin/true >"$RUNNER_TEMP/leak.out" 2>"$RUNNER_TEMP/leak.err"
+          leak_rc=$?
+          "$BIN" learn --backend experimental-libbpf --collector /tmp/none -- /bin/true >"$RUNNER_TEMP/learn.out" 2>"$RUNNER_TEMP/learn.err"
+          learn_rc=$?
+          set -e
+          test "$leak_rc" -ne 0
+          grep -q -- '--collector is only valid' "$RUNNER_TEMP/leak.err"
+          test "$learn_rc" -ne 0
+          grep -q 'unknown learn option' "$RUNNER_TEMP/learn.err"
+          test ! -e execsurface.lock.json
+          echo 'M8_3C2_SCOPE_ISOLATION_PASS'
+
+      - name: Create deterministic fake collector for protocol rejection tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat > "$RUNNER_TEMP/fake-collector.py" <<'PY'
+          #!/usr/bin/env python3
+          import json, os, sys
+
+          args = sys.argv[1:]
+          report = args[args.index('--report') + 1]
+          mode = os.environ.get('AX_FAKE_MODE', 'valid')
+          payload = {
+              'protocol_version': 1,
+              'backend': {
+                  'id': 'linux-libbpf-metadata-experimental-v1',
+                  'implementation_version': 'fake-test',
+                  'platform': 'linux',
+                  'architecture': 'x86_64',
+                  'kernel_release': 'fake',
+                  'kernel_btf_readable': True,
+                  'privacy_profile': 'metadata-only-v1',
+                  'capabilities': [
+                      'process_spawn_lineage',
+                      'process_exec_occurrence',
+                      'successful_open_fd_identity',
+                      'loss_truncation_visibility',
+                  ],
+                  'unsupported_capabilities': [
+                      'unconditional_process_exec_path_identity',
+                      'process_exit',
+                      'path_access_intent',
+                      'unconditional_open_path_identity',
+                      'fd_read_write_effect',
+                      'fd_dup_close_lifecycle',
+                      'fork_fd_inheritance',
+                      'close_on_exec',
+                      'rename_delete_effects',
+                      'network_connect_destination',
+                      'trace_time_relative_path',
+                      'causal_executable_chain',
+                  ],
+              },
+              'completeness': 'incomplete_capability',
+              'observation_complete': False,
+              'root_pid': 42,
+              'outcome': {'exit_code': 0, 'signal': None},
+              'dropped_events': 0,
+              'events': [],
+              'warnings': [],
+          }
+          if mode == 'complete':
+              payload['completeness'] = 'complete'
+          elif mode == 'observation_complete':
+              payload['observation_complete'] = True
+          elif mode == 'wrong_backend':
+              payload['backend']['id'] = 'fake-backend'
+          elif mode == 'capability_drift':
+              payload['backend']['capabilities'] = ['process_exec_occurrence']
+          elif mode == 'drops_without_loss':
+              payload['dropped_events'] = 3
+          with open(report, 'w', encoding='utf-8') as f:
+              json.dump(payload, f)
+          PY
+          chmod 0755 "$RUNNER_TEMP/fake-collector.py"
+
+      - name: Prove valid incomplete protocol is accepted and authority drift is rejected
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=target/release/execsurface
+          FAKE="$RUNNER_TEMP/fake-collector.py"
+
+          AX_FAKE_MODE=valid "$BIN" observe --backend experimental-libbpf --collector "$FAKE" -- /bin/true > "$RUNNER_TEMP/valid.json"
+          jq -e '.backend.id == "linux-libbpf-metadata-experimental-v1"' "$RUNNER_TEMP/valid.json"
+          jq -e '.completeness == "incomplete_capability" and .observation_complete == false' "$RUNNER_TEMP/valid.json"
+
+          for mode in complete observation_complete wrong_backend capability_drift drops_without_loss; do
+            set +e
+            AX_FAKE_MODE="$mode" "$BIN" observe --backend experimental-libbpf --collector "$FAKE" -- /bin/true \
+              >"$RUNNER_TEMP/$mode.out" 2>"$RUNNER_TEMP/$mode.err"
+            rc=$?
+            set -e
+            test "$rc" -ne 0
+            grep -q '^ExecSurface: ERROR$' "$RUNNER_TEMP/$mode.err"
+          done
+          echo 'M8_3C2_PROTOCOL_FAIL_CLOSED_PASS'
+
+      - name: Prove missing collector never falls back to ptrace
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=target/release/execsurface
+          set +e
+          "$BIN" observe --backend experimental-libbpf --collector "$RUNNER_TEMP/does-not-exist" -- /bin/true \
+            >"$RUNNER_TEMP/missing.out" 2>"$RUNNER_TEMP/missing.err"
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -q 'no ptrace fallback attempted' "$RUNNER_TEMP/missing.err"
+          test ! -s "$RUNNER_TEMP/missing.out"
+          echo 'M8_3C2_MISSING_COLLECTOR_NO_FALLBACK_PASS'
+
+      - name: Install declared native dependencies for real companion only
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+
+      - name: Resolve and build isolated real libbpf companion
+        shell: bash
+        run: |
+          set -euxo pipefail
+          MANIFEST=experiments/m8-ebpf/libbpf-observer/Cargo.toml
+          rm -f experiments/m8-ebpf/libbpf-observer/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile --manifest-path "$MANIFEST"
+          cargo +1.82.0 fmt --manifest-path "$MANIFEST" -- --check
+          cargo +1.82.0 build --manifest-path "$MANIFEST" --release --locked --bin execsurface-m8-libbpf-observer
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          test -x "$OBS"
+          sha256sum "$OBS"
+
+      - name: Prove unprivileged real companion failure does not launch target or fall back
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=target/release/execsurface
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          SENTINEL="$RUNNER_TEMP/target-must-not-run"
+          rm -f "$SENTINEL"
+          set +e
+          "$BIN" observe --backend experimental-libbpf --collector "$OBS" -- /bin/sh -c "touch '$SENTINEL'" \
+            >"$RUNNER_TEMP/unpriv.out" 2>"$RUNNER_TEMP/unpriv.err"
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          test ! -e "$SENTINEL"
+          grep -q 'no ptrace fallback attempted' "$RUNNER_TEMP/unpriv.err"
+          echo 'M8_3C2_UNPRIVILEGED_NO_TARGET_NO_FALLBACK_PASS'
+
+      - name: Prove real privileged companion through explicit CLI bridge
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN="$GITHUB_WORKSPACE/target/release/execsurface"
+          OBS="$GITHUB_WORKSPACE/experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer"
+          sudo "$BIN" observe --backend experimental-libbpf --collector "$OBS" -- /bin/sleep 0.10 \
+            > "$RUNNER_TEMP/real-bridge.json"
+          jq -e '.protocol_version == 1' "$RUNNER_TEMP/real-bridge.json"
+          jq -e '.backend.id == "linux-libbpf-metadata-experimental-v1"' "$RUNNER_TEMP/real-bridge.json"
+          jq -e '.observation_complete == false' "$RUNNER_TEMP/real-bridge.json"
+          jq -e '.completeness == "incomplete_capability"' "$RUNNER_TEMP/real-bridge.json"
+          jq -e '.dropped_events == 0' "$RUNNER_TEMP/real-bridge.json"
+          jq -e '.outcome.exit_code == 0' "$RUNNER_TEMP/real-bridge.json"
+          echo 'M8_3C2_REAL_PRIVILEGED_BRIDGE_PASS'
