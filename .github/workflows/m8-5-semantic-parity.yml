@@ -125,6 +125,100 @@ jobs:
           print('M8_5A_CLEAN_CLASS_LOCAL_PARITY_PASS')
           PY
 
+      - name: Prove focused successful-open identity parity for a used fd
+        shell: bash
+        run: |
+          set -euxo pipefail
+          HARNESS=experiments/m8-ebpf/parity-harness/target/release/execsurface-m8-parity-harness
+          FIX=experiments/m8-ebpf/parity-harness/target/release/m8_5_parity_fixture
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CLI=target/release/execsurface
+          FOCUS=/dev/zero
+          REF="$RUNNER_TEMP/m8-5-open-reference.json"
+          CAND="$RUNNER_TEMP/m8-5-open-candidate.json"
+          OUT="$RUNNER_TEMP/m8-5-open-parity.json"
+
+          "$CLI" observe -- "$FIX" >"$REF"
+          sudo "$CLI" observe --backend experimental-libbpf --collector "$OBS" -- "$FIX" >"$CAND"
+          "$HARNESS" "$REF" "$CAND" "$OUT" --open-path "$FOCUS"
+          cat "$OUT"
+
+          python3 - "$OUT" "$REF" "$CAND" "$FOCUS" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          reference = json.load(open(sys.argv[2], encoding='utf-8'))
+          candidate = json.load(open(sys.argv[3], encoding='utf-8'))
+          focus = sys.argv[4]
+          assessments = {a['semantic_class']: a for a in report['assessments']}
+          assert report['reference_complete'] is True, report
+          assert report['candidate_completeness'] == 'incomplete_capability', report
+          assert assessments['successful_open_fd_identity']['verdict'] == 'equivalent', assessments
+          assert focus in assessments['successful_open_fd_identity']['detail']
+          ref_witness = [
+              e for e in reference['events']
+              if e.get('event_type') == 'file_descriptor_access' and e.get('path') == focus
+          ]
+          cand_witness = [
+              e for e in candidate['events']
+              if e.get('event_type') == 'successful_open_identity' and e.get('path') == focus
+          ]
+          assert ref_witness, reference['events']
+          assert cand_witness, candidate['events']
+          assert report['full_surface_comparable'] is False
+          assert report['ebpf_pass_authorized'] is False
+          print('M8_5D_FOCUSED_SUCCESSFUL_OPEN_PARITY_PASS')
+          PY
+
+      - name: Prove failed open is not promoted to successful-open evidence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          HARNESS=experiments/m8-ebpf/parity-harness/target/release/execsurface-m8-parity-harness
+          FIX=experiments/m8-ebpf/parity-harness/target/release/m8_5_parity_fixture
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CLI=target/release/execsurface
+          FOCUS=/__execsurface_m8_5_missing__/open-probe
+          REF="$RUNNER_TEMP/m8-5-failed-open-reference.json"
+          CAND="$RUNNER_TEMP/m8-5-failed-open-candidate.json"
+          OUT="$RUNNER_TEMP/m8-5-failed-open-parity.json"
+
+          "$CLI" observe -- "$FIX" failed-open >"$REF"
+          sudo "$CLI" observe --backend experimental-libbpf --collector "$OBS" -- "$FIX" failed-open >"$CAND"
+          "$HARNESS" "$REF" "$CAND" "$OUT" --open-path "$FOCUS"
+          cat "$OUT"
+
+          python3 - "$OUT" "$REF" "$CAND" "$FOCUS" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          reference = json.load(open(sys.argv[2], encoding='utf-8'))
+          candidate = json.load(open(sys.argv[3], encoding='utf-8'))
+          focus = sys.argv[4]
+          assessments = {a['semantic_class']: a for a in report['assessments']}
+          attempts = [
+              e for e in reference['events']
+              if e.get('event_type') == 'file_path_access'
+              and e.get('operation') == 'open'
+              and e.get('path') == focus
+          ]
+          ref_promoted = [
+              e for e in reference['events']
+              if e.get('event_type') == 'file_descriptor_access' and e.get('path') == focus
+          ]
+          cand_promoted = [
+              e for e in candidate['events']
+              if e.get('event_type') == 'successful_open_identity' and e.get('path') == focus
+          ]
+          assert attempts, reference['events']
+          assert not ref_promoted, ref_promoted
+          assert not cand_promoted, cand_promoted
+          assert assessments['successful_open_fd_identity']['verdict'] == 'non_comparable', assessments
+          assert reference['outcome']['exit_code'] == 0, reference['outcome']
+          assert candidate['outcome']['exit_code'] == 0, candidate['outcome']
+          assert report['full_surface_comparable'] is False
+          assert report['ebpf_pass_authorized'] is False
+          print('M8_5D_FAILED_OPEN_NOT_PROMOTED_PASS')
+          PY
+
       - name: Prove vfork semantic parity
         shell: bash
         run: |
