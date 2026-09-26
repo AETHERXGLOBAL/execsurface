@@ -1,22 +1,25 @@
 [package]
-name = "execsurface-cli"
+name = "execsurface"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "CLI for AETHER X ExecSurface"
+description = "Runtime execution-surface drift detection for Linux CI and developer workflows"
+readme.workspace = true
+keywords = ["runtime-security", "supply-chain", "devsecops", "observability", "ci"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "execsurface"
 path = "src/main.rs"
 
 [dependencies]
-execsurface-baseline = { path = "../execsurface-baseline" }
-execsurface-diff = { path = "../execsurface-diff" }
-execsurface-model = { path = "../execsurface-model" }
-execsurface-normalize = { path = "../execsurface-normalize" }
-execsurface-observe = { path = "../execsurface-observe" }
-execsurface-policy = { path = "../execsurface-policy" }
-execsurface-report = { path = "../execsurface-report" }
+execsurface-baseline = { path = "../execsurface-baseline", version = "=0.1.0-alpha.2" }
+execsurface-diff = { path = "../execsurface-diff", version = "=0.1.0-alpha.2" }
+execsurface-model = { path = "../execsurface-model", version = "=0.1.0-alpha.2" }
+execsurface-normalize = { path = "../execsurface-normalize", version = "=0.1.0-alpha.2" }
+execsurface-observe = { path = "../execsurface-observe", version = "=0.1.0-alpha.2" }
+execsurface-policy = { path = "../execsurface-policy", version = "=0.1.0-alpha.2" }
+execsurface-report = { path = "../execsurface-report", version = "=0.1.0-alpha.2" }
 serde_json.workspace = true
