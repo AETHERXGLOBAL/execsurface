@@ -80,13 +80,15 @@ jobs:
 
           HARNESS=experiments/m8-ebpf/parity-harness/target/release/execsurface-m8-parity-harness
           FIX=experiments/m8-ebpf/parity-harness/target/release/m8_5_parity_fixture
+          NESTED=experiments/m8-ebpf/parity-harness/target/release/m8_5_nested_thread_fixture
           OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
           CLI=target/release/execsurface
           test -x "$HARNESS"
           test -x "$FIX"
+          test -x "$NESTED"
           test -x "$OBS"
           test -x "$CLI"
-          sha256sum "$HARNESS" "$FIX" "$OBS" "$CLI"
+          sha256sum "$HARNESS" "$FIX" "$NESTED" "$OBS" "$CLI"
 
       - name: Prove clean class-local parity without granting full equivalence
         shell: bash
@@ -120,6 +122,33 @@ jobs:
           assert verdicts['successful_open_fd_identity'] == 'representation_difference', verdicts
           assert verdicts['unconditional_process_exec_path_identity'] == 'non_comparable', verdicts
           print('M8_5A_CLEAN_CLASS_LOCAL_PARITY_PASS')
+          PY
+
+      - name: Prove nested-thread parent lineage parity
+        shell: bash
+        run: |
+          set -euxo pipefail
+          HARNESS=experiments/m8-ebpf/parity-harness/target/release/execsurface-m8-parity-harness
+          NESTED=experiments/m8-ebpf/parity-harness/target/release/m8_5_nested_thread_fixture
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CLI=target/release/execsurface
+          REF="$RUNNER_TEMP/m8-5-nested-reference.json"
+          CAND="$RUNNER_TEMP/m8-5-nested-candidate.json"
+          OUT="$RUNNER_TEMP/m8-5-nested-parity.json"
+
+          "$CLI" observe -- "$NESTED" >"$REF"
+          sudo "$CLI" observe --backend experimental-libbpf --collector "$OBS" -- "$NESTED" >"$CAND"
+          "$HARNESS" "$REF" "$CAND" "$OUT"
+          cat "$OUT"
+
+          python3 - "$OUT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          verdicts = {a['semantic_class']: a['verdict'] for a in report['assessments']}
+          assert verdicts['process_spawn_lineage'] == 'equivalent', verdicts
+          assert report['full_surface_comparable'] is False
+          assert report['ebpf_pass_authorized'] is False
+          print('M8_5B_NESTED_THREAD_LINEAGE_PARITY_PASS')
           PY
 
       - name: Prove same-count different semantics is contradicted
