@@ -1,0 +1,158 @@
+name: M9-H1.4B exit-group syscall-info race
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - tests/fixtures/m9/exit_group_sched_getaffinity_race.c
+      - .github/workflows/m9-h1-4b-exit-group-syscall-race.yml
+      - scripts/m9_instrument_syscall_info_lifecycle.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  localize-exit-group-race:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+          rustc "+$RUST_TOOLCHAIN" --version --verbose
+
+      - name: Build fixture and prove direct semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m9-h1-4b-evidence
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/exit_group_sched_getaffinity_race.c \
+            -o /tmp/m9-h1-4b-exit-group-race
+          sha256sum tests/fixtures/m9/exit_group_sched_getaffinity_race.c \
+            /tmp/m9-h1-4b-exit-group-race \
+            > m9-h1-4b-evidence/fixture-SHA256SUMS
+          for attempt in 1 2 3 4 5; do
+            /tmp/m9-h1-4b-exit-group-race \
+              > "m9-h1-4b-evidence/direct-${attempt}.stdout" \
+              2> "m9-h1-4b-evidence/direct-${attempt}.stderr"
+          done
+
+      - name: Apply current bounded candidate plus lifecycle classifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_apply_ptrace_exit_lifecycle.py
+          python3 scripts/m9_apply_ptrace_preregistration_ordering.py
+          python3 scripts/m9_instrument_syscall_info_lifecycle.py
+          cargo "+$RUST_TOOLCHAIN" fmt --all
+          git diff --check
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs \
+            > m9-h1-4b-evidence/diagnostic.diff
+          test -s m9-h1-4b-evidence/diagnostic.diff
+
+      - name: Run observer regression suite unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test -p execsurface-observe \
+            2>&1 | tee m9-h1-4b-evidence/observer-tests.log
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface \
+            2>&1 | tee m9-h1-4b-evidence/build.log
+
+      - name: Target captured exit-group refusal window
+        shell: bash
+        run: |
+          set -uo pipefail
+          : > m9-h1-4b-evidence/summary.txt
+          localized=0
+          complete=0
+          unexpected=0
+
+          for attempt in $(seq 1 80); do
+            set +e
+            target/debug/execsurface observe -- /tmp/m9-h1-4b-exit-group-race \
+              > "m9-h1-4b-evidence/observe-${attempt}.json" \
+              2> "m9-h1-4b-evidence/observe-${attempt}.stderr"
+            rc=$?
+            set -e
+
+            reconciled=$(grep -c 'M9_PREREGISTRATION_STOP_RECONCILED' \
+              "m9-h1-4b-evidence/observe-${attempt}.stderr" || true)
+            printf 'attempt=%s rc=%s prereg_reconciled=%s\n' \
+              "$attempt" "$rc" "$reconciled" >> m9-h1-4b-evidence/summary.txt
+
+            if grep -q 'M9_GET_SYSCALL_INFO_ESRCH_STATE' \
+              "m9-h1-4b-evidence/observe-${attempt}.stderr"; then
+              localized=1
+              grep -E 'M9_EXIT_GROUP_ARMED|M9_GET_SYSCALL_INFO_ESRCH_STATE|M9_PREREGISTRATION|ExecSurface: ERROR|observer protocol error' \
+                "m9-h1-4b-evidence/observe-${attempt}.stderr" \
+                | tail -n 120 >> m9-h1-4b-evidence/summary.txt || true
+              break
+            fi
+
+            if [ "$rc" -ne 0 ]; then
+              unexpected=1
+              grep -E 'M9_|PTRACE_|ESRCH|ECHILD|ExecSurface: ERROR|observer protocol error|observer OS error' \
+                "m9-h1-4b-evidence/observe-${attempt}.stderr" \
+                | tail -n 120 >> m9-h1-4b-evidence/summary.txt || true
+              break
+            fi
+
+            python3 - "$attempt" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          attempt = sys.argv[1]
+          path = Path(f"m9-h1-4b-evidence/observe-{attempt}.json")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          assert data.get("complete") is True, (path, data.get("warnings"))
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, (path, outcome)
+          assert outcome.get("signal") is None, (path, outcome)
+          PY
+            complete=$((complete + 1))
+          done
+
+          printf 'localized=%s unexpected_failure=%s complete_runs=%s\n' \
+            "$localized" "$unexpected" "$complete" >> m9-h1-4b-evidence/summary.txt
+          cat m9-h1-4b-evidence/summary.txt
+          test "$unexpected" -eq 0
+          test "$localized" -eq 1
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'head_sha=%s\n' "$GITHUB_SHA"
+            printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > m9-h1-4b-evidence/environment.txt
+          find m9-h1-4b-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-h1-4b-evidence/SHA256SUMS
+
+      - name: Upload H1.4B evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-h1-4b-exit-group-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-h1-4b-evidence
+          if-no-files-found: error
+          retention-days: 30
