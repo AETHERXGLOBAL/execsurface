@@ -10,6 +10,7 @@ old_state_tail = '''    fd_table_id: u64,
 '''
 new_state_tail = '''    fd_table_id: u64,
     tgid: libc::pid_t,
+    retired_by_exec: bool,
     exit_event_status: Option<libc::c_int>,
 }
 '''
@@ -20,6 +21,7 @@ old_ctor_tail = '''            fd_table_id,
 '''
 new_ctor_tail = '''            fd_table_id,
             tgid,
+            retired_by_exec: false,
             exit_event_status: None,
         }
 '''
@@ -55,22 +57,33 @@ new_echild = '''            if error.raw_os_error() == Some(libc::ECHILD) && tra
                 let mut unresolved = tracees
                     .iter()
                     .filter_map(|(tid, state)| {
-                        state.exit_event_status.is_none().then_some((*tid, state.tgid))
+                        state.exit_event_status.is_none().then_some((
+                            *tid,
+                            state.tgid,
+                            state.retired_by_exec,
+                        ))
                     })
                     .collect::<Vec<_>>();
-                unresolved.sort_unstable();
+                unresolved.sort_unstable_by_key(|entry| entry.0);
                 if !unresolved.is_empty() {
                     return Err(ObserveError::Protocol(format!(
-                        "M9_STALE_TRACEES_WITHOUT_EXIT_EVIDENCE_AT_ECHILD tracked_tid_tgid={unresolved:?}"
+                        "M9_STALE_TRACEES_WITHOUT_EXIT_EVIDENCE_AT_ECHILD tracked={unresolved:?}"
                     )));
                 }
 
                 let mut reconciled = tracees
                     .iter()
-                    .map(|(tid, state)| (*tid, state.tgid, state.exit_event_status.unwrap()))
+                    .map(|(tid, state)| {
+                        (
+                            *tid,
+                            state.tgid,
+                            state.retired_by_exec,
+                            state.exit_event_status.unwrap(),
+                        )
+                    })
                     .collect::<Vec<_>>();
                 reconciled.sort_unstable_by_key(|entry| entry.0);
-                for (stale_tid, _, exit_status) in &reconciled {
+                for (stale_tid, _, _, exit_status) in &reconciled {
                     if !apply_terminal_outcome(root, *stale_tid, *exit_status, &mut root_outcome) {
                         return Err(ObserveError::Protocol(format!(
                             "M9_EXIT_EVENT_STATUS_NONTERMINAL_AT_ECHILD tid={stale_tid} status={exit_status:#x}"
@@ -81,6 +94,63 @@ new_echild = '''            if error.raw_os_error() == Some(libc::ECHILD) && tra
                 tracees.clear();
                 break;
             }
+'''
+
+old_stop_dispatch = '''        if stop_signal == libc::SIGTRAP && event != 0 {
+            handle_ptrace_event(tid, event, &mut tracees, &mut fd_tables, &mut collector)?;
+            resume_after_observed_stop(root, tid, 0, &mut tracees, &mut root_outcome)?;
+            continue;
+        }
+'''
+new_stop_dispatch = '''        if tracees
+            .get(&tid)
+            .map(|state| state.retired_by_exec)
+            .unwrap_or(false)
+            && !(stop_signal == libc::SIGTRAP && event == libc::PTRACE_EVENT_EXIT)
+        {
+            return Err(ObserveError::Protocol(format!(
+                "M9_RETIRED_EXEC_UNEXPECTED_STOP tid={tid} signal={stop_signal} event={event}"
+            )));
+        }
+
+        if stop_signal == libc::SIGTRAP && event != 0 {
+            handle_ptrace_event(tid, event, &mut tracees, &mut fd_tables, &mut collector)?;
+            resume_after_observed_stop(root, tid, 0, &mut tracees, &mut root_outcome)?;
+            continue;
+        }
+'''
+
+old_exec_cleanup = '''            let old_tgid = state.tgid;
+            let mut retired = tracees
+                .iter()
+                .filter_map(|(other_tid, other_state)| {
+                    (other_state.tgid == old_tgid).then_some(*other_tid)
+                })
+                .collect::<Vec<_>>();
+            retired.sort_unstable();
+            tracees.retain(|_, other_state| other_state.tgid != old_tgid);
+
+            state.tgid = tid;
+            state.newborn = false;
+            tracees.insert(tid, state);
+'''
+new_exec_cleanup = '''            let old_tgid = state.tgid;
+            let mut retired = Vec::new();
+            for (other_tid, other_state) in tracees.iter_mut() {
+                if other_state.tgid == old_tgid {
+                    other_state.retired_by_exec = true;
+                    other_state.pending_exec = None;
+                    other_state.pending_syscall = None;
+                    retired.push(*other_tid);
+                }
+            }
+            retired.sort_unstable();
+
+            state.tgid = tid;
+            state.newborn = false;
+            state.retired_by_exec = false;
+            state.exit_event_status = None;
+            tracees.insert(tid, state);
 '''
 
 old_terminal_fn = '''fn record_terminal_wait_status(
@@ -202,10 +272,12 @@ new_event_tail = '''        }
 '''
 
 for old, new, label, expected in [
-    (old_state_tail, new_state_tail, "exit-event state", 1),
-    (old_ctor_tail, new_ctor_tail, "exit-event constructor initialization", 2),
+    (old_state_tail, new_state_tail, "exit-event and exec-retirement state", 1),
+    (old_ctor_tail, new_ctor_tail, "lifecycle constructor initialization", 2),
     (old_options, new_options, "PTRACE_O_TRACEEXIT option", 1),
     (old_echild, new_echild, "ECHILD exit-event reconciliation", 1),
+    (old_stop_dispatch, new_stop_dispatch, "retired exec stop guard", 1),
+    (old_exec_cleanup, new_exec_cleanup, "exec retirement bookkeeping", 1),
     (old_terminal_fn, new_terminal_fn, "terminal outcome factoring", 1),
     (old_wait_error, new_wait_error, "ESRCH exact-wait exit-event reconciliation", 1),
     (old_event_tail, new_event_tail, "PTRACE_EVENT_EXIT capture", 1),
