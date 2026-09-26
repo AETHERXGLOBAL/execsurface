@@ -1,0 +1,98 @@
+name: M9.1 External Workload - casey just post-freeze
+
+on:
+  push:
+    branches:
+      - "milestone/m9-1-external-workloads"
+    paths:
+      - "scripts/m9_run_just_zero_contact.py"
+      - "docs/milestones/M9_PROTOCOL.md"
+      - "docs/milestones/M9_TARGET_QUALIFICATION.md"
+      - "docs/milestones/M9_NEGATIVE_EVIDENCE.md"
+      - ".github/workflows/m9-just-post-freeze.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+  RUST_TOOLCHAIN: "1.90.0"
+  EXECSURFACE_VERSION: "0.1.0-alpha.2"
+  EXECSURFACE_SOURCE_SHA: c6cabf1b4d1399898b9643a7fce011664aac0918
+
+jobs:
+  just-zero-contact:
+    name: canonical post-freeze just evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout ExecSurface evidence harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified casey/just
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: casey/just
+          ref: ${{ env.JUST_SHA }}
+          path: external/just
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify external revision and install frozen toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C external/just rev-parse HEAD)" = "$JUST_SHA"
+          test -z "$(git -C external/just status --porcelain)"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustc "+$RUST_TOOLCHAIN" --version --verbose
+          cargo "+$RUST_TOOLCHAIN" --version
+          echo "M9_JUST_PIN_VERIFIED=$JUST_SHA"
+
+      - name: Run canonical post-freeze zero-contact case
+        id: case
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/m9_run_just_zero_contact.py
+
+      - name: Validate canonical M9 evidence record
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f m9-evidence/just-post-freeze/evidence-record.json
+          python3 scripts/m9_validate_evidence.py \
+            m9-evidence/just-post-freeze/evidence-record.json
+          python3 -m json.tool \
+            m9-evidence/just-post-freeze/evidence-record.json >/dev/null
+          sha256sum -c m9-evidence/just-post-freeze/SHA256SUMS
+          echo M9_JUST_CANONICAL_RECORD_VALID
+
+      - name: Preserve canonical and raw evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-just-post-freeze-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-evidence/just-post-freeze
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce fail-closed case conclusion
+        if: always()
+        shell: bash
+        env:
+          CASE_OUTCOME: ${{ steps.case.outcome }}
+        run: |
+          set -euo pipefail
+          if test "$CASE_OUTCOME" != "success"; then
+            echo "M9_JUST_CASE_FAIL_CLOSED: canonical record preserved; case runner reported failure" >&2
+            exit 1
+          fi
+          echo M9_JUST_CASE_ACCEPTED_COMPUTATIONAL_EVIDENCE
