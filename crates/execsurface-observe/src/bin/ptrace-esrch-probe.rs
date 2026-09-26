@@ -7,12 +7,15 @@
 use std::collections::HashMap;
 use std::env;
 use std::ffi::{c_void, CString, OsStr};
+use std::fs;
 use std::io;
 use std::mem::{size_of, MaybeUninit};
 use std::os::unix::ffi::OsStrExt;
 use std::ptr;
 
 const PTRACE_GET_SYSCALL_INFO_REQUEST: libc::c_uint = 0x420e;
+const PTRACE_SYSCALL_INFO_ENTRY: u8 = 1;
+const PTRACE_SYSCALL_INFO_EXIT: u8 = 2;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -33,13 +36,27 @@ fn proc_exists(tid: libc::pid_t) -> bool {
     std::path::Path::new(&format!("/proc/{tid}")).exists()
 }
 
+fn proc_snapshot(tid: libc::pid_t) -> String {
+    let Ok(status) = fs::read_to_string(format!("/proc/{tid}/status")) else {
+        return "status=unreadable".to_owned();
+    };
+    let mut fields = Vec::new();
+    for key in ["State:", "Tgid:", "Pid:", "PPid:", "TracerPid:"] {
+        if let Some(line) = status.lines().find(|line| line.starts_with(key)) {
+            fields.push(line.replace('\t', " "));
+        }
+    }
+    fields.join(";")
+}
+
 fn fail(op: &str, tid: libc::pid_t, status: i32) -> io::Error {
     let error = io::Error::last_os_error();
     eprintln!(
-        "M9_PTRACE_PROBE_ERROR op={op} tid={tid} errno={:?} error={} wait_status=0x{status:08x} proc_exists={}",
+        "M9_PTRACE_PROBE_ERROR op={op} tid={tid} errno={:?} error={} wait_status=0x{status:08x} proc_exists={} proc_status={}",
         error.raw_os_error(),
         error,
-        proc_exists(tid)
+        proc_exists(tid),
+        proc_snapshot(tid)
     );
     error
 }
@@ -163,6 +180,7 @@ fn main() -> io::Result<()> {
     )?;
 
     let mut tracees = HashMap::from([(child, false)]);
+    let mut last_syscall_nr: HashMap<libc::pid_t, u64> = HashMap::new();
     let mut waits: u64 = 0;
     let mut syscall_stops: u64 = 0;
     let mut ptrace_events: u64 = 0;
@@ -183,6 +201,7 @@ fn main() -> io::Result<()> {
 
         if libc::WIFEXITED(status) || libc::WIFSIGNALED(status) {
             tracees.remove(&tid);
+            last_syscall_nr.remove(&tid);
             continue;
         }
         if !libc::WIFSTOPPED(status) {
@@ -201,14 +220,40 @@ fn main() -> io::Result<()> {
                 let new_tid = event_message(tid, status)? as libc::pid_t;
                 tracees.entry(new_tid).or_insert(true);
             }
-            resume(tid, 0, status)?;
+            if let Err(error) = resume(tid, 0, status) {
+                eprintln!(
+                    "M9_PTRACE_PROBE_CONTEXT kind=event tid={tid} event={event} tracked={} {}",
+                    tracees.contains_key(&tid),
+                    proc_snapshot(tid)
+                );
+                return Err(error);
+            }
             continue;
         }
 
         if signal == (libc::SIGTRAP | 0x80) {
             syscall_stops += 1;
-            let _ = syscall_info(tid, status)?;
-            resume(tid, 0, status)?;
+            let info = syscall_info(tid, status)?;
+            let (phase, nr) = match info.op {
+                PTRACE_SYSCALL_INFO_ENTRY => {
+                    let nr = info.data[0];
+                    last_syscall_nr.insert(tid, nr);
+                    ("entry", Some(nr))
+                }
+                PTRACE_SYSCALL_INFO_EXIT => ("exit", last_syscall_nr.get(&tid).copied()),
+                _ => ("other", last_syscall_nr.get(&tid).copied()),
+            };
+            if let Err(error) = resume(tid, 0, status) {
+                eprintln!(
+                    "M9_PTRACE_PROBE_CONTEXT kind=syscall tid={tid} phase={phase} nr={nr:?} info_op={} ip=0x{:x} sp=0x{:x} tracked={} {}",
+                    info.op,
+                    info.instruction_pointer,
+                    info.stack_pointer,
+                    tracees.contains_key(&tid),
+                    proc_snapshot(tid)
+                );
+                return Err(error);
+            }
             continue;
         }
 
@@ -218,7 +263,14 @@ fn main() -> io::Result<()> {
             was_newborn
         });
         let forwarded = if newborn || signal == libc::SIGTRAP { 0 } else { signal };
-        resume(tid, forwarded, status)?;
+        if let Err(error) = resume(tid, forwarded, status) {
+            eprintln!(
+                "M9_PTRACE_PROBE_CONTEXT kind=signal tid={tid} signal={signal} newborn={newborn} tracked={} {}",
+                tracees.contains_key(&tid),
+                proc_snapshot(tid)
+            );
+            return Err(error);
+        }
     }
 
     eprintln!(
