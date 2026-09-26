@@ -37,16 +37,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let events = Rc::new(RefCell::new(Vec::<MetadataEvent>::new()));
     let callback_events = Rc::clone(&events);
     let mut ring_builder = RingBufferBuilder::new();
-    ring_builder.add(&skel.maps.events, move |data| {
-        match decode_event(data) {
-            Ok(event) => {
-                callback_events.borrow_mut().push(event);
-                0
-            }
-            Err(message) => {
-                eprintln!("M8_3_PATH_BRIDGE_DECODE_ERROR {message}");
-                -1
-            }
+    ring_builder.add(&skel.maps.events, move |data| match decode_event(data) {
+        Ok(event) => {
+            callback_events.borrow_mut().push(event);
+            0
+        }
+        Err(message) => {
+            eprintln!("M8_3_PATH_BRIDGE_DECODE_ERROR {message}");
+            -1
         }
     })?;
     let ring = ring_builder.build()?;
@@ -129,10 +127,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("short open fixture failed".into());
     }
     let short_event = poll_for(&ring, &events, EVENT_FILE_OPEN, short_open_pid)?;
-    if let Ok(path) = fs::read_link(format!(
-        "/proc/{short_open_pid}/fd/{}",
-        short_event.value
-    )) {
+    if let Ok(path) = fs::read_link(format!("/proc/{short_open_pid}/fd/{}", short_event.value)) {
         return Err(format!(
             "reaped fd unexpectedly resolved; race harness is not valid: {}",
             path.display()
