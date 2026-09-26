@@ -16,6 +16,7 @@ use probe::*;
 
 const EVENT_EXEC: u32 = 1;
 const EVENT_FORK: u32 = 2;
+const EVENT_FILE_OPEN: u32 = 3;
 const ARGV_SENTINEL: &str = "AX_M8_LIBBPF_ARGV_SENTINEL_DO_NOT_PERSIST";
 const ENV_SENTINEL: &str = "AX_M8_LIBBPF_ENV_SENTINEL_DO_NOT_PERSIST";
 const PRESSURE_EXECS: usize = 768;
@@ -25,7 +26,9 @@ struct EventStats {
     total: usize,
     exec: usize,
     fork: usize,
+    file_open: usize,
     fork_edges: Vec<(u32, u32)>,
+    file_opens: Vec<(u32, u32)>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -93,6 +96,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         .into());
     }
 
+    let mut file_child = Command::new("/bin/cat").arg("/dev/null").spawn()?;
+    let file_pid = file_child.id();
+    let file_status = file_child.wait()?;
+    if !file_status.success() {
+        return Err("controlled libbpf file-metadata child failed".into());
+    }
+    ring.poll(Duration::from_millis(50))?;
+    let rooted_file_opens = stats
+        .borrow()
+        .file_opens
+        .iter()
+        .filter(|(pid, _)| *pid == file_pid)
+        .count();
+    if rooted_file_opens == 0 {
+        return Err(format!(
+            "libbpf file metadata evidence did not contain a successful open rooted at launched pid {file_pid}"
+        )
+        .into());
+    }
+
     let before_drops = total_drops(&skel.maps.dropped)?;
     for _ in 0..PRESSURE_EXECS {
         let status = Command::new("/bin/true").status()?;
@@ -118,31 +141,46 @@ fn main() -> Result<(), Box<dyn Error>> {
         snapshot.fork
     );
     println!(
+        "M8_LIBBPF_FILE_METADATA_PASS root_pid={file_pid} successful_opens={rooted_file_opens}"
+    );
+    println!(
         "M8_LIBBPF_LOSS_ACCOUNTING_PASS dropped={}",
         after_drops - before_drops
     );
-    println!("M8_LIBBPF_PRIVACY_SCHEMA_PASS event_bytes=16 fields=kind,pid,related_pid,reserved");
+    println!("M8_LIBBPF_PRIVACY_SCHEMA_PASS event_bytes=16 fields=kind,pid,value,reserved");
     Ok(())
 }
 
 fn record_event(data: &[u8], stats: &mut EventStats) -> Result<(), String> {
     if data.len() != 16 {
-        return Err(format!("unexpected process event size: {}", data.len()));
+        return Err(format!("unexpected metadata event size: {}", data.len()));
     }
     let kind = u32::from_ne_bytes(data[0..4].try_into().map_err(|_| "kind")?);
     let pid = u32::from_ne_bytes(data[4..8].try_into().map_err(|_| "pid")?);
-    let related_pid = u32::from_ne_bytes(data[8..12].try_into().map_err(|_| "related_pid")?);
-    if pid == 0 || related_pid == 0 {
+    let value = u32::from_ne_bytes(data[8..12].try_into().map_err(|_| "value")?);
+    if pid == 0 {
         return Err("zero process identity".to_owned());
     }
     stats.total += 1;
     match kind {
-        EVENT_EXEC => stats.exec += 1,
-        EVENT_FORK => {
-            stats.fork += 1;
-            stats.fork_edges.push((pid, related_pid));
+        EVENT_EXEC => {
+            if value == 0 {
+                return Err("zero exec identity".to_owned());
+            }
+            stats.exec += 1;
         }
-        other => return Err(format!("unknown process event kind: {other}")),
+        EVENT_FORK => {
+            if value == 0 {
+                return Err("zero child identity".to_owned());
+            }
+            stats.fork += 1;
+            stats.fork_edges.push((pid, value));
+        }
+        EVENT_FILE_OPEN => {
+            stats.file_open += 1;
+            stats.file_opens.push((pid, value));
+        }
+        other => return Err(format!("unknown metadata event kind: {other}")),
     }
     Ok(())
 }
