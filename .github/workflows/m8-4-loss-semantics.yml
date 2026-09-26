@@ -185,7 +185,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          python3 \
+          python3 - \
             "$RUNNER_TEMP/m8-4-limit.json" \
             "$RUNNER_TEMP/m8-4-loss.json" \
             "$RUNNER_TEMP/m8-4-consumer-lag.json" \
