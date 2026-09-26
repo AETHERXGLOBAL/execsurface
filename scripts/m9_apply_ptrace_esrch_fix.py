@@ -69,6 +69,11 @@ old_root = '''    tracees.insert(root, TraceeState::root(fd_tables.root_id()));
 new_root = '''    tracees.insert(root, TraceeState::root(fd_tables.root_id(), root));
 '''
 
+old_fallback = '''                .or_insert_with(|| TraceeState::root(1))
+'''
+new_fallback = '''                .or_insert_with(|| TraceeState::root(1, tid))
+'''
+
 old_wait_error = '''        if tid < 0 {
             let error = io::Error::last_os_error();
             if error.raw_os_error() == Some(libc::ECHILD) && tracees.is_empty() {
@@ -427,6 +432,7 @@ fn handle_ptrace_event(
 replacements = [
     (old_state, new_state, "tracee thread-group identity"),
     (old_root, new_root, "root tgid initialization"),
+    (old_fallback, new_fallback, "fallback tracee tgid initialization"),
     (old_wait_error, new_wait_error, "outer wait ECHILD diagnostic"),
     (old_terminal, new_terminal, "terminal wait handling"),
     (old_event_restart, new_event_restart, "ptrace event restart"),
