@@ -2,7 +2,6 @@
 #include <linux/bpf.h>
 #include <linux/types.h>
 #include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
 
 #define EVENT_EXEC 1
 #define EVENT_FORK 2
@@ -15,13 +14,20 @@ struct process_event {
 };
 
 /*
- * Minimal CO-RE view: only the field required by the feasibility probe is
- * described. preserve_access_index makes the direct field access relocatable
- * against the host kernel BTF instead of freezing task_struct layout.
+ * Syscall-exit trace records use the kernel syscall_trace_exit layout:
+ * trace_entry (8 bytes), syscall number (4 bytes + alignment), then return value.
+ * The feasibility workflow also records the host tracepoint format so this
+ * assumption is explicit evidence rather than an invisible ABI dependency.
  */
-struct task_struct {
-    int pid;
-} __attribute__((preserve_access_index));
+struct syscall_exit_ctx {
+    __u16 common_type;
+    __u8 common_flags;
+    __u8 common_preempt_count;
+    __s32 common_pid;
+    __s32 syscall_nr;
+    __u32 alignment;
+    __s64 ret;
+};
 
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -66,27 +72,47 @@ int execsurface_m8_exec(void *ctx)
     return submit_event(EVENT_EXEC, pid, pid);
 }
 
-/*
- * BTF tracing provides trusted task_struct pointers. Use direct CO-RE-relocated
- * field loads rather than bpf_probe_read_kernel: the latter is GPL-restricted
- * on this kernel and ExecSurface must not change its Apache-2.0 license merely
- * to make a feasibility probe pass.
- */
-SEC("tp_btf/sched_process_fork")
-int BPF_PROG(execsurface_m8_fork, struct task_struct *parent, struct task_struct *child)
+static __always_inline int record_spawn_exit(struct syscall_exit_ctx *ctx)
 {
-    __s32 parent_pid;
-    __s32 child_pid;
+    __s64 child_pid = ctx->ret;
+    __u32 parent_pid;
 
-    if (!parent || !child)
+    /* Parent-side successful fork/clone returns the positive child pid. */
+    if (child_pid <= 0 || child_pid > 0xffffffffLL)
         return 0;
 
-    parent_pid = __builtin_preserve_access_index(parent->pid);
-    child_pid = __builtin_preserve_access_index(child->pid);
-    if (parent_pid <= 0 || child_pid <= 0)
-        return 0;
+    parent_pid = (__u32)(bpf_get_current_pid_tgid() >> 32);
+    return submit_event(EVENT_FORK, parent_pid, (__u32)child_pid);
+}
 
-    return submit_event(EVENT_FORK, (__u32)parent_pid, (__u32)child_pid);
+/*
+ * Apache-compatible lineage: observe successful process-creation syscall
+ * returns instead of dereferencing task_struct. This avoids GPL-restricted
+ * kernel-struct access and avoids the hosted-runner sched tracepoint policy
+ * boundary while retaining explicit parent -> child process identity.
+ */
+SEC("tracepoint/syscalls/sys_exit_clone")
+int execsurface_m8_clone_exit(struct syscall_exit_ctx *ctx)
+{
+    return record_spawn_exit(ctx);
+}
+
+SEC("tracepoint/syscalls/sys_exit_clone3")
+int execsurface_m8_clone3_exit(struct syscall_exit_ctx *ctx)
+{
+    return record_spawn_exit(ctx);
+}
+
+SEC("tracepoint/syscalls/sys_exit_fork")
+int execsurface_m8_fork_exit(struct syscall_exit_ctx *ctx)
+{
+    return record_spawn_exit(ctx);
+}
+
+SEC("tracepoint/syscalls/sys_exit_vfork")
+int execsurface_m8_vfork_exit(struct syscall_exit_ctx *ctx)
+{
+    return record_spawn_exit(ctx);
 }
 
 char LICENSE[] SEC("license") = "Apache-2.0";
