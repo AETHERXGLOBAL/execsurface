@@ -283,21 +283,31 @@ fn successful_open_assessment(
         };
     };
 
+    let reference_witnesses = &reference.successful_open_witnesses;
+    let candidate_witnesses = &candidate.successful_open_witnesses;
+
+    if reference_witnesses == candidate_witnesses && !reference_witnesses.is_empty() {
+        return Assessment {
+            semantic_class,
+            verdict: ParityVerdict::Equivalent,
+            detail: format!(
+                "controlled positive successful-open witness projection for path={open_path:?}; matching resolved witnesses prove existence for the focused path even when unrelated successful-open events have unresolved path identity; ptrace witness requires later fd-attributed I/O and is not generalized to unused successful opens; reference_witnesses={reference_witnesses:?}; candidate_witnesses={candidate_witnesses:?}; candidate_all_open_identities_resolved={}",
+                candidate.successful_open_identity_complete
+            ),
+        };
+    }
+
     if !candidate.successful_open_identity_complete {
         return Assessment {
             semantic_class,
             verdict: ParityVerdict::BlockedIncomplete,
             detail: format!(
-                "successful-open identity for focused path {open_path:?} is blocked because at least one candidate successful-open event lacked path identity"
+                "successful-open conclusion for focused path {open_path:?} is blocked because no matching positive witness was established and at least one candidate successful-open event lacked path identity; unresolved evidence cannot prove absence or contradiction; reference_witnesses={reference_witnesses:?}; candidate_witnesses={candidate_witnesses:?}"
             ),
         };
     }
 
-    let reference_witnesses = &reference.successful_open_witnesses;
-    let candidate_witnesses = &candidate.successful_open_witnesses;
-    let verdict = if reference_witnesses == candidate_witnesses && !reference_witnesses.is_empty() {
-        ParityVerdict::Equivalent
-    } else if reference_witnesses.is_empty() && candidate_witnesses.is_empty() {
+    let verdict = if reference_witnesses.is_empty() && candidate_witnesses.is_empty() {
         ParityVerdict::NonComparable
     } else if !reference_witnesses.is_empty() && reference_witnesses.is_subset(candidate_witnesses)
     {
@@ -313,7 +323,7 @@ fn successful_open_assessment(
         semantic_class,
         verdict,
         detail: format!(
-            "controlled successful-open witness projection for path={open_path:?}; ptrace witness requires later fd-attributed I/O and therefore is not generalized to unused successful opens; reference_witnesses={reference_witnesses:?}; candidate_witnesses={candidate_witnesses:?}"
+            "controlled successful-open witness projection for path={open_path:?}; ptrace witness requires later fd-attributed I/O and therefore is not generalized to unused successful opens; reference_witnesses={reference_witnesses:?}; candidate_witnesses={candidate_witnesses:?}; candidate_all_open_identities_resolved=true"
         ),
     }
 }
