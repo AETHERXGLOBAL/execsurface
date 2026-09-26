@@ -3,16 +3,21 @@
 
 use aya_ebpf::{
     helpers::bpf_get_current_pid_tgid,
-    macros::{map, tracepoint},
+    macros::{btf_tracepoint, map, tracepoint},
     maps::{PerCpuArray, RingBuf},
-    programs::TracePointContext,
+    programs::{BtfTracePointContext, TracePointContext},
 };
+
+const EVENT_EXEC: u32 = 1;
+const EVENT_FORK: u32 = 2;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct ExecEvent {
-    pub tgid: u32,
-    pub tid: u32,
+pub struct ProcessEvent {
+    pub kind: u32,
+    pub pid: u32,
+    pub related_pid: u32,
+    pub reserved: u32,
 }
 
 // Intentionally tiny for the M8.2 pressure test. A production size is a later decision.
@@ -27,20 +32,39 @@ static DROPPED: PerCpuArray<u64> = PerCpuArray::with_max_entries(1, 0);
 #[tracepoint]
 pub fn execsurface_m8_exec(_ctx: TracePointContext) -> u32 {
     let pid_tgid = bpf_get_current_pid_tgid();
-    let event = ExecEvent {
-        tgid: (pid_tgid >> 32) as u32,
-        tid: pid_tgid as u32,
-    };
+    emit(ProcessEvent {
+        kind: EVENT_EXEC,
+        pid: (pid_tgid >> 32) as u32,
+        related_pid: pid_tgid as u32,
+        reserved: 0,
+    });
+    0
+}
 
-    match EVENTS.reserve::<ExecEvent>(0) {
+#[btf_tracepoint(function = "sched_process_fork")]
+pub fn execsurface_m8_fork(ctx: BtfTracePointContext) -> u32 {
+    let parent_pid: i32 = ctx.arg(1);
+    let child_pid: i32 = ctx.arg(3);
+    if parent_pid > 0 && child_pid > 0 {
+        emit(ProcessEvent {
+            kind: EVENT_FORK,
+            pid: parent_pid as u32,
+            related_pid: child_pid as u32,
+            reserved: 0,
+        });
+    }
+    0
+}
+
+#[inline(always)]
+fn emit(event: ProcessEvent) {
+    match EVENTS.reserve::<ProcessEvent>(0) {
         Some(mut slot) => {
             slot.write(event);
             slot.submit(0);
         }
         None => record_drop(),
     }
-
-    0
 }
 
 #[inline(always)]
