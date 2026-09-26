@@ -1,8 +1,10 @@
 # M8 — Pluggable Observation Backends & eBPF Evidence Architecture
 
 Date: 2026-09-26
-Status: **OPEN — M8.0 ARCHITECTURE GATE**
+Status: **OPEN — M8.0–M8.2 CLOSED / M8.3 NEXT**
 Tracking: #34
+M8.2 decision: `docs/milestones/M8_2_STACK_DECISION.md`
+M8.2 evidence: `docs/milestones/M8_2_EVIDENCE.md`
 
 ## Objective
 
@@ -335,9 +337,14 @@ Acceptance requires safe backend selection, documentation, technical evaluation 
 
 ## Current status
 
-- M8 objective: **OPEN**
-- M8.0 architecture: **PARTIAL — document created, implementation review pending**
-- M8.1 observer abstraction: **NOT STARTED**
-- M8.2 eBPF implementation selection: **NOT STARTED**
+- M8 objective: **OPEN — M8.3 NEXT**
+- M8.0 architecture: **CLOSED / ACCEPTED**
+- M8.1 observer abstraction: **CLOSED / ACCEPTED**
+- M8.2 eBPF implementation selection: **CLOSED / ACCEPTED — libbpf-rs / libbpf selected**
+- M8.3 metadata-only eBPF observer: **OPEN / NEXT**
+- M8.4 fail-closed loss gate: **NOT STARTED**
+- M8.5 ptrace/eBPF parity gate: **NOT STARTED**
+- M8.6 performance / compatibility gate: **NOT STARTED**
+- M8.7 public-alpha integration gate: **NOT STARTED**
 - eBPF PASS authority: **NOT AUTHORIZED**
 - ptrace correctness reference: **PROVED / RETAINED under existing M6.5 evidence**
