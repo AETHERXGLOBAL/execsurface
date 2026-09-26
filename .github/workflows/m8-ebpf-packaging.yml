@@ -27,8 +27,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang libelf-dev zlib1g-dev pkg-config \
-            build-essential autoconf automake libtool gettext flex bison
+            build-essential autoconf automake libtool gettext autopoint flex bison
           clang --version
+          autopoint --version | head -n 1
           pkg-config --modversion libelf
 
       - name: Install resolver and product-MSRV Rust toolchains
