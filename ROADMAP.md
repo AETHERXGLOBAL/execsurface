@@ -95,8 +95,8 @@ Evidence: `docs/milestones/M7_EVIDENCE.md`.
 
 ## M7.1 — Registry Distribution Parity
 
-**IN PROGRESS — PACKAGING GATE**
+**CODE READY — FIRST crates.io PUBLICATION REQUIRES ACCOUNT CONFIGURATION**
 
 Prepare the Rust workspace for first-class crates.io distribution while preserving all M6.5/M7 runtime semantics. Target user path after publication: `cargo install execsurface --locked`. Initial publication requires explicit crates.io maintainer authentication; no registry-availability claim is made before the public package is verified.
 
-Evidence will be recorded in `docs/milestones/M7_1_EVIDENCE.md`.
+GitHub release/package preparation evidence is complete. The remaining blocker is tracked in Issue #27 and requires one-time crates.io maintainer authentication before the first registry publication.
