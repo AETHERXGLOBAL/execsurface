@@ -7,32 +7,39 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#define M8_7_CHURN_CHILDREN 64
+
 static int run_tree(void)
 {
     pid_t root = getpid();
-    pid_t child = fork();
-    if (child < 0) {
-        perror("fork");
-        return 20;
+
+    for (int child_index = 0; child_index < M8_7_CHURN_CHILDREN; ++child_index) {
+        pid_t child = fork();
+        if (child < 0) {
+            perror("fork");
+            return 20;
+        }
+        if (child == 0) {
+            /*
+             * M8.7b adversary: every descendant must outlive the original
+             * root. The child cannot exec/exit until reparenting proves the
+             * root has already gone away.
+             */
+            for (int i = 0; i < 5000 && getppid() == root; ++i)
+                usleep(1000);
+
+            if (getppid() == root)
+                _exit(126);
+
+            execl("/bin/true", "true", (char *)NULL);
+            _exit(127);
+        }
     }
-    if (child == 0) {
-        /*
-         * M8.7b1 adversary: the descendant is forbidden to exec/exit until
-         * it has observed that the original root process is gone and it has
-         * been reparented. A root-only lifecycle implementation therefore
-         * cannot pass this fixture cleanly.
-         */
-        for (int i = 0; i < 5000 && getppid() == root; ++i)
-            usleep(1000);
 
-        if (getppid() == root)
-            _exit(126);
-
-        execl("/bin/true", "true", (char *)NULL);
-        _exit(127);
-    }
-
-    /* Root exits immediately; the collector must continue draining child. */
+    /*
+     * Root exits without waiting. The collector must retain and drain all 64
+     * epoch-propagated descendants before the session can become clean.
+     */
     return 0;
 }
 
