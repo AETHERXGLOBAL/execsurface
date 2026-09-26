@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fs;
+use std::io;
 use std::mem::MaybeUninit;
 use std::process::Command;
 use std::rc::Rc;
@@ -28,6 +29,12 @@ struct MetadataEvent {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    match std::env::args().nth(1).as_deref() {
+        Some("--hold-open-child") => return deterministic_open_child(true),
+        Some("--short-open-child") => return deterministic_open_child(false),
+        _ => {}
+    }
+
     let builder = ProbeSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
     let open_skel = builder.open(&mut open_object)?;
@@ -49,8 +56,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     })?;
     let ring = ring_builder.build()?;
 
-    // E1: keep the post-exec process alive long enough to test a positive
-    // userspace /proc executable identity resolution.
     let mut held_exec = Command::new("/bin/sleep")
         .arg("2")
         .env("AX_M8_3_SECRET", SECRET_SENTINEL)
@@ -72,8 +77,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let _ = held_exec.kill();
     let _ = held_exec.wait();
 
-    // E2: after a short-lived process has been reaped, the numeric exec event
-    // remains in evidence but /proc path identity is no longer available.
     let mut short_exec = Command::new("/bin/true")
         .env("AX_M8_3_SECRET", SECRET_SENTINEL)
         .spawn()?;
@@ -92,11 +95,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     println!("M8_3_EXEC_REAPED_RESOLUTION_UNAVAILABLE_PASS pid={short_exec_pid}");
 
-    // E3: hold /dev/null open in the controlled shell and prove that at least
-    // one successful-open numeric event can be resolved to the live kernel fd.
-    let mut held_open = Command::new("/bin/sh")
-        .arg("-c")
-        .arg("exec 9</dev/null; sleep 2")
+    let probe_exe = std::env::current_exe()?;
+    let mut held_open = Command::new(&probe_exe)
+        .arg("--hold-open-child")
         .env("AX_M8_3_SECRET", SECRET_SENTINEL)
         .spawn()?;
     let held_open_pid = held_open.id();
@@ -115,10 +116,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let _ = held_open.kill();
     let _ = held_open.wait();
 
-    // E4: retain numeric successful-open evidence from a process that has
-    // already exited, then prove fd path identity cannot be recovered later.
-    let mut short_open = Command::new("/bin/cat")
-        .arg("/dev/null")
+    let mut short_open = Command::new(&probe_exe)
+        .arg("--short-open-child")
         .env("AX_M8_3_SECRET", SECRET_SENTINEL)
         .spawn()?;
     let short_open_pid = short_open.id();
@@ -140,6 +139,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
 
     println!("M8_3_PATH_BRIDGE_CONDITIONAL_FAIL_CLOSED_PASS");
+    Ok(())
+}
+
+fn deterministic_open_child(hold: bool) -> Result<(), Box<dyn Error>> {
+    let path = b"/dev/null\0";
+    let fd = unsafe {
+        libc::openat(
+            libc::AT_FDCWD,
+            path.as_ptr().cast::<libc::c_char>(),
+            libc::O_RDONLY,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    if hold {
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    let rc = unsafe { libc::close(fd) };
+    if rc != 0 {
+        return Err(io::Error::last_os_error().into());
+    }
     Ok(())
 }
 
