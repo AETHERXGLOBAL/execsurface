@@ -1,0 +1,9 @@
+run_id=36272909972
+head_sha=1934f463a1e34293720f1d820084d964d8eb5c9d
+just_sha=5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+rust_toolchain=1.90.0
+
+attempt=1 rc=2
+M9_RESTART_ESRCH_DEFERRED tid=16957 tgid=16955 retired_by_exec=false exit_event_seen=false
+ExecSurface: ERROR
+execsurface: observer protocol error: M9_UNTRACKED_EXIT_EVENT tid=18473 proc_tgid=Some(15824) exit_status=0x0 tracked=[(15129, 15129, false, false, false), (15233, 15233, false, false, false), (15824, 15824, false, false, false), (17549, 17549, false, false, false), (18465, 15824, false, false, false), (18468, 15824, false, false, false), (18469, 15824, false, false, false), (18470, 18470, false, false, false), (18471, 18471, false, false, false)]
