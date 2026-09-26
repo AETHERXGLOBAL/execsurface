@@ -150,3 +150,55 @@ Proceed to:
 
 1. **M9.2 — Independent adoption evidence**, preserving the strict `INDEPENDENT_USER` definition; and
 2. a bounded, separate same-workload eBPF value experiment may now be opened because the predeclared M6.5 trigger was crossed. Any such experiment remains research-only and cannot change public authority without its own evidence/security/product gates.
+
+## Final post-closeout addendum — Batch 2R and eBPF value gate
+
+Subsequent preregistered evidence strengthens, but does not rewrite, the closeout above.
+
+### Batch 2R user-like runtime evidence
+
+The separately preregistered Batch 2R harness repair closed mechanical comparability/workspace defects only. It did not modify product source or observer semantics. Accepted `COMPUTATIONAL_EVIDENCE` now exists for four pinned user-like external CLI cases across the M9.1 program: `casey/just`, `BurntSushi/ripgrep`, `junegunn/fzf`, and `sharkdp/fd`.
+
+For the repaired `just`, `ripgrep`, and `fd` cases:
+
+- each direct runtime passed;
+- baseline learning passed;
+- two unchanged checks each returned PASS with zero findings;
+- preregistered added `sha256sum` process execution was surfaced as REVIEW;
+- the complete 3+15 performance protocol passed with no excluded samples;
+- every case crossed the frozen M6.5 ptrace performance trigger.
+
+The detailed immutable evidence is sealed in `docs/milestones/M9_1_BATCH_2R_POST_CLOSEOUT_ADDENDUM.md` and `docs/milestones/M9_1_USER_LIKE_EXTERNAL_EVIDENCE.md`.
+
+This supports a narrower product conclusion: the exact-baseline instability observed in full build/test graphs did not reproduce in the four tested user-like CLI surfaces. Build/test ephemeral-surface semantics remain a separate prospective design issue tracked in #59; no retroactive normalization is permitted.
+
+### Same-workload eBPF value screen
+
+Because multiple external workloads crossed M6.5, the M8.8 V1 rule allowed a bounded same-workload eBPF value experiment. The protocol and health gates were frozen before measurement in `docs/milestones/M9_1_EBPF_VALUE_EXPERIMENT_PREREGISTRATION.md`.
+
+The existing per-invocation libbpf research collector was tested against the same pinned full-workload `casey/just` and `junegunn/fzf` cases.
+
+Result: **PARTIAL / NO VALUE CLAIM**.
+
+- `fzf`: an eBPF warmup reached `incomplete_lifecycle` with `lifecycle_drain_complete=false` before the measured 15-sample series could begin.
+- `just`: the first eBPF warmup reached `incomplete_lifecycle` with `lifecycle_drain_complete=false` before the measured series could begin.
+- in both cases `dropped_events=0` and `collector_failure=null`, so the blocking defect is lifecycle completeness rather than ring-buffer loss.
+- apparent wall-time advantages observed before the health failure are intentionally not promoted into performance claims.
+
+The immutable result is sealed in `docs/milestones/M9_1_EBPF_VALUE_EXPERIMENT_RESULT.md`.
+
+Therefore the M9.1 backend decision is final for this stage:
+
+- ptrace remains the correctness reference and public authority;
+- eBPF full-surface comparability remains false;
+- eBPF learn/check remain unauthorized;
+- eBPF PASS authority remains unauthorized;
+- backend auto-selection remains unauthorized;
+- ptrace/eBPF baseline interchangeability remains unauthorized;
+- public eBPF integration remains deferred.
+
+### Final transition
+
+M9.1 remains **CLOSED**. No additional zero-contact workload or eBPF experiment is required to enter M9.2.
+
+The sole next milestone is **M9.2 — Independent Adoption Evidence**. Zero-contact evidence collected internally by AETHER X must not be counted toward that adoption gate.
