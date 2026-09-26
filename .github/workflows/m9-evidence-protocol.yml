@@ -1,0 +1,56 @@
+name: M9 Evidence Protocol
+
+on:
+  push:
+    branches:
+      - "milestone/m9-independent-adoption"
+    paths:
+      - "docs/milestones/M9_**"
+      - "scripts/m9_validate_evidence.py"
+      - "tests/fixtures/m9/**"
+      - ".github/workflows/m9-evidence-protocol.yml"
+  pull_request:
+    paths:
+      - "docs/milestones/M9_**"
+      - "scripts/m9_validate_evidence.py"
+      - "tests/fixtures/m9/**"
+      - ".github/workflows/m9-evidence-protocol.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  protocol:
+    name: M9 evidence semantics
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Parse frozen JSON schema
+        run: |
+          set -euo pipefail
+          python -m json.tool docs/milestones/M9_EVIDENCE_SCHEMA.json >/dev/null
+
+      - name: Accept valid zero-contact sentinel
+        run: |
+          set -euo pipefail
+          python scripts/m9_validate_evidence.py tests/fixtures/m9/valid_zero_contact.json
+
+      - name: Reject AETHER X-controlled evidence mislabeled independent
+        run: |
+          set -euo pipefail
+          if python scripts/m9_validate_evidence.py tests/fixtures/m9/invalid_mislabeled_independent.json; then
+            echo "M9_NEGATIVE_SENTINEL_FAILED: mislabeled independent evidence was accepted" >&2
+            exit 1
+          fi
+          echo "M9_NEGATIVE_SENTINEL_PASS"
+
+      - name: Authority and privacy sentinel
+        run: |
+          set -euo pipefail
+          grep -q '"backend": {"const": "ptrace"}' docs/milestones/M9_EVIDENCE_SCHEMA.json
+          grep -q '"prohibited_sensitive_payload_collected": {"const": false}' docs/milestones/M9_EVIDENCE_SCHEMA.json
+          grep -q 'eBPF PASS: not authorized' docs/milestones/M9_PROTOCOL.md
+          echo "M9_AUTHORITY_PRIVACY_SENTINEL_PASS"
