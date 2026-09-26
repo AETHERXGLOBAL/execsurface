@@ -2,13 +2,15 @@
 
 Date: 2026-09-27
 Status: **OPEN — protocol and intake frozen before accepted M9.2 evidence**
-Base main: `efe0d5def25a88432770691897cd980cfb024dbd`
+Base main: `93158e044ff993037ce7da7a78e61fbb1b892d00`
 
 ## Objective
 
 M9.2 determines whether independent third parties can adopt the existing public ExecSurface product without AETHER X controlling the workload, execution, or desired outcome.
 
 M9.2 does not add observer capabilities and does not change public backend authority. The public correctness reference remains Linux x86_64 `ptrace`.
+
+The historical `M9_EXTERNAL_ADOPTION_PROTOCOL.md` remains useful for L0/L1/L2/L3 evidence-level semantics, but its original phase numbering is superseded by the current M9 sequence. In this program, **M9.2 is the independent-adoption evidence stage**.
 
 ## Fixed team
 
@@ -46,11 +48,11 @@ A record counts only when all are true:
 7. the canonical evidence record passes `scripts/m9_validate_evidence.py` and `scripts/m9_validate_independent_adoption.py`;
 8. only metadata permitted by the M9 privacy boundary is retained.
 
-Pointing a user to already-public documentation, the published release, or the public intake form is not material assistance. If AETHER X materially helps execute or repair the workflow, classify it as `COLLABORATIVE_EXTERNAL`; it remains useful evidence but does not count toward the M9.2 independent-adoption close gate.
+Pointing a user to already-public documentation, the published release, or the public intake form is not material assistance. If AETHER X materially helps execute or repair the workflow, classify it as `COLLABORATIVE_EXTERNAL`; it remains useful evidence but does not count toward the positive M9.2 adoption gate.
 
 ## Successful adoption record
 
-For an independent record to count as a successful adoption case, it must additionally show:
+For an independent record to count toward a positive adoption close, it must additionally show:
 
 - public ExecSurface installation: `PASS`;
 - `execsurface doctor`: `PASS` on the supported Linux x86_64 scope;
@@ -63,9 +65,13 @@ For an independent record to count as a successful adoption case, it must additi
 
 A failure submitted by an independent user is still first-class M9.2 evidence, but it does not become a successful adoption case. It must remain preserved with its failure classification.
 
-## Close gate
+## M9.2 closure states
 
-M9.2 may close only when all are satisfied:
+M9.2 has two different, explicitly non-equivalent closure states.
+
+### Positive close — `PROVED: INDEPENDENT ADOPTION EVIDENCE`
+
+A positive adoption claim requires all of the following:
 
 1. at least **two** countable `INDEPENDENT_USER` records exist;
 2. they come from at least **two distinct external project repositories**;
@@ -75,13 +81,28 @@ M9.2 may close only when all are satisfied:
 6. any failures, false-positive reports, usability friction, exclusions, and non-countable collaborative cases remain preserved rather than removed from the ledger;
 7. Red Team finds no evidence that either countable record was actually AETHER X initiated, AETHER X executed, materially assisted, or cherry-picked from a larger unreported series;
 8. CI and current product semantics remain unchanged;
-9. M9.2 closeout states the exact evidence scope and does not generalize to universal Linux adoption or production readiness.
+9. closeout states the exact evidence scope and does not generalize to universal Linux adoption or production readiness.
 
 Two repositories alone do not prove two independent initiators. Final closeout requires human provenance review of the external references/attestations in addition to automated validation.
 
+### Negative close — `KILLED: NO ACCEPTED INDEPENDENT EVIDENCE IN DECLARED SEARCH SCOPE`
+
+A negative close is permitted only after a **predeclared discovery scope** has been executed and preserved. It means the search stage is complete and M9.3 may synthesize the result. It **must not** be described as adoption, validation, or successful M9.2 adoption.
+
+The negative close requires:
+
+1. the discovery scope and search queries/sources are frozen before interpreting results;
+2. every discovered candidate is retained as `DISCOVERY_ONLY`, `CANDIDATE_INDEPENDENT`, `KILLED`, or accepted evidence;
+3. no M9.1 zero-contact record is relabeled as independent adoption;
+4. no AETHER X-authored external PR, guided execution, or materially assisted run is counted as independent;
+5. the closeout explicitly states `0 accepted independent adoption records` if none qualify;
+6. absence of evidence is not generalized into a claim that nobody uses or wants ExecSurface.
+
+A negative close is a valid research/product result, but it is **not a positive adoption claim**.
+
 ## Drift requirement
 
-Controlled drift must keep the same top-level command/wrapper shape used for the learned baseline. A test that changes the root executable and thereby becomes non-comparable does not satisfy the drift gate.
+Controlled drift must keep the same top-level command/wrapper shape used for the learned baseline. A test that changes the root executable and thereby becomes non-comparable does not satisfy the positive drift gate.
 
 The Technical Evaluation Pack's `/bin/bash -lc` baseline/check shape is the reference self-service path. The evaluator may instead use a natural drift from their own project if it is clearly attributable and privacy-safe.
 
@@ -118,4 +139,4 @@ An intake issue is source evidence, not automatically a canonical M9 record. Aft
 
 `OPEN`.
 
-Zero-contact M9.1 evidence is closed and merged, but it is not adoption. M9.2 remains open until genuine third-party evidence satisfies the gate above.
+Zero-contact M9.1 evidence is closed and merged, but it is not adoption. M9.2 remains open until either the positive adoption gate is satisfied or a separately preregistered discovery scope is exhausted and closed as a negative result without an adoption claim.
