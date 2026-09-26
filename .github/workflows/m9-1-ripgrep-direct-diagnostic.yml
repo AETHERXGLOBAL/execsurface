@@ -1,0 +1,78 @@
+name: M9.1 diagnose pinned ripgrep direct failure
+
+on:
+  push:
+    branches:
+      - milestone/m9-1-post-hardening-external-workloads
+    paths:
+      - .github/workflows/m9-1-ripgrep-direct-diagnostic.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  direct-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      RIPGREP_SHA: 3fce3b5bb0236da2df6d99672afb8a719642eca7
+    steps:
+      - name: Checkout pinned unmodified ripgrep
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: BurntSushi/ripgrep
+          ref: ${{ env.RIPGREP_SHA }}
+          path: ripgrep
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          test "$(git -C ripgrep rev-parse HEAD)" = "$RIPGREP_SHA"
+          test -z "$(git -C ripgrep status --porcelain)"
+
+      - name: Reproduce direct command with diagnostic output retained
+        shell: bash
+        run: |
+          set +e
+          mkdir -p diagnostic
+          (
+            cd ripgrep
+            cargo "+$RUST_TOOLCHAIN" test --workspace --all-targets
+          ) >diagnostic/stdout.txt 2>diagnostic/stderr.txt
+          rc=$?
+          set -e
+          printf 'direct_rc=%s\n' "$rc" | tee diagnostic/status.txt
+          {
+            printf 'revision=%s\n' "$RIPGREP_SHA"
+            printf 'rustc=%s\n' "$(rustc +$RUST_TOOLCHAIN --version)"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+            printf 'execsurface_involved=false\n'
+          } > diagnostic/environment.txt
+          test "$rc" -eq 101
+
+      - name: Extract concise failure signature
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            echo '=== stderr tail ==='
+            tail -n 120 diagnostic/stderr.txt 2>/dev/null || true
+            echo '=== stdout tail ==='
+            tail -n 120 diagnostic/stdout.txt 2>/dev/null || true
+          } | tee diagnostic/failure-signature.txt
+
+      - name: Upload direct-only diagnostic
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-1-ripgrep-direct-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: diagnostic
+          if-no-files-found: error
+          retention-days: 30
