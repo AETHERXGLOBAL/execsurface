@@ -1,0 +1,105 @@
+name: M8.7 Producer Loss
+
+on:
+  push:
+    branches:
+      - "milestone/m8-7-persistent-observer"
+    paths:
+      - "experiments/m8-ebpf/persistent-observer/**"
+      - ".github/workflows/m8-7-producer-loss.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  producer-loss:
+    name: constrained ring buffer fails closed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Install native dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+
+      - name: Install Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+
+      - name: Resolve compatible lockfile
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f experiments/m8-ebpf/persistent-observer/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml
+
+      - name: Build constrained-ring experimental observer and bounded burst fixture
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo +1.82.0 fmt \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml \
+            -- --check
+          TARGET="$RUNNER_TEMP/m8-7-loss-target"
+          M8_7_FAULT_SMALL_RINGBUF=1 \
+            cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml \
+            --release --locked \
+            --target-dir "$TARGET"
+          clang -O2 -Wall -Wextra -Werror -DM8_7_CHURN_CHILDREN=512 \
+            experiments/m8-ebpf/persistent-observer/m8_7_session_fixture.c \
+            -o "$RUNNER_TEMP/m8_7_loss_fixture"
+
+      - name: Prove producer loss cannot produce clean evidence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS="$RUNNER_TEMP/m8-7-loss-target/release/execsurface-m8-persistent-observer"
+          FIX="$RUNNER_TEMP/m8_7_loss_fixture"
+          REPORT="$RUNNER_TEMP/m8-7-loss-report.json"
+          LOG="$RUNNER_TEMP/m8-7-loss.log"
+
+          set +e
+          sudo "$OBS" --report "$REPORT" --fixture "$FIX" >"$LOG" 2>&1
+          RC=$?
+          set -e
+          test "$RC" -ne 0
+          test -s "$REPORT"
+          cat "$LOG"
+          cat "$REPORT"
+
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert report['sessions'], report
+          session = report['sessions'][0]
+          assert session['producer_drop_delta'] > 0, session
+          assert session['clean_for_m8_7a'] is False, session
+          assert report['authority']['ebpf_pass_authorized'] is False, report
+          assert report['authority']['product_integration_authorized'] is False, report
+          print('M8_7B5_PRODUCER_LOSS_FAIL_CLOSED_PASS')
+          print('M8_7B5_PRODUCER_DROP_DELTA', session['producer_drop_delta'])
+          print('M8_7B5_ACCEPTED_EVENT_COUNT', session['event_count'])
+          PY
+
+      - name: Upload producer-loss evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: m8-7-producer-loss-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/m8-7-loss.log
+            ${{ runner.temp }}/m8-7-loss-report.json
+          if-no-files-found: warn
+          retention-days: 30
