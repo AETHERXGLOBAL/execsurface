@@ -1,0 +1,68 @@
+name: M9-H1.6 promote proved ptrace lifecycle fix
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - .github/workflows/m9-h1-6-promote-proved-core.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  promote-exact-proved-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      PROVED_SOURCE_SHA256: 72978ef99fd24b944cb191d5eeae665387ed223271c31e5636818f5ea81def37
+      SOURCE: crates/execsurface-observe/src/linux_ptrace.rs
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+
+      - name: Reconstruct exact proved candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_apply_ptrace_exit_lifecycle.py
+          python3 scripts/m9_apply_ptrace_preregistration_ordering.py
+          python3 scripts/m9_apply_get_syscall_info_exit_group_fix.py
+          cargo "+$RUST_TOOLCHAIN" fmt --all
+          git diff --check
+          changed="$(git diff --name-only)"
+          test "$changed" = "$SOURCE"
+          actual="$(sha256sum "$SOURCE" | awk '{print $1}')"
+          printf 'proved=%s\nactual=%s\n' "$PROVED_SOURCE_SHA256" "$actual"
+          test "$actual" = "$PROVED_SOURCE_SHA256"
+
+      - name: Pre-commit regression sanity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test -p execsurface-observe
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface
+
+      - name: Commit exact proved source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git diff --name-only)" = "$SOURCE"
+          git add "$SOURCE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "M9-H1.6: promote proved ptrace lifecycle fix into core"
+          git push origin HEAD:hardening/m9-ptrace-esrch-just
