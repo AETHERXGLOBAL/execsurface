@@ -1,20 +1,33 @@
 # crates.io Publishing
 
-ExecSurface uses GitHub Releases as its primary signed binary distribution channel and crates.io as the Rust-native installation channel.
+ExecSurface uses GitHub Releases as its signed binary distribution channel and crates.io as the primary Rust-native installation channel.
 
-## Public install target
+## Public install
 
-After the first registry publication succeeds, the intended user command is:
+The verified public install path is:
 
-~~~bash
+```bash
 cargo install execsurface --locked
-~~~
+```
 
-The installed binary remains:
+The installed binary is:
 
-~~~text
+```text
 execsurface
-~~~
+```
+
+The first verified registry release is `0.1.0-alpha.2`.
+
+A fresh Ubuntu 24.04 runner successfully installed the package from crates.io and then passed:
+
+```text
+execsurface --version
+execsurface doctor
+execsurface learn -- /bin/bash -lc true
+execsurface check -- /bin/bash -lc true
+```
+
+The final no-drift check returned `PASS` with zero findings.
 
 ## Why several crates are published
 
@@ -33,21 +46,29 @@ Publish order:
 7. `execsurface-report`
 8. `execsurface`
 
-## First-publication security model
+## Publication security model
 
-Current Cargo/crates.io documentation requires an authenticated crates.io token for publication. The token is a secret and must never be pasted into an issue, chat, commit, log or documentation.
+Publishing requires an authenticated crates.io token stored only in the GitHub Environment named `crates-io` as `CARGO_REGISTRY_TOKEN`.
 
-For the initial publication:
+The token must never be pasted into an issue, chat, commit, log or documentation.
 
-1. sign in to crates.io with the maintainer GitHub account;
-2. verify the account email;
-3. create a scoped API token suitable for publishing these crates;
-4. create a GitHub Environment named `crates-io`;
-5. add the token to that environment as the secret `CARGO_REGISTRY_TOKEN`;
-6. dispatch `.github/workflows/publish-crates.yml` from the current default branch and set `release_tag` to the immutable version tag to publish;
-7. after publication, rotate/revoke the initial token if moving to a stronger supported publisher mechanism.
+The normal release workflow:
 
-The workflow checks out the requested immutable release tag and verifies that it exactly matches Cargo metadata and `action/release-tag.txt`. Publication is idempotent: versions already present on crates.io are skipped, so a rate-limited or interrupted dependency chain can be resumed safely.
+1. checks out the requested immutable release tag;
+2. verifies tag identity against Cargo metadata and `action/release-tag.txt`;
+3. runs source/package gates;
+4. publishes the workspace crates in dependency order;
+5. skips versions already present in crates.io so interrupted chains can resume safely;
+6. proves a fresh `cargo install execsurface` consumer from the registry.
+
+## Preserved first-publication failures
+
+The initial `0.1.0-alpha.2` publication retained two operational failures rather than hiding them:
+
+- the first authenticated upload was blocked because the crates.io account email was not yet verified;
+- after several new crate names were published, crates.io enforced its new-crate rate limit.
+
+The recovery workflow was idempotent, kept the immutable release source fixed, skipped packages that were already present, resumed after the server-provided rate-limit window, and completed the remaining publications.
 
 ## Permanence
 
