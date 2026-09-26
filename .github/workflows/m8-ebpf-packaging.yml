@@ -1,0 +1,88 @@
+name: M8 eBPF Packaging Probe
+
+on:
+  push:
+    branches:
+      - "milestone/m8-ebpf-feasibility"
+    paths:
+      - "experiments/m8-ebpf/libbpf-probe/**"
+      - ".github/workflows/m8-ebpf-packaging.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  libbpf-vendored-runtime:
+    name: libbpf-rs / vendored runtime packaging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install declared build-only native tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang libelf-dev zlib1g-dev pkg-config \
+            build-essential autoconf automake libtool gettext flex bison
+          clang --version
+          pkg-config --modversion libelf
+
+      - name: Install resolver and product-MSRV Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal
+          cargo +1.87.0 --version
+          rustc +1.82.0 --version --verbose
+
+      - name: Resolve a Rust-1.82-compatible dependency lock
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f experiments/m8-ebpf/libbpf-probe/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile \
+            --manifest-path experiments/m8-ebpf/libbpf-probe/Cargo.toml
+
+      - name: Build vendored-runtime variant on Rust 1.82
+        shell: bash
+        run: |
+          set -euxo pipefail
+          start=$(date +%s)
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/libbpf-probe/Cargo.toml \
+            --release --locked --features vendored-runtime
+          end=$(date +%s)
+          echo "M8_LIBBPF_VENDORED_BUILD_SECONDS=$((end-start))"
+          BIN=experiments/m8-ebpf/libbpf-probe/target/release/execsurface-m8-libbpf-probe
+          test -x "$BIN"
+          file "$BIN"
+          stat --printf='M8_LIBBPF_VENDORED_BINARY_BYTES=%s\n' "$BIN"
+          sha256sum "$BIN"
+          ldd "$BIN" | tee "$RUNNER_TEMP/libbpf-vendored-ldd.txt"
+
+      - name: Prove vendoring removes libbpf support-library runtime requirements
+        shell: bash
+        run: |
+          set -euxo pipefail
+          LDD="$RUNNER_TEMP/libbpf-vendored-ldd.txt"
+          ! grep -Eq 'libelf\.so|libz\.so|libzstd\.so' "$LDD"
+          echo 'M8_LIBBPF_VENDORED_RUNTIME_DEPENDENCY_PASS'
+
+      - name: Prove vendored binary retains feasibility semantics
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=experiments/m8-ebpf/libbpf-probe/target/release/execsurface-m8-libbpf-probe
+          sudo "$BIN" 2>&1 | tee "$RUNNER_TEMP/libbpf-vendored-proof.log"
+          grep -q '^M8_LIBBPF_ATTACH_PASS$' "$RUNNER_TEMP/libbpf-vendored-proof.log"
+          grep -q '^M8_LIBBPF_EVENT_TRANSPORT_PASS ' "$RUNNER_TEMP/libbpf-vendored-proof.log"
+          grep -q '^M8_LIBBPF_LINEAGE_PASS ' "$RUNNER_TEMP/libbpf-vendored-proof.log"
+          grep -q '^M8_LIBBPF_LOSS_ACCOUNTING_PASS ' "$RUNNER_TEMP/libbpf-vendored-proof.log"
+          grep -q '^M8_LIBBPF_PRIVACY_SCHEMA_PASS ' "$RUNNER_TEMP/libbpf-vendored-proof.log"
+          echo 'M8_LIBBPF_VENDORED_SEMANTICS_PASS'
