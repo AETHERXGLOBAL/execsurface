@@ -26,6 +26,7 @@ use observer::*;
 const EVENT_EXEC: u32 = 1;
 const EVENT_SPAWN: u32 = 2;
 const EVENT_OPEN: u32 = 3;
+const EVENT_EXIT: u32 = 4;
 const SPAWN_FORK: u32 = 1;
 const SPAWN_VFORK: u32 = 2;
 const SPAWN_CLONE: u32 = 3;
@@ -117,6 +118,7 @@ struct WarningReport {
 struct Tracker {
     root_pid: u32,
     known_pids: BTreeSet<u32>,
+    active_pids: BTreeSet<u32>,
     pending: Vec<MetadataEvent>,
     events: Vec<ReportEvent>,
     warnings: Vec<WarningReport>,
@@ -131,6 +133,7 @@ impl Tracker {
         Self {
             root_pid: 0,
             known_pids: BTreeSet::new(),
+            active_pids: BTreeSet::new(),
             pending: Vec::new(),
             events: Vec::new(),
             warnings: Vec::new(),
@@ -144,6 +147,7 @@ impl Tracker {
     fn set_root(&mut self, pid: u32) {
         self.root_pid = pid;
         self.known_pids.insert(pid);
+        self.active_pids.insert(pid);
         self.drain_pending_for(pid);
     }
 
@@ -168,6 +172,7 @@ impl Tracker {
                     return;
                 }
                 self.known_pids.insert(child_pid);
+                self.active_pids.insert(child_pid);
                 let mechanism = match event.reserved {
                     SPAWN_FORK => "fork",
                     SPAWN_VFORK => "vfork",
@@ -221,6 +226,9 @@ impl Tracker {
                     path,
                 });
             }
+            EVENT_EXIT => {
+                self.active_pids.remove(&event.pid);
+            }
             _ => self.warning(
                 Some(event.pid),
                 "unknown_event_kind",
@@ -273,12 +281,10 @@ impl Tracker {
         });
     }
 
-    fn live_descendant_count(&self) -> usize {
-        self.known_pids
+    fn active_descendant_count(&self) -> usize {
+        self.active_pids
             .iter()
-            .copied()
-            .filter(|pid| *pid != self.root_pid)
-            .filter(|pid| Path::new(&format!("/proc/{pid}")).exists())
+            .filter(|pid| **pid != self.root_pid)
             .count()
     }
 }
@@ -342,22 +348,22 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     loop {
         if drain_started.elapsed() >= drain_timeout {
-            let live_descendants = tracker.borrow().live_descendant_count();
+            let active_descendants = tracker.borrow().active_descendant_count();
             tracker.borrow_mut().warning(
                 None,
                 "lifecycle_drain_timeout",
                 format!(
-                    "post-root-exit lifecycle drain timed out after {} ms with {} live known descendants",
-                    options.lifecycle_timeout_ms, live_descendants
+                    "post-root-exit lifecycle drain timed out after {} ms with {} active known descendants",
+                    options.lifecycle_timeout_ms, active_descendants
                 ),
             );
             break;
         }
 
         ring.poll(Duration::from_millis(POLL_INTERVAL_MS))?;
-        let (sequence, live_descendants) = {
+        let (sequence, active_descendants) = {
             let state = tracker.borrow();
-            (state.sequence, state.live_descendant_count())
+            (state.sequence, state.active_descendant_count())
         };
 
         if sequence == last_sequence {
@@ -367,7 +373,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             last_sequence = sequence;
         }
 
-        if live_descendants == 0
+        if active_descendants == 0
             && drain_started.elapsed() >= Duration::from_millis(QUIESCENCE_GRACE_MS)
             && idle_polls >= QUIESCENCE_POLLS
         {
@@ -577,7 +583,7 @@ fn decode_event(data: &[u8]) -> Result<MetadataEvent, String> {
     if pid == 0 {
         return Err("zero process identity".to_owned());
     }
-    if !matches!(kind, EVENT_EXEC | EVENT_SPAWN | EVENT_OPEN) {
+    if !matches!(kind, EVENT_EXEC | EVENT_SPAWN | EVENT_OPEN | EVENT_EXIT) {
         return Err(format!("unknown metadata event kind: {kind}"));
     }
     Ok(MetadataEvent {
