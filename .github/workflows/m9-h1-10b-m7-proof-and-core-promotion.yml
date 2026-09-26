@@ -1,0 +1,202 @@
+name: M9-H1.10B isolate M7 proof and promote lifecycle core
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - .github/workflows/m9-h1-10b-m7-proof-and-core-promotion.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: m9-h1-10-promote-proved-ptrace-core
+  cancel-in-progress: true
+
+jobs:
+  prove-m7-and-promote:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      SOURCE: crates/execsurface-observe/src/linux_ptrace.rs
+      CLEAN_SHA256: 3dc656358a3675a0d78135bb83046bc45c33dca2718c8bd8b68fa090e18eac8b
+      FD_SHA: ce97e473ebaec49697c07daa50a7bc2b32f713d2
+      PRIOR_GATE_RUN: 36277932714
+
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Checkout pinned unmodified sharkdp fd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: sharkdp/fd
+          ref: ${{ env.FD_SHA }}
+          path: external/fd
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain and stage fd outside workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt clippy --toolchain "$RUST_TOOLCHAIN"
+          test "$(git -C external/fd rev-parse HEAD)" = "$FD_SHA"
+          test -z "$(git -C external/fd status --porcelain)"
+          fd_workdir="$RUNNER_TEMP/m9-h1-10b-fd"
+          rm -rf "$fd_workdir"
+          cp -a external/fd "$fd_workdir"
+          test "$(git -C "$fd_workdir" rev-parse HEAD)" = "$FD_SHA"
+          test -z "$(git -C "$fd_workdir" status --porcelain)"
+          echo "M9_FD_WORKDIR=$fd_workdir" >> "$GITHUB_ENV"
+
+      - name: Reconstruct exact production-clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m9-h1-10b-evidence
+          python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_apply_ptrace_exit_lifecycle.py
+          python3 scripts/m9_apply_ptrace_preregistration_ordering.py
+          python3 scripts/m9_apply_get_syscall_info_exit_group_fix.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          python3 scripts/m9_finalize_ptrace_lifecycle_core.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          actual="$(sha256sum "$SOURCE" | awk '{print $1}')"
+          printf 'expected=%s\nactual=%s\nprior_gate_run=%s\n' \
+            "$CLEAN_SHA256" "$actual" "$PRIOR_GATE_RUN" \
+            | tee m9-h1-10b-evidence/source-hash.txt
+          test "$actual" = "$CLEAN_SHA256"
+          test "$(git diff --name-only)" = "$SOURCE"
+          git diff --check -- "$SOURCE"
+          if grep -Eq 'M9_(PTRAC|GET_SYSCALL|H1_)|eprintln!' "$SOURCE"; then
+            echo 'diagnostic-only telemetry remains in production source' >&2
+            exit 1
+          fi
+          cp "$SOURCE" m9-h1-10b-evidence/linux_ptrace.production.rs
+
+      - name: Reconfirm unchanged full CI semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" fmt --all -- --check
+          cargo "+$RUST_TOOLCHAIN" clippy --locked --workspace --all-targets -- -D warnings \
+            2>&1 | tee m9-h1-10b-evidence/clippy.log
+          cargo "+$RUST_TOOLCHAIN" test --locked --workspace --all-targets \
+            2>&1 | tee m9-h1-10b-evidence/workspace-tests.log
+          cargo "+$RUST_TOOLCHAIN" build --locked -p execsurface \
+            2>&1 | tee m9-h1-10b-evidence/build.log
+          test "$(sha256sum "$SOURCE" | awk '{print $1}')" = "$CLEAN_SHA256"
+
+      - name: Prove pinned fd outside parent workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C "$M9_FD_WORKDIR" rev-parse HEAD)" = "$FD_SHA"
+          test -z "$(git -C "$M9_FD_WORKDIR" status --porcelain)"
+          cargo "+$RUST_TOOLCHAIN" test --manifest-path "$M9_FD_WORKDIR/Cargo.toml" --locked --all-features \
+            2>&1 | tee m9-h1-10b-evidence/fd-upstream-tests.log
+          cargo "+$RUST_TOOLCHAIN" build --manifest-path "$M9_FD_WORKDIR/Cargo.toml" --locked --release --all-features \
+            2>&1 | tee m9-h1-10b-evidence/fd-upstream-build.log
+          mkdir -p "$M9_FD_WORKDIR/m9-h1-10b-fixture/sub"
+          printf 'alpha\n' > "$M9_FD_WORKDIR/m9-h1-10b-fixture/alpha.txt"
+          printf 'beta\n' > "$M9_FD_WORKDIR/m9-h1-10b-fixture/sub/beta.txt"
+          test -z "$(git -C "$M9_FD_WORKDIR" status --porcelain --untracked-files=no)"
+
+          target/debug/execsurface learn \
+            --output m9-h1-10b-evidence/fd.lock.json \
+            -- /bin/bash -lc \
+            'cd "$M9_FD_WORKDIR" && ./target/release/fd --hidden --type f . m9-h1-10b-fixture >/dev/null'
+
+          for n in 1 2; do
+            target/debug/execsurface check \
+              --baseline m9-h1-10b-evidence/fd.lock.json \
+              --json-output "m9-h1-10b-evidence/fd-pass-${n}.json" \
+              --markdown-output "m9-h1-10b-evidence/fd-pass-${n}.md" \
+              -- /bin/bash -lc \
+              'cd "$M9_FD_WORKDIR" && ./target/release/fd --hidden --type f . m9-h1-10b-fixture >/dev/null'
+          done
+
+          python3 - <<'PY'
+          import json
+          for n in (1, 2):
+              data = json.load(open(f"m9-h1-10b-evidence/fd-pass-{n}.json"))
+              assert data["verdict"] == "pass", data["verdict"]
+              assert data["findings"] == [], data["findings"]
+          PY
+
+          set +e
+          target/debug/execsurface check \
+            --baseline m9-h1-10b-evidence/fd.lock.json \
+            --json-output m9-h1-10b-evidence/fd-controlled.json \
+            --markdown-output m9-h1-10b-evidence/fd-controlled.md \
+            -- /bin/bash -lc \
+            'cd "$M9_FD_WORKDIR" && ./target/release/fd --hidden --type f . m9-h1-10b-fixture >/dev/null; /usr/bin/sha256sum m9-h1-10b-fixture/alpha.txt >/dev/null'
+          status=$?
+          set -e
+          test "$status" -eq 10
+
+          python3 - <<'PY'
+          import json
+          data = json.load(open("m9-h1-10b-evidence/fd-controlled.json"))
+          assert data["verdict"] == "review", data["verdict"]
+          hits = []
+          for finding in data["findings"]:
+              if finding["change"] != "added" or finding["effect_kind"] != "process_exec":
+                  continue
+              effect = finding.get("evidence", {}).get("effect", {})
+              executable = effect.get("executable", {})
+              if executable.get("family") == "sha256sum":
+                  hits.append(finding)
+          assert hits, "controlled sha256sum process expansion was not detected"
+          print(f"controlled_added_sha256sum_findings={len(hits)}")
+          PY
+
+      - name: Seal evidence and lock remote head
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'input_head_sha=%s\n' "$GITHUB_SHA"
+            printf 'prior_gate_run=%s\n' "$PRIOR_GATE_RUN"
+            printf 'fd_sha=%s\n' "$FD_SHA"
+            printf 'source_sha256=%s\n' "$(sha256sum "$SOURCE" | awk '{print $1}')"
+            printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > m9-h1-10b-evidence/environment.txt
+          find m9-h1-10b-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-h1-10b-evidence/SHA256SUMS
+          git fetch origin hardening/m9-ptrace-esrch-just
+          remote="$(git rev-parse origin/hardening/m9-ptrace-esrch-just)"
+          printf 'remote_head_before_push=%s\n' "$remote" >> m9-h1-10b-evidence/environment.txt
+          test "$remote" = "$GITHUB_SHA"
+          test "$(sha256sum "$SOURCE" | awk '{print $1}')" = "$CLEAN_SHA256"
+
+      - name: Upload proof evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-h1-10b-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-h1-10b-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Commit exact proved core only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git diff --name-only)" = "$SOURCE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$SOURCE"
+          git diff --cached --check
+          test "$(git diff --cached --name-only)" = "$SOURCE"
+          git commit -m "M9 hardening: promote proved ptrace lifecycle core"
+          git push origin HEAD:hardening/m9-ptrace-esrch-just
