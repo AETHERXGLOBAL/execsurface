@@ -1,0 +1,92 @@
+name: M9 ptrace ESRCH narrow recovery probe
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - crates/execsurface-observe/src/bin/ptrace-esrch-recovery-probe.rs
+      - .github/workflows/m9-ptrace-esrch-recovery-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+      RUST_TOOLCHAIN: "1.90.0"
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified casey just
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: casey/just
+          ref: ${{ env.JUST_SHA }}
+          path: external/just
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify pin and install toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C external/just rev-parse HEAD)" = "$JUST_SHA"
+          test -z "$(git -C external/just status --porcelain)"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+
+      - name: Build and unit-test recovery predicate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test -p execsurface-observe --bin ptrace-esrch-recovery-probe
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface-observe --bin ptrace-esrch-recovery-probe
+
+      - name: Prime pinned workload outside ptrace
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd external/just
+          cargo "+$RUST_TOOLCHAIN" test --all >/dev/null 2>&1
+
+      - name: Run five recovery attempts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m9-recovery-probe
+          : > m9-recovery-probe/probe.log
+          for attempt in 1 2 3 4 5; do
+            echo "M9_RECOVERY_ATTEMPT=$attempt" | tee -a m9-recovery-probe/probe.log
+            target/debug/ptrace-esrch-recovery-probe -- \
+              /bin/bash -lc \
+              "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
+              >>m9-recovery-probe/probe.log 2>&1
+            echo "M9_RECOVERY_ATTEMPT_RC=0" | tee -a m9-recovery-probe/probe.log
+          done
+          grep -c 'M9_RECOVERY_PROBE_COMPLETE' m9-recovery-probe/probe.log | grep -qx '5'
+          if grep -q 'M9_RECOVERY_PROBE_FATAL' m9-recovery-probe/probe.log; then
+            echo 'fatal recovery-probe event observed' >&2
+            exit 1
+          fi
+          cp m9-recovery-probe/probe.log m9-recovery-probe/probe.raw.txt
+          (
+            cd m9-recovery-probe
+            sha256sum probe.raw.txt > SHA256SUMS
+          )
+
+      - name: Preserve recovery evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: m9-ptrace-esrch-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-recovery-probe
+          if-no-files-found: error
+          retention-days: 30
