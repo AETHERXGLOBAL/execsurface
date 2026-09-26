@@ -12,10 +12,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: m9-h1-6b-production-promotion-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   prove-and-promote-production-core:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
       RUST_TOOLCHAIN: 1.90.0
       JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
@@ -113,7 +117,7 @@ jobs:
           set -euo pipefail
           : > m9-h1-6b-evidence/exit-group-summary.txt
           for attempt in $(seq 1 120); do
-            target/debug/execsurface observe -- /tmp/m9-h1-6b-exit-group-race \
+            timeout 15s target/debug/execsurface observe -- /tmp/m9-h1-6b-exit-group-race \
               > "m9-h1-6b-evidence/exit-group-${attempt}.json" \
               2> "m9-h1-6b-evidence/exit-group-${attempt}.stderr"
             python3 - "$attempt" <<'PY'
@@ -147,7 +151,7 @@ jobs:
           set -euo pipefail
           : > m9-h1-6b-evidence/prereg-summary.txt
           for attempt in $(seq 1 12); do
-            target/debug/execsurface observe -- \
+            timeout 20s target/debug/execsurface observe -- \
               /tmp/m9-h1-6b-thread-lifecycle-repro 12 16 4 \
               > "m9-h1-6b-evidence/prereg-${attempt}.stdout" \
               2> "m9-h1-6b-evidence/prereg-${attempt}.stderr"
@@ -177,7 +181,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          (cd external/just && cargo "+$RUST_TOOLCHAIN" test --all >/dev/null 2>&1)
+          timeout 180s bash -lc "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1"
 
       - name: Prove pinned casey just five consecutive times on production-clean candidate
         shell: bash
@@ -185,7 +189,7 @@ jobs:
           set -euo pipefail
           : > m9-h1-6b-evidence/just-summary.txt
           for attempt in 1 2 3 4 5; do
-            target/debug/execsurface observe -- \
+            timeout 90s target/debug/execsurface observe -- \
               /bin/bash -lc \
               "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
               > "m9-h1-6b-evidence/just-${attempt}.json" \
@@ -234,6 +238,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git fetch origin hardening/m9-ptrace-esrch-just
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/hardening/m9-ptrace-esrch-just)"
           test "$(git diff --name-only -- "$SOURCE")" = "$SOURCE"
           git add "$SOURCE"
           git config user.name "github-actions[bot]"
