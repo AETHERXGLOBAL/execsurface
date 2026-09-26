@@ -58,7 +58,7 @@ Evidence: `docs/milestones/M6_EVIDENCE.md`.
 
 **CLOSED / ACCEPTED**
 
-Hardened Linux ptrace evidence with syscall entry/exit pairing, successful-open fd identity, fd-attributed read/write effects, close/dup/fork/CLONE_FILES handling, openat/openat2 trace-time path semantics, bounded causal execution chains, explicit event-budget truncation, fault injection, v2 schema migration and reproducible performance evidence.
+Hardened Linux ptrace evidence with syscall entry/exit pairing, successful-open fd identity, fd-attributed read/write effects, close/dup/fork/CLONE_FILES handling, openat/openat2 semantics, bounded causal execution chains, explicit event-budget truncation, fault injection, v2 schema migration and reproducible performance evidence.
 
 The controlled 128-file burst remained complete with a median absolute ptrace overhead of 51.569 ms on the final shared-runner measurement. This is below the pre-M7 500 ms absolute-overhead trigger. ptrace therefore remains the reference correctness backend for M7; eBPF is not authorized as an interchangeable backend without equivalent lost-event/completeness semantics.
 
@@ -95,8 +95,27 @@ Evidence: `docs/milestones/M7_EVIDENCE.md`.
 
 ## M7.1 — Registry Distribution Parity
 
-**CODE READY — FIRST crates.io PUBLICATION REQUIRES ACCOUNT CONFIGURATION**
+**CLOSED / ACCEPTED**
 
-Prepare the Rust workspace for first-class crates.io distribution while preserving all M6.5/M7 runtime semantics. Target user path after publication: `cargo install execsurface --locked`. Initial publication requires explicit crates.io maintainer authentication; no registry-availability claim is made before the public package is verified.
+ExecSurface `0.1.0-alpha.2` is published on crates.io under the public package name `execsurface`, together with its publishable runtime workspace crates.
 
-GitHub release/package preparation evidence is complete. The remaining blocker is tracked in Issue #27 and requires one-time crates.io maintainer authentication before the first registry publication.
+The publication chain was resumed safely after two preserved infrastructure failures:
+
+- crates.io account email verification initially blocked the first upload;
+- crates.io new-crate rate limits temporarily interrupted the multi-crate publication chain.
+
+The idempotent recovery path skipped versions already present in the registry, completed all eight packages, and then proved a zero-contact fresh install directly from crates.io:
+
+```bash
+cargo install execsurface --version "=0.1.0-alpha.2" --locked
+```
+
+The installed binary passed `--version`, `doctor`, `learn`, and a no-drift `check` with PASS / 0 findings on a fresh Ubuntu 24.04 runner.
+
+The normal Rust-native user path is now:
+
+```bash
+cargo install execsurface --locked
+```
+
+GitHub Release binaries and the stable `AETHERXGLOBAL/execsurface@v0.1` Action channel remain supported. No observer, evidence-schema, canonicalization, baseline, policy, or verdict semantics changed during M7.1.
