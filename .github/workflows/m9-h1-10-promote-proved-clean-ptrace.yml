@@ -1,0 +1,213 @@
+name: M9-H1.10 promote proved production-clean ptrace core
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - .github/workflows/m9-h1-10-promote-proved-clean-ptrace.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: m9-h1-10-proved-clean-ptrace-promotion
+  cancel-in-progress: false
+
+jobs:
+  prove-and-promote:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+      SOURCE: crates/execsurface-observe/src/linux_ptrace.rs
+      CLEAN_SHA256: 3dc656358a3675a0d78135bb83046bc45c33dca2718c8bd8b68fa090e18eac8b
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Checkout pinned unmodified casey just
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: casey/just
+          ref: ${{ env.JUST_SHA }}
+          path: external/just
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+          test "$(git -C external/just rev-parse HEAD)" = "$JUST_SHA"
+          test -z "$(git -C external/just status --porcelain)"
+
+      - name: Reconstruct exact production-clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m9-h1-10-evidence
+          python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_apply_ptrace_exit_lifecycle.py
+          python3 scripts/m9_apply_ptrace_preregistration_ordering.py
+          python3 scripts/m9_apply_get_syscall_info_exit_group_fix.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          python3 scripts/m9_finalize_ptrace_lifecycle_core.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          actual="$(sha256sum "$SOURCE" | awk '{print $1}')"
+          printf 'clean_expected=%s\nclean_actual=%s\n' "$CLEAN_SHA256" "$actual" \
+            | tee m9-h1-10-evidence/source-hash.txt
+          test "$actual" = "$CLEAN_SHA256"
+          git diff --check -- "$SOURCE"
+          changed="$(git diff --name-only -- "$SOURCE")"
+          test "$changed" = "$SOURCE"
+
+      - name: Build deterministic bounded lifecycle fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/exit_group_sched_getaffinity_bounded_race.c \
+            -o /tmp/m9-h1-10-bounded-race
+          for attempt in 1 2 3 4 5; do
+            timeout --signal=TERM --kill-after=2s 10s /tmp/m9-h1-10-bounded-race \
+              > "m9-h1-10-evidence/direct-${attempt}.stdout" \
+              2> "m9-h1-10-evidence/direct-${attempt}.stderr"
+          done
+          sha256sum \
+            tests/fixtures/m9/exit_group_sched_getaffinity_bounded_race.c \
+            /tmp/m9-h1-10-bounded-race \
+            > m9-h1-10-evidence/fixture-SHA256SUMS
+
+      - name: Run unchanged observer regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test -p execsurface-observe \
+            2>&1 | tee m9-h1-10-evidence/observer-tests.log
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface \
+            2>&1 | tee m9-h1-10-evidence/build.log
+
+      - name: Re-prove bounded lifecycle race 240 times
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-10-evidence/bounded-summary.txt
+          for attempt in $(seq 1 240); do
+            set +e
+            timeout --signal=TERM --kill-after=2s 10s \
+              target/debug/execsurface observe -- /tmp/m9-h1-10-bounded-race \
+              > "m9-h1-10-evidence/bounded-${attempt}.json" \
+              2> "m9-h1-10-evidence/bounded-${attempt}.stderr"
+            rc=$?
+            set -e
+            test "$rc" -eq 0
+            python3 - "$attempt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          a = sys.argv[1]
+          data = json.loads(Path(f"m9-h1-10-evidence/bounded-{a}.json").read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            if grep -Eq 'ExecSurface: ERROR|observer protocol error|observer OS error|M9_' \
+              "m9-h1-10-evidence/bounded-${attempt}.stderr"; then
+              cat "m9-h1-10-evidence/bounded-${attempt}.stderr"
+              exit 1
+            fi
+            printf 'attempt=%s complete=true exit=0\n' "$attempt" \
+              >> m9-h1-10-evidence/bounded-summary.txt
+          done
+          test "$(wc -l < m9-h1-10-evidence/bounded-summary.txt)" -eq 240
+
+      - name: Prime pinned external workload directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=5s 180s \
+            bash -lc "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1"
+
+      - name: Re-prove pinned casey just five consecutive times
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-10-evidence/just-summary.txt
+          for attempt in 1 2 3 4 5; do
+            set +e
+            timeout --signal=TERM --kill-after=5s 120s \
+              target/debug/execsurface observe -- \
+              /bin/bash -lc \
+              "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
+              > "m9-h1-10-evidence/just-${attempt}.json" \
+              2> "m9-h1-10-evidence/just-${attempt}.stderr"
+            rc=$?
+            set -e
+            test "$rc" -eq 0
+            python3 - "$attempt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          a = sys.argv[1]
+          data = json.loads(Path(f"m9-h1-10-evidence/just-{a}.json").read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            if grep -Eq 'ExecSurface: ERROR|observer protocol error|observer OS error|M9_' \
+              "m9-h1-10-evidence/just-${attempt}.stderr"; then
+              cat "m9-h1-10-evidence/just-${attempt}.stderr"
+              exit 1
+            fi
+            printf 'attempt=%s complete=true exit=0\n' "$attempt" \
+              >> m9-h1-10-evidence/just-summary.txt
+          done
+          test "$(wc -l < m9-h1-10-evidence/just-summary.txt)" -eq 5
+
+      - name: Seal pre-promotion evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'head_sha=%s\n' "$GITHUB_SHA"
+            printf 'just_sha=%s\n' "$JUST_SHA"
+            printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+            printf 'clean_source_sha256=%s\n' "$(sha256sum "$SOURCE" | awk '{print $1}')"
+          } > m9-h1-10-evidence/environment.txt
+          find m9-h1-10-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-h1-10-evidence/SHA256SUMS
+
+      - name: Commit exact proved source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin hardening/m9-ptrace-esrch-just
+          remote_head="$(git rev-parse origin/hardening/m9-ptrace-esrch-just)"
+          test "$remote_head" = "$GITHUB_SHA"
+          test "$(sha256sum "$SOURCE" | awk '{print $1}')" = "$CLEAN_SHA256"
+          git add -- "$SOURCE"
+          staged="$(git diff --cached --name-only)"
+          test "$staged" = "$SOURCE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "M9: close ptrace lifecycle race with proved clean core"
+          git push origin HEAD:hardening/m9-ptrace-esrch-just
+
+      - name: Upload H1.10 promotion evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-h1-10-proved-clean-promotion-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-h1-10-evidence
+          if-no-files-found: error
+          retention-days: 30
