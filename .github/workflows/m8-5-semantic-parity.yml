@@ -211,12 +211,14 @@ jobs:
           assert attempts, reference['events']
           assert not ref_promoted, ref_promoted
           assert not cand_promoted, cand_promoted
-          assert assessments['successful_open_fd_identity']['verdict'] == 'non_comparable', assessments
+          assessment = assessments['successful_open_fd_identity']
+          assert assessment['verdict'] == 'blocked_incomplete', assessments
+          assert 'unresolved evidence cannot prove absence' in assessment['detail'], assessment
           assert reference['outcome']['exit_code'] == 0, reference['outcome']
           assert candidate['outcome']['exit_code'] == 0, candidate['outcome']
           assert report['full_surface_comparable'] is False
           assert report['ebpf_pass_authorized'] is False
-          print('M8_5D_FAILED_OPEN_NOT_PROMOTED_PASS')
+          print('M8_5D_FAILED_OPEN_NOT_PROMOTED_FAIL_CLOSED_PASS')
           PY
 
       - name: Prove vfork semantic parity
