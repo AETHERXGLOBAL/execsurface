@@ -12,11 +12,30 @@
 #define SPAWN_VFORK 2
 #define SPAWN_CLONE 3
 
+/* Linux x86_64 process-creation classification inputs. ExecSurface currently
+ * declares this experimental backend Linux x86_64 only. PTRACE classifies a
+ * clone with SIGCHLD as FORK, CLONE_VFORK as VFORK, and other clone exits as
+ * CLONE. Capturing clone flags lets the eBPF evidence describe that semantic
+ * mechanism rather than merely echoing the syscall name. */
+#define AX_CSIGNAL 0x000000ffULL
+#define AX_SIGCHLD 17ULL
+#define AX_CLONE_VFORK 0x00004000ULL
+
 struct metadata_event {
     __u32 kind;
     __u32 pid;
     __u32 value;
     __u32 reserved;
+};
+
+struct syscall_enter_ctx {
+    __u16 common_type;
+    __u8 common_flags;
+    __u8 common_preempt_count;
+    __s32 common_pid;
+    __s32 syscall_nr;
+    __u32 alignment;
+    __u64 args[6];
 };
 
 struct syscall_exit_ctx {
@@ -40,6 +59,13 @@ struct {
     __type(key, __u32);
     __type(value, __u64);
 } dropped SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 4096);
+    __type(key, __u32);
+    __type(value, __u64);
+} pending_clone_flags SEC(".maps");
 
 static __always_inline void record_drop(void)
 {
@@ -97,6 +123,15 @@ static __always_inline int record_spawn_exit(struct syscall_exit_ctx *ctx, __u32
     return submit_event(EVENT_SPAWN, parent_pid, (__u32)child_pid, mechanism);
 }
 
+static __always_inline __u32 classify_clone_mechanism(__u64 flags)
+{
+    if (flags & AX_CLONE_VFORK)
+        return SPAWN_VFORK;
+    if ((flags & AX_CSIGNAL) == AX_SIGCHLD)
+        return SPAWN_FORK;
+    return SPAWN_CLONE;
+}
+
 SEC("tracepoint/syscalls/sys_exit_fork")
 int execsurface_m83c_fork_exit(struct syscall_exit_ctx *ctx)
 {
@@ -109,10 +144,29 @@ int execsurface_m83c_vfork_exit(struct syscall_exit_ctx *ctx)
     return record_spawn_exit(ctx, SPAWN_VFORK);
 }
 
+SEC("tracepoint/syscalls/sys_enter_clone")
+int execsurface_m85_clone_enter(struct syscall_enter_ctx *ctx)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tid = (__u32)pid_tgid;
+    __u64 flags = ctx->args[0];
+
+    bpf_map_update_elem(&pending_clone_flags, &tid, &flags, BPF_ANY);
+    return 0;
+}
+
 SEC("tracepoint/syscalls/sys_exit_clone")
 int execsurface_m83c_clone_exit(struct syscall_exit_ctx *ctx)
 {
-    return record_spawn_exit(ctx, SPAWN_CLONE);
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tid = (__u32)pid_tgid;
+    __u64 *flags = bpf_map_lookup_elem(&pending_clone_flags, &tid);
+    __u32 mechanism = SPAWN_CLONE;
+
+    if (flags)
+        mechanism = classify_clone_mechanism(*flags);
+    bpf_map_delete_elem(&pending_clone_flags, &tid);
+    return record_spawn_exit(ctx, mechanism);
 }
 
 SEC("tracepoint/syscalls/sys_exit_clone3")
