@@ -8,20 +8,30 @@
 
 The evaluator will:
 
-1. install the public crates.io distribution;
+1. install the exact published crates.io evaluation release;
 2. verify environment readiness;
 3. learn an explicit tiny baseline;
 4. re-run the same command and obtain `PASS`;
 5. change runtime behavior while keeping the same shell wrapper shape and obtain `REVIEW`;
 6. preserve JSON and Markdown verdict reports for inspection.
 
-## 1. Install the public distribution
+## 1. Install the exact public evaluation release
+
+For a reproducible evaluation, pin the same public-alpha version whose zero-contact registry path is recorded in M7.1 evidence:
 
 ```bash
-cargo install execsurface --locked
+cargo install execsurface --version "=0.1.0-alpha.2" --locked
 execsurface --version
 execsurface doctor
 ```
+
+Expected version:
+
+```text
+execsurface 0.1.0-alpha.2
+```
+
+The repository README may show the shorter normal-user install command. The evaluator path intentionally pins the version so that a later registry release cannot silently change the artifact under evaluation.
 
 `doctor` is diagnostic only. It does not elevate privileges or weaken host security settings.
 
@@ -117,6 +127,7 @@ The JSON verdict reports are the primary machine-readable evaluation evidence. T
 
 An evaluator should inspect at least:
 
+- the installed version identity;
 - the baseline digest;
 - the declared command identity;
 - added / removed / changed effects;
@@ -128,7 +139,7 @@ An evaluator should inspect at least:
 
 A successful run supports only a bounded statement such as:
 
-> The evaluator installed the public ExecSurface distribution, learned an accepted runtime surface, reproduced an unchanged PASS, introduced controlled runtime drift, and obtained a machine-readable REVIEW under the declared policy.
+> The evaluator installed the exact public ExecSurface evaluation release, learned an accepted runtime surface, reproduced an unchanged PASS, introduced controlled runtime drift, and obtained a machine-readable REVIEW under the declared policy.
 
 It does **not** establish:
 
@@ -153,7 +164,7 @@ If you run this evaluation outside AETHER X and are willing to make the result p
 
 Independent adoption evidence is counted only when it originates from or is confirmed by an external project or evaluator. Stars, impressions, private praise and AETHER X self-tests do not count.
 
-For the shortest existing demo path, also see [`QUICKSTART_5_MIN.md`](./QUICKSTART_5_MIN.md).
+For the shortest existing demo path, also see [`QUICKSTART_5_MIN.md`](./QUICKSTART_5_MIN.md). For the prior verified zero-contact registry installation evidence, see [`M7_1_EVIDENCE.md`](./milestones/M7_1_EVIDENCE.md).
 
 ---
 
