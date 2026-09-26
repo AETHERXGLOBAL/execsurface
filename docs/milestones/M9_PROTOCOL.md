@@ -1,7 +1,7 @@
 # M9 — Independent Adoption & Real-Workload Evidence Protocol
 
 Date: 2026-09-26
-Status: **M9.0 OPEN — PROTOCOL FROZEN BEFORE ACCEPTED EVIDENCE**
+Status: **M9.0 CLOSED / PROVED — PROTOCOL & INTAKE FREEZE**
 Tracking: #51
 Base: `8f1ec63219e084f10678655ee698fd2a482312d6`
 
@@ -87,6 +87,7 @@ Machine-readable records MUST conform to `docs/milestones/M9_EVIDENCE_SCHEMA.jso
 - timestamp;
 - independence class;
 - claim status;
+- provenance: initiator, executor, AETHER X material involvement, and third-party attestation where required;
 - public/consented external reference when available;
 - pinned project revision;
 - exact command/workflow;
@@ -162,8 +163,8 @@ For every accepted performance case:
 
 - pin project revision and command before measurement;
 - use the same host and host state for direct and ptrace-observed samples;
-- record 3 warm-up executions for each mode, excluded from statistics but retained in raw evidence;
-- record 15 measured direct samples and 15 measured ptrace samples;
+- record exactly 3 warm-up executions for each mode, excluded from statistics but retained in raw evidence;
+- record exactly 15 measured direct samples and 15 measured ptrace samples;
 - alternate modes in paired order (`direct`, `ptrace`, then `ptrace`, `direct`) repeatedly to reduce monotonic host drift;
 - do not discard measured samples except for a predeclared infrastructure failure; any exclusion remains recorded with reason;
 - report median direct runtime, median observed runtime, median absolute overhead, and median ratio;
@@ -219,8 +220,34 @@ M9.0 closes only when:
 - CI remains green;
 - Red Team finds no path for self-run compatibility evidence to be mislabeled as independent adoption.
 
+## M9.0 closure evidence
+
+Decision: **PROVED — protocol and intake freeze accepted.**
+
+The closure snapshot before this documentation-only close commit was:
+
+- protocol/evidence branch HEAD: `ffff35904556cd020b06369a3b272da20598b53c`;
+- `M9 Evidence Protocol` workflow run `36266376676`: **SUCCESS**;
+- normal `CI` run `36266376681`: **SUCCESS**.
+
+The M9 protocol workflow proved that:
+
+- the frozen JSON schema parses;
+- a correctly labeled `ZERO_CONTACT_EXTERNAL_REPRO` sentinel is accepted;
+- the frozen M6.5 performance-trigger formula is exercised and accepted for a synthetic validator-only case;
+- AETHER X-controlled execution mislabeled as `INDEPENDENT_USER` is rejected;
+- ptrace authority and metadata-only privacy sentinels remain intact.
+
+### Preserved Red Team finding
+
+The first schema draft allowed `independence_class` to be declared without enough provenance to prevent a self-run compatibility test from being mislabeled as independent adoption.
+
+That design was **KILLED** before accepted M9 evidence. The schema now requires provenance fields and conditionally constrains `INDEPENDENT_USER`, `ZERO_CONTACT_EXTERNAL_REPRO`, and `INTERNAL_FIXTURE`; a negative CI sentinel must reject the known mislabeling attack.
+
+No accepted M9 external workload/adoption evidence was collected before this protocol freeze. Validator fixtures are explicitly `INTERNAL_FIXTURE` or protocol sentinels and do not count as M9 runtime/adoption evidence.
+
 ## Next gate after M9.0
 
 **M9.1 — Zero-contact external workload expansion.**
 
-Select several public, pinned, unmodified external projects/workloads using criteria frozen before result collection. Run the existing public product without maintainer coordination. Preserve successes and failures. Classify all such results as `ZERO_CONTACT_EXTERNAL_REPRO`, never `INDEPENDENT_USER`.
+Before observing any M9.1 result, freeze the external-workload selection criteria and selected pinned revisions. Then run the existing public product against those unmodified external workloads without maintainer coordination, preserve successes and failures, and classify every such result as `ZERO_CONTACT_EXTERNAL_REPRO`, never `INDEPENDENT_USER`.
