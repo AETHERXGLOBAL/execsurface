@@ -122,9 +122,20 @@ static __always_inline int submit_event(
     __u32 reserved)
 {
     struct metadata_event *event;
+    __u64 emitted_epoch = epoch;
 
     if (!epoch)
         return 0;
+
+#ifdef M8_7_FAULT_STALE_EPOCH
+    /*
+     * M8.7d fault-evidence build only: corrupt epoch-2 exec records so a
+     * real ring-buffer event from the active session arrives carrying the
+     * previous epoch. Default builds never define this macro.
+     */
+    if (epoch == 2 && kind == EVENT_EXEC)
+        emitted_epoch = 1;
+#endif
 
     event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
     if (!event) {
@@ -132,7 +143,7 @@ static __always_inline int submit_event(
         return 0;
     }
 
-    event->epoch = epoch;
+    event->epoch = emitted_epoch;
     event->kind = kind;
     event->tid = tid;
     event->tgid = tgid;
