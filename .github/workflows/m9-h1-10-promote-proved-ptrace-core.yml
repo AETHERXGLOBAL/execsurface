@@ -1,4 +1,4 @@
-# Rerun after rustfmt-only hardening probe cleanup.
+# Rerun after rustfmt-only hardening probe cleanup and isolate the pinned fd proof outside the parent Cargo workspace.
 name: M9-H1.10 promote proved ptrace lifecycle core
 
 on:
@@ -183,25 +183,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          (cd external/fd && cargo "+$RUST_TOOLCHAIN" test --locked --all-features >/dev/null)
-          (cd external/fd && cargo "+$RUST_TOOLCHAIN" build --locked --release --all-features >/dev/null)
-          mkdir -p external/fd/m9-h1-10-fixture/sub
-          printf 'alpha\n' > external/fd/m9-h1-10-fixture/alpha.txt
-          printf 'beta\n' > external/fd/m9-h1-10-fixture/sub/beta.txt
-          test -z "$(git -C external/fd status --porcelain --untracked-files=no)"
+          fd_work="$RUNNER_TEMP/m9-h1-10-fd"
+          rm -rf "$fd_work"
+          cp -a external/fd "$fd_work"
+          test "$(git -C "$fd_work" rev-parse HEAD)" = "$FD_SHA"
+          test -z "$(git -C "$fd_work" status --porcelain)"
 
+          (cd "$fd_work" && cargo "+$RUST_TOOLCHAIN" test --locked --all-features >/dev/null)
+          (cd "$fd_work" && cargo "+$RUST_TOOLCHAIN" build --locked --release --all-features >/dev/null)
+          mkdir -p "$fd_work/m9-h1-10-fixture/sub"
+          printf 'alpha\n' > "$fd_work/m9-h1-10-fixture/alpha.txt"
+          printf 'beta\n' > "$fd_work/m9-h1-10-fixture/sub/beta.txt"
+          test -z "$(git -C "$fd_work" status --porcelain --untracked-files=no)"
+
+          base_cmd="cd '$fd_work' && ./target/release/fd --hidden --type f . m9-h1-10-fixture >/dev/null"
           target/debug/execsurface learn \
             --output m9-h1-10-evidence/fd.lock.json \
-            -- /bin/bash -lc \
-            'cd external/fd && ./target/release/fd --hidden --type f . m9-h1-10-fixture >/dev/null'
+            -- /bin/bash -lc "$base_cmd"
 
           for n in 1 2; do
             target/debug/execsurface check \
               --baseline m9-h1-10-evidence/fd.lock.json \
               --json-output "m9-h1-10-evidence/fd-pass-${n}.json" \
               --markdown-output "m9-h1-10-evidence/fd-pass-${n}.md" \
-              -- /bin/bash -lc \
-              'cd external/fd && ./target/release/fd --hidden --type f . m9-h1-10-fixture >/dev/null'
+              -- /bin/bash -lc "$base_cmd"
           done
 
           python3 - <<'PY'
@@ -212,13 +217,13 @@ jobs:
               assert data["findings"] == [], data["findings"]
           PY
 
+          controlled_cmd="cd '$fd_work' && ./target/release/fd --hidden --type f . m9-h1-10-fixture >/dev/null; /usr/bin/sha256sum m9-h1-10-fixture/alpha.txt >/dev/null"
           set +e
           target/debug/execsurface check \
             --baseline m9-h1-10-evidence/fd.lock.json \
             --json-output m9-h1-10-evidence/fd-controlled.json \
             --markdown-output m9-h1-10-evidence/fd-controlled.md \
-            -- /bin/bash -lc \
-            'cd external/fd && ./target/release/fd --hidden --type f . m9-h1-10-fixture >/dev/null; /usr/bin/sha256sum m9-h1-10-fixture/alpha.txt >/dev/null'
+            -- /bin/bash -lc "$controlled_cmd"
           status=$?
           set -e
           test "$status" -eq 10
