@@ -12,7 +12,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .ok_or("usage: m8_4_event_storm THREADS ITERATIONS")?
         .parse::<usize>()?;
     if args.next().is_some() || threads == 0 || iterations == 0 {
-        return Err("threads and iterations must be positive and no extra arguments are allowed".into());
+        return Err(
+            "threads and iterations must be positive and no extra arguments are allowed".into(),
+        );
     }
 
     let mut handles = Vec::with_capacity(threads);
