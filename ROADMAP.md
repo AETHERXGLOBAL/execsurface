@@ -122,27 +122,27 @@ GitHub Release binaries and the stable `AETHERXGLOBAL/execsurface@v0.1` Action c
 
 ## M8 — Pluggable Observation Backends & eBPF Evidence Path
 
-**OPEN — M8.0–M8.7 CLOSED / M8.8 NEXT**
+**CLOSED / ACCEPTED AS RESEARCH PROGRAM — PUBLIC eBPF EXPOSURE DEFERRED**
 
-M8 adds an evidence-gated pluggable collection layer so ExecSurface can evaluate eBPF without replacing or weakening the native ptrace correctness reference.
-
-The program remains additive. Existing canonicalization, baseline, diff, policy, verdict, report, public installation, and stable `@v0.1` behavior remain authoritative until a later gate explicitly changes them.
+M8 built and adversarially evaluated an eBPF observation path without replacing or weakening the native ptrace correctness reference.
 
 Gate status:
 
 1. **M8.0 — CLOSED / ACCEPTED:** backend contract, capability/completeness/loss/privacy/comparability architecture.
 2. **M8.1 — CLOSED / ACCEPTED:** ptrace moved behind a backend abstraction while existing CI/distribution/action behavior remained stable.
 3. **M8.2 — CLOSED / ACCEPTED:** Aya and libbpf-rs passed feasibility hard gates; **libbpf-rs / libbpf selected for the experimental implementation**. Apache-2.0 and packaging constraints remain explicit.
-4. **M8.3 — CLOSED / ACCEPTED:** typed partial-capability contract, conditional fail-closed path resolution, isolated libbpf observer, launched-tree scoping, explicit loss/limit handling and observation-only CLI bridge proved. Default `observe`, `learn`, and `check` retain ptrace semantics.
-5. **M8.4 — CLOSED / PROVED:** producer loss, truncation, consumer lag, post-root descendant drain, lifecycle timeout, machine-readable collector/decode failures and post-start containment were proved fail-closed. eBPF PASS authority remained withheld.
-6. **M8.5 — CLOSED / ACCEPTED:** cross-backend semantic differential harness proved bounded parity for selected process/exec and focused successful-open evidence classes, including real counterexamples and fail-closed incomplete-state handling. It did not establish full-surface equivalence.
-7. **M8.6 — CLOSED / ACCEPTED — MEASUREMENT GATE:** exact-host performance/compatibility work showed the current per-invocation libbpf lifecycle is dominated by teardown; isolated detach was roughly 490 ms median on the measured host while target-runtime overhead was small. The result motivated persistent attachment rather than timer shortcuts.
-8. **M8.7 — CLOSED / ACCEPTED — BOUNDED PERSISTENT SESSION ARCHITECTURE FEASIBLE:** persistent attachment, explicit session epochs, root-registration barrier, task-creation propagation, descendant drain, deterministic reset checks, crash/restart isolation, real routing failure, producer loss, event-budget exhaustion and live stale-epoch rejection were proved for the tested single-active-session architecture. M8.7c exact-host measurement reduced the conservative two-session amortized median by about 16.7% versus per-invocation libbpf, but remained about 50.5x the ptrace median; therefore no performance-based backend promotion is justified. Independent Red Team accepted only the bounded architecture claim.
-9. **M8.8 — OPEN / NEXT:** controlled public-alpha integration decision. First decide whether any eBPF exposure is justified despite the remaining performance, privilege/service, compatibility and semantic-surface gaps. Any exposure must be explicit opt-in and cannot promote eBPF PASS, auto-selection, cross-backend baseline interchangeability or full comparability without new evidence.
+4. **M8.3 — CLOSED / ACCEPTED:** typed partial-capability contract, conditional fail-closed path resolution, isolated libbpf observer, launched-tree scoping, explicit loss/limit handling and observation-only CLI bridge proved. Default `observe`, `learn`, and `check` retained ptrace semantics.
+5. **M8.4 — CLOSED / PROVED:** producer loss, truncation, consumer lag, post-root descendant drain, lifecycle timeout, machine-readable collector/decode failures and post-start containment were proved fail-closed.
+6. **M8.5 — CLOSED / ACCEPTED:** bounded cross-backend parity was proved for selected process/exec and focused successful-open propositions, including counterexamples and fail-closed incomplete-state handling. Full-surface equivalence was not established.
+7. **M8.6 — CLOSED / ACCEPTED — MEASUREMENT GATE:** exact-host work showed per-invocation libbpf teardown dominated measured lifecycle cost and motivated persistent attachment rather than timing shortcuts.
+8. **M8.7 — CLOSED / ACCEPTED — BOUNDED PERSISTENT SESSION ARCHITECTURE FEASIBLE:** persistent attachment, session epochs, root-registration barrier, task-creation propagation, descendant drain, reset checks, crash/restart isolation, routing failure, producer loss, event-budget exhaustion and live stale-epoch rejection were proved for the tested single-active-session architecture. M8.7c reduced the conservative two-session amortized libbpf cost by about 16.7% on the exact host, but remained about 50.5x the ptrace median.
+9. **M8.8 — CLOSED / DEFER:** public eBPF exposure is not justified by current product evidence. The original M6.5 external-workload value trigger has not been met, the current eBPF path remains slower end-to-end on the measured workload, its semantic surface is narrower, and persistent privilege/service boundaries remain open. The research asset is retained with explicit reopen conditions.
 
-### M8 authority boundary after M8.7
+### M8 authority boundary at closure
 
 - ptrace correctness reference: **RETAINED**;
+- default public backend: **ptrace**;
+- eBPF public exposure: **DEFERRED**;
 - eBPF full-surface comparability: **FALSE**;
 - eBPF PASS authority: **NOT AUTHORIZED**;
 - eBPF `learn` / `check`: **NOT AUTHORIZED**;
@@ -151,12 +151,31 @@ Gate status:
 - production persistent daemon/service: **NOT AUTHORIZED**;
 - default public install path: **UNCHANGED**.
 
+The eBPF path may be reopened only when a real external workload crosses the predeclared ptrace cost trigger or a concrete external workflow requires a capability that eBPF can uniquely provide, followed by all required safety/product gates.
+
 Architecture: `docs/milestones/M8_EBPF_ARCHITECTURE.md`.
 M8.2 decision: `docs/milestones/M8_2_STACK_DECISION.md`.
-M8.3 collector evidence: `docs/milestones/M8_3C_COLLECTOR.md`.
-M8.3 CLI evidence: `docs/milestones/M8_3C2_CLI_BRIDGE.md`.
 M8.4 evidence: `docs/milestones/M8_4_LOSS_SEMANTICS.md`.
 M8.5 evidence: `docs/milestones/M8_5_SEMANTIC_PARITY.md`.
 M8.6 evidence: `docs/milestones/M8_6_PERFORMANCE_COMPATIBILITY.md` and `docs/milestones/M8_6_RED_TEAM_REVIEW.md`.
 M8.7 evidence: `docs/milestones/M8_7_PERSISTENT_OBSERVER.md`, `docs/milestones/M8_7C_PERFORMANCE_PROTOCOL.md`, and `docs/milestones/M8_7_RED_TEAM_REVIEW.md`.
-Tracking: GitHub Issues #34, #37, #40, #42, #44 and #46.
+M8.8 decision: `docs/milestones/M8_8_PUBLIC_INTEGRATION_DECISION.md`.
+Tracking: GitHub Issues #34, #37, #40, #42, #44, #46 and #49.
+
+## M9 — Independent Adoption & Real-Workload Evidence
+
+**NEXT**
+
+The next highest-value milestone is not another speculative observer feature. It is independent use of the existing public product on real developer/CI workloads.
+
+M9 should seek machine-readable evidence for:
+
+- zero-contact installation and first successful use by independent users/projects;
+- real baseline → rerun → drift workflows outside AETHER X-controlled fixtures;
+- false-positive / false-negative reports and usability friction;
+- real command runtimes and ptrace overhead on workloads with direct median >=100 ms;
+- whether any external workload crosses the predeclared M6.5 eBPF trigger;
+- whether users require an observation capability not available under the ptrace product;
+- retention of privacy, completeness, comparability and verdict semantics under external use.
+
+M9 evidence may validate continued ptrace productization or provide the first justified trigger to reopen the eBPF path. It must not manufacture an eBPF need in advance.
