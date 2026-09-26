@@ -15,7 +15,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     match mode.as_str() {
         "fork-exec" => run_fork_exec(),
-        "vfork-exec" => run_vfork_exec(),
         "nested-thread-fork" => run_nested_thread_fork(),
         "failed-open" => run_failed_open(),
         other => Err(format!("unknown fixture mode: {other}").into()),
@@ -59,14 +58,6 @@ fn run_fork_exec() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run_vfork_exec() -> Result<(), Box<dyn Error>> {
-    let file = open_probe()?;
-    vfork_exec_true()?;
-    thread::sleep(Duration::from_millis(120));
-    drop(file);
-    Ok(())
-}
-
 fn run_nested_thread_fork() -> Result<(), Box<dyn Error>> {
     let file = open_probe()?;
     let worker = thread::spawn(|| -> Result<(), String> {
@@ -103,24 +94,6 @@ fn fork_exec_true() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    wait_clean_child(child)
-}
-
-fn vfork_exec_true() -> Result<(), Box<dyn Error>> {
-    // Prepare every object before vfork. The child performs only async-safe C
-    // calls before exec/_exit and does not touch Rust-owned state.
-    let path = CString::new("/bin/true")?;
-    let arg0 = CString::new("true")?;
-    let child = unsafe { libc::vfork() };
-    if child < 0 {
-        return Err(std::io::Error::last_os_error().into());
-    }
-    if child == 0 {
-        unsafe {
-            libc::execl(path.as_ptr(), arg0.as_ptr(), ptr::null::<libc::c_char>());
-            libc::_exit(127);
-        }
-    }
     wait_clean_child(child)
 }
 
