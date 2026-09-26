@@ -18,9 +18,10 @@
  * clone with SIGCHLD as FORK, CLONE_VFORK as VFORK, and other clone exits as
  * CLONE. Capture classic clone metadata at syscall entry so the emitted
  * evidence describes that semantic mechanism instead of merely echoing the
- * syscall name. clone3 remains conservatively classified as CLONE here: this
- * Apache-2.0 BPF program must not use GPL-restricted user-memory helpers just
- * to recover clone_args metadata. */
+ * syscall name. clone3 is intentionally emitted as SPAWN_UNKNOWN because the
+ * Apache-2.0 BPF program may not use the GPL-restricted user-memory helper
+ * needed by the rejected approach to recover clone_args. Unknown is safer than
+ * inventing clone/fork/vfork semantics that were not established. */
 #define AX_CSIGNAL 0x000000ffULL
 #define AX_SIGCHLD 17ULL
 #define AX_CLONE_VFORK 0x00004000ULL
@@ -189,7 +190,7 @@ int execsurface_m83c_clone_exit(struct syscall_exit_ctx *ctx)
 SEC("tracepoint/syscalls/sys_exit_clone3")
 int execsurface_m83c_clone3_exit(struct syscall_exit_ctx *ctx)
 {
-    return record_spawn_exit(ctx, SPAWN_CLONE);
+    return record_spawn_exit(ctx, SPAWN_UNKNOWN);
 }
 
 SEC("tracepoint/syscalls/sys_exit_openat")
