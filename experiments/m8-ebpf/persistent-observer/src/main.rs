@@ -546,23 +546,20 @@ fn spawn_blocked(fixture: &PathBuf) -> Result<(Child, RawFd), Box<dyn Error>> {
     let write_fd = fds[1];
 
     let mut command = Command::new(fixture);
-    command.arg("tree");
+    command.arg("barrier").arg(read_fd.to_string());
     unsafe {
         command.pre_exec(move || {
             if libc::setpgid(0, 0) != 0 {
                 return Err(io::Error::last_os_error());
             }
             libc::close(write_fd);
-            let mut byte = 0_u8;
-            let rc = libc::read(read_fd, (&mut byte as *mut u8).cast(), 1);
-            let read_error = if rc == 1 {
-                None
-            } else {
-                Some(io::Error::last_os_error())
-            };
-            libc::close(read_fd);
-            if let Some(error) = read_error {
-                return Err(error);
+
+            let flags = libc::fcntl(read_fd, libc::F_GETFD);
+            if flags < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if libc::fcntl(read_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {
+                return Err(io::Error::last_os_error());
             }
             Ok(())
         });
