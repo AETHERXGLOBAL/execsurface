@@ -177,7 +177,9 @@ impl BackendDescriptor {
 
         let declared: BTreeSet<_> = supported.union(&unsupported).copied().collect();
         if declared != universe {
-            return Err("backend descriptor does not classify the full capability universe".to_owned());
+            return Err(
+                "backend descriptor does not classify the full capability universe".to_owned(),
+            );
         }
 
         Ok(())
@@ -458,11 +460,13 @@ mod api_tests {
             limitations: Vec::new(),
         });
         observation.complete = false;
-        observation.warnings.push(execsurface_model::ObserverWarning {
-            code: "event_limit_exceeded".to_owned(),
-            tid: None,
-            message: "controlled test".to_owned(),
-        });
+        observation
+            .warnings
+            .push(execsurface_model::ObserverWarning {
+                code: "event_limit_exceeded".to_owned(),
+                tid: None,
+                message: "controlled test".to_owned(),
+            });
 
         let completeness = classify_observation_completeness(&observation);
         assert_eq!(completeness, CollectionCompleteness::IncompleteLimit);
