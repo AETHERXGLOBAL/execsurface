@@ -8,7 +8,7 @@ Candidate backend: `linux-libbpf-metadata-experimental-v1`
 
 ## Red-team mandate
 
-Attempt to falsify M8.5 by looking for ways that event-count similarity, runtime identifiers, syscall names, incomplete evidence, unresolved path identity, unsupported capability classes, or CLI integration could be misrepresented as ptrace/eBPF semantic equivalence.
+Attempt to falsify M8.5 by looking for ways that event-count similarity, runtime identifiers, syscall names, incomplete evidence, unresolved path identity, unsupported capability classes, fixture unsafety, or CLI integration could be misrepresented as ptrace/eBPF semantic equivalence.
 
 This review is independent of the implementation role. Its job is to block closure if any candidate uncertainty can silently become equivalence or PASS authority.
 
@@ -52,33 +52,42 @@ This review is independent of the implementation role. Its job is to block closu
 
 This is not generalized to unused successful opens and is not an absence proof.
 
-### 7. Failed-open / absence claim under unresolved evidence
+### 7. Failed-open / absence claim under variable resolution health
 
 **Attack:** use a missing path and attempt to infer that no successful open occurred merely because no resolved focused successful-open witness exists.
 
-**Result:** **BLOCKED.** The missing path is not promoted to successful-open evidence, but because unrelated unresolved successful-open identities exist, the harness returns `blocked_incomplete` rather than claiming absence. This is the required conservative result.
+**Result:** **FAIL-CLOSED / HEALTH-CONDITIONAL.** The missing path is never promoted into successful-open evidence. If any candidate successful-open identity is unresolved, the requested absence conclusion is `blocked_incomplete`. If all candidate successful-open identities are resolved and both focused witness sets are empty, the class remains `non_comparable`; absence is still not promoted to equivalence.
 
-### 8. Unsupported capability promotion
+This distinction is required because userspace `/proc/<pid>/fd/<fd>` resolution can legitimately vary with scheduling between otherwise identical runners.
+
+### 8. vfork fixture safety
+
+**Attack:** accept parity evidence from Rust `libc::vfork()` even though the Rust/libc binding explicitly warns that `vfork` can corrupt memory.
+
+**Result:** **RUST PATH REMOVED.** The vfork witness was moved to a native C fixture compiled with clang. The child performs only `execl` and `_exit` before exec, removing Rust runtime/ownership behavior from the vfork evidence path.
+
+### 9. Unsupported capability promotion
 
 **Attack:** infer full-surface equivalence from passing selected classes.
 
 **Result:** **BLOCKED.** Unsupported classes remain `non_comparable`; `full_surface_comparable=false` remains explicit.
 
-### 9. eBPF PASS authority
+### 10. eBPF PASS authority
 
 **Attack:** make experimental libbpf evidence appear complete/PASS-eligible through the CLI.
 
 **Result:** **BLOCKED.** The CLI rejects an experimental report that claims `observation_complete=true`. The eBPF path remains observation-only and does not enter normal learn/check PASS authority.
 
-## Evidence reviewed
+## Final evidence reviewed
 
-Accepted current evidence at commit `e6bae3b89b37760144fa463bd697d7c3a228d6fe`:
+Final closure candidate at commit `a73cf1bd7ce485d0649268480cc3696113cb8a6c`:
 
-- normal repository CI: **PASS** — workflow run `36256349509`;
-- M8.5 semantic differential: **PASS** — workflow run `36256349532`;
+- normal repository CI: **PASS** — workflow run `36256996309`;
+- M8.5 semantic differential: **PASS** — workflow run `36256996339`;
+- clean fork/exec class-local parity: **PASS**;
 - focused `/dev/zero` successful-open witness: **equivalent** for the controlled positive existential proposition;
-- failed missing-path open: **not promoted**, while absence remains **blocked_incomplete** under unresolved candidate evidence;
-- vfork semantic parity: **PASS** for the controlled fixture;
+- failed missing-path open: **never promoted**, with verdict bound to actual resolution health (`blocked_incomplete` when unresolved identities exist, otherwise `non_comparable`);
+- native C vfork semantic parity: **PASS**;
 - clone3 unresolved semantics: **fail-closed**;
 - same-count / different-semantics mutation: **contradicted**;
 - incomplete selected evidence: **blocked_incomplete**.
@@ -89,7 +98,8 @@ Preserved negative evidence includes at least:
 - workflow run `36252411516` — nested-thread parent attribution mismatch;
 - kernel-verifier rejection of the GPL-restricted clone3 helper path under the Apache-2.0 boundary;
 - workflow run `36255562056` — focused successful-open proof incorrectly blocked by unrelated unresolved opens;
-- workflow run `36256075043` — positive focused proof passed, while the stale negative-test expectation was correctly contradicted by stricter `blocked_incomplete` absence semantics.
+- workflow run `36256075043` — positive focused proof passed while the first negative-test expectation exposed the need to bind absence conclusions to resolution health;
+- workflow run `36256614065` — the same negative fixture produced `non_comparable` because all unrelated successful-open identities resolved on that runner, proving that resolution completeness is scheduler/runner dependent and must be tested semantically rather than by one hard-coded verdict.
 
 ## Red-team decision
 
@@ -99,6 +109,7 @@ The following are permitted conclusions:
 
 - controlled classic fork / nested classic-clone lineage witnesses can be semantically equivalent across ptrace and the experimental eBPF candidate after the recorded fixes;
 - controlled process-exec occurrence witnesses can be semantically equivalent for the tested structural roles;
+- a controlled native-C vfork witness reaches scoped parity for the tested vfork -> exec workload;
 - a controlled used-FD positive successful-open witness can establish the same focused existential proposition across both backends;
 - incomplete evidence and unresolved absence remain fail-closed.
 
