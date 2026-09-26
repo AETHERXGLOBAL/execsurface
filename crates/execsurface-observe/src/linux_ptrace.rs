@@ -109,24 +109,42 @@ struct TraceeState {
     pending_syscall: Option<PendingSyscall>,
     newborn: bool,
     fd_table_id: u64,
+    tgid: libc::pid_t,
+    retired_by_exec: bool,
+    restart_esrch_seen: bool,
+    exit_event_status: Option<libc::c_int>,
+    exit_group_pending: bool,
+    syscall_info_esrch_after_exit_group: bool,
 }
 
 impl TraceeState {
-    fn root(fd_table_id: u64) -> Self {
+    fn root(fd_table_id: u64, tgid: libc::pid_t) -> Self {
         Self {
             pending_exec: None,
             pending_syscall: None,
             newborn: false,
             fd_table_id,
+            tgid,
+            retired_by_exec: false,
+            restart_esrch_seen: false,
+            exit_event_status: None,
+            exit_group_pending: false,
+            syscall_info_esrch_after_exit_group: false,
         }
     }
 
-    fn child(fd_table_id: u64) -> Self {
+    fn child(fd_table_id: u64, tgid: libc::pid_t) -> Self {
         Self {
             pending_exec: None,
             pending_syscall: None,
             newborn: true,
             fd_table_id,
+            tgid,
+            retired_by_exec: false,
+            restart_esrch_seen: false,
+            exit_event_status: None,
+            exit_group_pending: false,
+            syscall_info_esrch_after_exit_group: false,
         }
     }
 }
@@ -352,6 +370,7 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
         | libc::PTRACE_O_TRACEVFORK
         | libc::PTRACE_O_TRACECLONE
         | libc::PTRACE_O_TRACEEXEC
+        | libc::PTRACE_O_TRACEEXIT
         | libc::PTRACE_O_EXITKILL;
 
     ptrace_call(
@@ -363,37 +382,90 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
 
     let mut fd_tables = FdTables::new();
     let mut tracees = HashMap::new();
-    tracees.insert(root, TraceeState::root(fd_tables.root_id()));
+    tracees.insert(root, TraceeState::root(fd_tables.root_id(), root));
+    let mut preregistration_stops: HashMap<libc::pid_t, libc::c_int> = HashMap::new();
 
     let mut collector = Collector::new(options.event_limit);
     let mut root_outcome = CommandOutcome::default();
 
     resume_syscall(root, 0)?;
 
-    while !tracees.is_empty() {
+    while !tracees.is_empty() || !preregistration_stops.is_empty() {
         let mut wait_status = 0;
         let tid = unsafe { libc::waitpid(-1, &mut wait_status, libc::__WALL) };
         if tid < 0 {
             let error = io::Error::last_os_error();
-            if error.raw_os_error() == Some(libc::ECHILD) && tracees.is_empty() {
+            if error.raw_os_error() == Some(libc::ECHILD)
+                && tracees.is_empty()
+                && preregistration_stops.is_empty()
+            {
+                break;
+            }
+            if error.raw_os_error() == Some(libc::ECHILD) && !preregistration_stops.is_empty() {
+                let mut pending = preregistration_stops.keys().copied().collect::<Vec<_>>();
+                pending.sort_unstable();
+                return Err(ObserveError::Protocol(format!(
+                    "M9_PREREGISTRATION_STOPS_AT_ECHILD pending_tids={pending:?}"
+                )));
+            }
+            if error.raw_os_error() == Some(libc::ECHILD) {
+                let mut unresolved = tracees
+                    .iter()
+                    .filter_map(|(tid, state)| {
+                        state.exit_event_status.is_none().then_some((
+                            *tid,
+                            state.tgid,
+                            state.retired_by_exec,
+                            state.restart_esrch_seen,
+                            state.exit_group_pending,
+                            state.syscall_info_esrch_after_exit_group,
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                unresolved.sort_unstable_by_key(|entry| entry.0);
+                if !unresolved.is_empty() {
+                    return Err(ObserveError::Protocol(format!(
+                        "M9_STALE_TRACEES_WITHOUT_EXIT_EVIDENCE_AT_ECHILD tracked={unresolved:?}"
+                    )));
+                }
+
+                let mut reconciled = tracees
+                    .iter()
+                    .map(|(tid, state)| {
+                        (
+                            *tid,
+                            state.tgid,
+                            state.retired_by_exec,
+                            state.restart_esrch_seen,
+                            state.exit_group_pending,
+                            state.syscall_info_esrch_after_exit_group,
+                            state.exit_event_status.unwrap(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                reconciled.sort_unstable_by_key(|entry| entry.0);
+                for (stale_tid, _, _, _, _, _, exit_status) in &reconciled {
+                    if !apply_terminal_outcome(root, *stale_tid, *exit_status, &mut root_outcome) {
+                        return Err(ObserveError::Protocol(format!(
+                            "M9_EXIT_EVENT_STATUS_NONTERMINAL_AT_ECHILD tid={stale_tid} status={exit_status:#x}"
+                        )));
+                    }
+                }
+                tracees.clear();
                 break;
             }
             return Err(error.into());
         }
 
-        if libc::WIFEXITED(wait_status) {
-            if tid == root {
-                root_outcome.exit_code = Some(libc::WEXITSTATUS(wait_status));
-            }
-            tracees.remove(&tid);
-            continue;
+        if (libc::WIFEXITED(wait_status) || libc::WIFSIGNALED(wait_status))
+            && !tracees.contains_key(&tid)
+        {
+            return Err(ObserveError::Protocol(format!(
+                "M9_UNTRACKED_TERMINAL_WAIT tid={tid} status={wait_status:#x}"
+            )));
         }
 
-        if libc::WIFSIGNALED(wait_status) {
-            if tid == root {
-                root_outcome.signal = Some(libc::WTERMSIG(wait_status));
-            }
-            tracees.remove(&tid);
+        if record_terminal_wait_status(root, tid, wait_status, &mut tracees, &mut root_outcome) {
             continue;
         }
 
@@ -404,20 +476,86 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
         let stop_signal = libc::WSTOPSIG(wait_status);
         let event = ((wait_status as u32) >> 16) as libc::c_int;
 
+        if !tracees.contains_key(&tid) {
+            if stop_signal != libc::SIGSTOP || event != 0 {
+                return Err(ObserveError::Protocol(format!(
+                    "M9_UNEXPECTED_STOP_BEFORE_REGISTRATION tid={tid} signal={stop_signal} event={event} status={wait_status:#x}"
+                )));
+            }
+            if preregistration_stops.insert(tid, wait_status).is_some() {
+                return Err(ObserveError::Protocol(format!(
+                    "M9_DUPLICATE_PREREGISTRATION_STOP tid={tid}"
+                )));
+            }
+            continue;
+        }
+
+        if tracees
+            .get(&tid)
+            .map(|state| state.retired_by_exec)
+            .unwrap_or(false)
+            && !(stop_signal == libc::SIGTRAP && event == libc::PTRACE_EVENT_EXIT)
+        {
+            return Err(ObserveError::Protocol(format!(
+                "M9_RETIRED_EXEC_UNEXPECTED_STOP tid={tid} signal={stop_signal} event={event}"
+            )));
+        }
+
         if stop_signal == libc::SIGTRAP && event != 0 {
-            handle_ptrace_event(tid, event, &mut tracees, &mut fd_tables, &mut collector)?;
-            resume_syscall(tid, 0)?;
+            handle_ptrace_event(
+                tid,
+                event,
+                &mut tracees,
+                &mut preregistration_stops,
+                &mut fd_tables,
+                &mut collector,
+            )?;
+            resume_after_observed_stop(root, tid, 0, &mut tracees, &mut root_outcome)?;
             continue;
         }
 
         if stop_signal == (libc::SIGTRAP | 0x80) {
-            let info = syscall_info(tid)?;
+            let info = match syscall_info(tid) {
+                Ok(info) => info,
+                Err(ObserveError::Os(error)) if error.raw_os_error() == Some(libc::ESRCH) => {
+                    let recoverable = tracees
+                        .get(&tid)
+                        .map(|state| {
+                            state.exit_group_pending
+                                && state.pending_syscall.is_none()
+                                && !state.retired_by_exec
+                                && state.exit_event_status.is_none()
+                        })
+                        .unwrap_or(false);
+                    if !recoverable {
+                        return Err(ObserveError::Protocol(format!(
+                            "PTRACE_GET_SYSCALL_INFO returned ESRCH for tid {tid} without bounded exit-group lifecycle evidence"
+                        )));
+                    }
+                    let state = tracees.get_mut(&tid).ok_or_else(|| {
+                        ObserveError::Protocol(format!(
+                            "bounded GET_SYSCALL_INFO ESRCH recovery lost tracked tid {tid}"
+                        ))
+                    })?;
+                    state.syscall_info_esrch_after_exit_group = true;
+                    /*
+                     * The kernel has already refused a ptrace read while the
+                     * same thread group is in an explicitly observed
+                     * exit_group teardown. Do not fabricate syscall phase
+                     * information and do not restart the dying thread here.
+                     * Its subsequent PTRACE_EVENT_EXIT / terminal wait remains
+                     * responsible for lifecycle completion.
+                     */
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             if let Some((nr, args)) = info.entry() {
                 handle_syscall_entry(tid, nr, args, &mut tracees, &mut collector);
             } else if let Some(result) = info.exit() {
                 handle_syscall_exit(tid, result, &mut tracees, &mut fd_tables, &mut collector);
             }
-            resume_syscall(tid, 0)?;
+            resume_after_observed_stop(root, tid, 0, &mut tracees, &mut root_outcome)?;
             continue;
         }
 
@@ -429,17 +567,81 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
             _ => stop_signal == libc::SIGTRAP,
         };
 
-        resume_syscall(tid, if suppress_signal { 0 } else { stop_signal })?;
+        resume_after_observed_stop(
+            root,
+            tid,
+            if suppress_signal { 0 } else { stop_signal },
+            &mut tracees,
+            &mut root_outcome,
+        )?;
     }
 
     collector.observation.outcome = root_outcome;
     Ok(collector.observation)
 }
 
+fn apply_terminal_outcome(
+    root: libc::pid_t,
+    tid: libc::pid_t,
+    wait_status: libc::c_int,
+    root_outcome: &mut CommandOutcome,
+) -> bool {
+    if libc::WIFEXITED(wait_status) {
+        if tid == root {
+            root_outcome.exit_code = Some(libc::WEXITSTATUS(wait_status));
+        }
+        return true;
+    }
+
+    if libc::WIFSIGNALED(wait_status) {
+        if tid == root {
+            root_outcome.signal = Some(libc::WTERMSIG(wait_status));
+        }
+        return true;
+    }
+
+    false
+}
+
+fn record_terminal_wait_status(
+    root: libc::pid_t,
+    tid: libc::pid_t,
+    wait_status: libc::c_int,
+    tracees: &mut HashMap<libc::pid_t, TraceeState>,
+    root_outcome: &mut CommandOutcome,
+) -> bool {
+    if apply_terminal_outcome(root, tid, wait_status, root_outcome) {
+        tracees.remove(&tid);
+        return true;
+    }
+    false
+}
+
+fn resume_after_observed_stop(
+    _root: libc::pid_t,
+    tid: libc::pid_t,
+    signal: libc::c_int,
+    tracees: &mut HashMap<libc::pid_t, TraceeState>,
+    _root_outcome: &mut CommandOutcome,
+) -> Result<(), ObserveError> {
+    match resume_syscall(tid, signal) {
+        Ok(()) => Ok(()),
+        Err(ObserveError::Os(resume_error)) if resume_error.raw_os_error() == Some(libc::ESRCH) => {
+            let state = tracees.get_mut(&tid).ok_or_else(|| {
+                ObserveError::Protocol(format!("M9_RESTART_ESRCH_FOR_UNTRACKED_TID tid={tid}"))
+            })?;
+            state.restart_esrch_seen = true;
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn handle_ptrace_event(
     tid: libc::pid_t,
     event: libc::c_int,
     tracees: &mut HashMap<libc::pid_t, TraceeState>,
+    preregistration_stops: &mut HashMap<libc::pid_t, libc::c_int>,
     fd_tables: &mut FdTables,
     collector: &mut Collector,
 ) -> Result<(), ObserveError> {
@@ -456,24 +658,36 @@ fn handle_ptrace_event(
                 .get(&tid)
                 .map(|state| state.fd_table_id)
                 .unwrap_or(fd_tables.root_id());
-
-            let share_files = if event == libc::PTRACE_EVENT_CLONE {
+            let parent_tgid = tracees.get(&tid).map(|state| state.tgid).unwrap_or(tid);
+            let clone_flags = if event == libc::PTRACE_EVENT_CLONE {
                 match tracees
                     .get(&tid)
                     .and_then(|state| state.pending_syscall.as_ref())
                 {
-                    Some(PendingSyscall::Clone { flags }) => flags & libc::CLONE_FILES as u64 != 0,
+                    Some(PendingSyscall::Clone { flags }) => Some(*flags),
                     _ => {
                         collector.warning(
                             tid,
                             "clone_flags_unavailable",
-                            "PTRACE_EVENT_CLONE observed without clone/clone3 flags; fd sharing semantics are incomplete",
+                            "PTRACE_EVENT_CLONE observed without clone/clone3 flags; fd sharing and thread-group semantics are incomplete",
                         );
-                        false
+                        None
                     }
                 }
             } else {
-                false
+                None
+            };
+
+            let share_files = clone_flags
+                .map(|flags| flags & libc::CLONE_FILES as u64 != 0)
+                .unwrap_or(false);
+            let child_tgid = if clone_flags
+                .map(|flags| flags & libc::CLONE_THREAD as u64 != 0)
+                .unwrap_or(false)
+            {
+                parent_tgid
+            } else {
+                child_tid
             };
 
             let child_table = if share_files {
@@ -484,7 +698,27 @@ fn handle_ptrace_event(
 
             tracees
                 .entry(child_tid)
-                .or_insert_with(|| TraceeState::child(child_table));
+                .or_insert_with(|| TraceeState::child(child_table, child_tgid));
+
+            if let Some(buffered_status) = preregistration_stops.remove(&child_tid) {
+                let buffered_signal = libc::WSTOPSIG(buffered_status);
+                let buffered_event = ((buffered_status as u32) >> 16) as libc::c_int;
+                if !libc::WIFSTOPPED(buffered_status)
+                    || buffered_signal != libc::SIGSTOP
+                    || buffered_event != 0
+                {
+                    return Err(ObserveError::Protocol(format!(
+                        "M9_INVALID_BUFFERED_PREREGISTRATION_STOP tid={child_tid} signal={buffered_signal} event={buffered_event} status={buffered_status:#x}"
+                    )));
+                }
+                let child_state = tracees.get_mut(&child_tid).ok_or_else(|| {
+                    ObserveError::Protocol(format!(
+                        "M9_REGISTERED_CHILD_STATE_MISSING tid={child_tid}"
+                    ))
+                })?;
+                child_state.newborn = false;
+                resume_syscall(child_tid, 0)?;
+            }
 
             collector.event(
                 tid,
@@ -495,10 +729,57 @@ fn handle_ptrace_event(
             );
         }
         libc::PTRACE_EVENT_EXEC => {
+            let former_tid = get_event_message(tid)? as libc::pid_t;
+            let mut state = if former_tid == tid {
+                tracees.remove(&tid).ok_or_else(|| {
+                    ObserveError::Protocol(format!(
+                        "PTRACE_EVENT_EXEC arrived for untracked tid {tid}"
+                    ))
+                })?
+            } else {
+                let execing = tracees.remove(&former_tid).ok_or_else(|| {
+                    ObserveError::Protocol(format!(
+                        "PTRACE_EVENT_EXEC remapped tid {former_tid} -> {tid}, but former tid was not tracked"
+                    ))
+                })?;
+                if let Some(displaced_leader) = tracees.remove(&tid) {
+                    if displaced_leader.tgid != execing.tgid {
+                        return Err(ObserveError::Protocol(format!(
+                            "PTRACE_EVENT_EXEC identity conflict former_tid={former_tid} new_tid={tid} former_tgid={} displaced_tgid={}",
+                            execing.tgid, displaced_leader.tgid
+                        )));
+                    }
+                }
+                execing
+            };
+
+            let old_tgid = state.tgid;
+            let mut retired = Vec::new();
+            for (other_tid, other_state) in tracees.iter_mut() {
+                if other_state.tgid == old_tgid {
+                    other_state.retired_by_exec = true;
+                    other_state.pending_exec = None;
+                    other_state.pending_syscall = None;
+                    retired.push(*other_tid);
+                }
+            }
+            retired.sort_unstable();
+
+            state.tgid = tid;
+            state.newborn = false;
+            state.retired_by_exec = false;
+            state.restart_esrch_seen = false;
+            state.exit_event_status = None;
+            state.exit_group_pending = false;
+            state.syscall_info_esrch_after_exit_group = false;
+            tracees.insert(tid, state);
+
             apply_exec_fd_semantics(tid, tracees, fd_tables);
-            let state = tracees
-                .entry(tid)
-                .or_insert_with(|| TraceeState::root(fd_tables.root_id()));
+            let state = tracees.get_mut(&tid).ok_or_else(|| {
+                ObserveError::Protocol(format!(
+                    "PTRACE_EVENT_EXEC lost reconciled state for tid {tid}"
+                ))
+            })?;
             match state.pending_exec.take() {
                 Some(path) => collector.event(tid, RawEventKind::ProcessExec { path }),
                 None => collector.warning(
@@ -507,6 +788,13 @@ fn handle_ptrace_event(
                     "PTRACE_EVENT_EXEC was observed without a readable pending exec pathname",
                 ),
             }
+        }
+        libc::PTRACE_EVENT_EXIT => {
+            let exit_status = get_event_message(tid)? as libc::c_int;
+            let state = tracees.get_mut(&tid).ok_or_else(|| {
+                ObserveError::Protocol(format!("PTRACE_EVENT_EXIT arrived for untracked tid {tid}"))
+            })?;
+            state.exit_event_status = Some(exit_status);
         }
         _ => {}
     }
@@ -562,6 +850,15 @@ fn handle_syscall_entry(
     }
 
     let nr = nr as libc::c_long;
+
+    if nr == libc::SYS_exit_group {
+        let tgid = tracees.get(&tid).map(|state| state.tgid).unwrap_or(tid);
+        for state in tracees.values_mut() {
+            if state.tgid == tgid {
+                state.exit_group_pending = true;
+            }
+        }
+    }
 
     if nr == libc::SYS_execve {
         record_exec_path(tid, libc::AT_FDCWD, args[0], tracees, collector);
@@ -951,7 +1248,7 @@ fn record_exec_path(
         Ok(path) => {
             tracees
                 .entry(tid)
-                .or_insert_with(|| TraceeState::root(1))
+                .or_insert_with(|| TraceeState::root(1, tid))
                 .pending_exec = Some(path);
         }
         Err(error) => collector.warning(tid, "exec_path_unreadable", error.to_string()),
