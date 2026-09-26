@@ -82,3 +82,100 @@ jobs:
               exit 1
             fi
           done
+
+  pinned-m7-fd-source-compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      FD_SHA: ce97e473ebaec49697c07daa50a7bc2b32f713d2
+    steps:
+      - name: Checkout ExecSurface
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned sharkdp fd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: sharkdp/fd
+          ref: ${{ env.FD_SHA }}
+          path: external/fd
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain and verify upstream identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustc "+$RUST_TOOLCHAIN" --version --verbose
+          test "$(git -C external/fd rev-parse HEAD)" = "$FD_SHA"
+          test -z "$(git -C external/fd status --porcelain)"
+
+      - name: Build current ExecSurface and pinned fd
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface
+          (cd external/fd && cargo "+$RUST_TOOLCHAIN" build --locked --release --all-features)
+          external/fd/target/release/fd --version
+          mkdir -p external/fd/m7-fixture/sub /tmp/execsurface-m7-source
+          printf 'alpha\n' > external/fd/m7-fixture/alpha.txt
+          printf 'beta\n' > external/fd/m7-fixture/sub/beta.txt
+          test -z "$(git -C external/fd status --porcelain --untracked-files=no)"
+
+      - name: Learn and prove repeated no-drift compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/debug/execsurface learn \
+            --output /tmp/execsurface-m7-source/fd.lock.json \
+            -- /bin/bash -lc \
+            'cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
+
+          for n in 1 2; do
+            target/debug/execsurface check \
+              --baseline /tmp/execsurface-m7-source/fd.lock.json \
+              --json-output "/tmp/execsurface-m7-source/fd-pass-${n}.json" \
+              --markdown-output "/tmp/execsurface-m7-source/fd-pass-${n}.md" \
+              -- /bin/bash -lc \
+              'cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
+          done
+
+          python3 - <<'PY'
+          import json
+          for n in (1, 2):
+              data = json.load(open(f"/tmp/execsurface-m7-source/fd-pass-{n}.json"))
+              assert data["verdict"] == "pass", data["verdict"]
+              assert data["findings"] == [], data["findings"]
+          PY
+
+      - name: Prove controlled runtime expansion remains visible
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          target/debug/execsurface check \
+            --baseline /tmp/execsurface-m7-source/fd.lock.json \
+            --json-output /tmp/execsurface-m7-source/fd-controlled.json \
+            --markdown-output /tmp/execsurface-m7-source/fd-controlled.md \
+            -- /bin/bash -lc \
+            'cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null; /usr/bin/sha256sum m7-fixture/alpha.txt >/dev/null'
+          status=$?
+          set -e
+          test "$status" -eq 10
+
+          python3 - <<'PY'
+          import json
+          data = json.load(open("/tmp/execsurface-m7-source/fd-controlled.json"))
+          assert data["verdict"] == "review", data["verdict"]
+          hits = []
+          for finding in data["findings"]:
+              if finding["change"] != "added" or finding["effect_kind"] != "process_exec":
+                  continue
+              executable = finding.get("evidence", {}).get("effect", {}).get("executable", {})
+              if executable.get("family") == "sha256sum":
+                  hits.append(finding)
+          assert hits, "controlled sha256sum execution was not surfaced as an added process_exec"
+          PY
