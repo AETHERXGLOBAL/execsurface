@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <linux/bpf.h>
 #include <linux/types.h>
-#include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 
@@ -17,8 +16,8 @@ struct process_event {
 
 /*
  * Minimal CO-RE view: only the field required by the feasibility probe is
- * described. preserve_access_index makes the field access relocatable against
- * the host kernel BTF instead of freezing a task_struct layout into the object.
+ * described. preserve_access_index makes the direct field access relocatable
+ * against the host kernel BTF instead of freezing task_struct layout.
  */
 struct task_struct {
     int pid;
@@ -68,23 +67,22 @@ int execsurface_m8_exec(void *ctx)
 }
 
 /*
- * Use BTF tracing for lineage. The classic sched_process_fork perf-event
- * attachment is denied by the GitHub-hosted runner even under sudo; tp_btf
- * exercises the BTF-aware path directly and avoids claiming that host-policy
- * limitation is an observer-semantic failure.
+ * BTF tracing provides trusted task_struct pointers. Use direct CO-RE-relocated
+ * field loads rather than bpf_probe_read_kernel: the latter is GPL-restricted
+ * on this kernel and ExecSurface must not change its Apache-2.0 license merely
+ * to make a feasibility probe pass.
  */
 SEC("tp_btf/sched_process_fork")
 int BPF_PROG(execsurface_m8_fork, struct task_struct *parent, struct task_struct *child)
 {
-    __s32 parent_pid = 0;
-    __s32 child_pid = 0;
+    __s32 parent_pid;
+    __s32 child_pid;
 
     if (!parent || !child)
         return 0;
-    if (bpf_core_read(&parent_pid, sizeof(parent_pid), &parent->pid) < 0)
-        return 0;
-    if (bpf_core_read(&child_pid, sizeof(child_pid), &child->pid) < 0)
-        return 0;
+
+    parent_pid = __builtin_preserve_access_index(parent->pid);
+    child_pid = __builtin_preserve_access_index(child->pid);
     if (parent_pid <= 0 || child_pid <= 0)
         return 0;
 
