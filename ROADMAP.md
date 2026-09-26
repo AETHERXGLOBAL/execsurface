@@ -122,28 +122,41 @@ GitHub Release binaries and the stable `AETHERXGLOBAL/execsurface@v0.1` Action c
 
 ## M8 — Pluggable Observation Backends & eBPF Evidence Path
 
-**OPEN — M8.0–M8.4 CLOSED / M8.5 NEXT**
+**OPEN — M8.0–M8.7 CLOSED / M8.8 NEXT**
 
-M8 adds a pluggable collection layer so ExecSurface can evaluate an eBPF fast path without replacing or weakening the current native ptrace correctness reference.
+M8 adds an evidence-gated pluggable collection layer so ExecSurface can evaluate eBPF without replacing or weakening the native ptrace correctness reference.
 
-The milestone is explicitly additive. Existing canonicalization, baseline, diff, policy, verdict, report, public installation, and `@v0.1` behavior remain stable until an evidence-backed gate authorizes a change.
+The program remains additive. Existing canonicalization, baseline, diff, policy, verdict, report, public installation, and stable `@v0.1` behavior remain authoritative until a later gate explicitly changes them.
 
 Gate status:
 
 1. **M8.0 — CLOSED / ACCEPTED:** backend contract, capability/completeness/loss/privacy/comparability architecture.
-2. **M8.1 — CLOSED / ACCEPTED:** current native ptrace implementation moved behind the backend abstraction with existing CI/distribution/action behavior preserved.
-3. **M8.2 — CLOSED / ACCEPTED:** Aya and libbpf-rs both passed the feasibility hard gates; **libbpf-rs / libbpf selected for experimental M8.3 implementation**. Vendored packaging proved a Rust 1.82 build can remove `libelf`, `zlib`, and `zstd` from runtime dependencies while preserving the feasibility semantics. Aya remains a viable preserved alternative.
-4. **M8.3 — CLOSED / ACCEPTED:** typed partial-capability contract, conditional fail-closed `/proc` path resolution, a real isolated libbpf observer, central contract checking, launched-tree scoping, explicit loss/limit handling, and an explicit observation-only CLI bridge were proved on the declared reference CI environment. Default `observe`, `learn`, and `check` retain ptrace semantics; the experimental route requires an explicit companion, never silently falls back, and rejects any report that claims complete/PASS-eligible evidence.
-5. **M8.4 — CLOSED / PROVED:** real producer-loss detection, userspace truncation, controlled consumer lag, post-root descendant drain, lifecycle timeout, machine-readable pre-target and decode failures, post-start collector failure containment, process-group termination, and aggregate no-PASS preservation were proved under controlled CI. The independent red team found and closed the post-start failure containment gap before merge. eBPF PASS authority remains withheld.
-6. **M8.5 — OPEN / NEXT:** ptrace/eBPF semantic parity harness and machine-readable cross-backend comparability rules.
-7. **M8.6 — OPEN:** performance and kernel/platform compatibility evidence.
-8. **M8.7 — OPEN:** opt-in public-alpha integration, expanded incomplete-state CLI surfacing, packaging, documentation and release gate.
+2. **M8.1 — CLOSED / ACCEPTED:** ptrace moved behind a backend abstraction while existing CI/distribution/action behavior remained stable.
+3. **M8.2 — CLOSED / ACCEPTED:** Aya and libbpf-rs passed feasibility hard gates; **libbpf-rs / libbpf selected for the experimental implementation**. Apache-2.0 and packaging constraints remain explicit.
+4. **M8.3 — CLOSED / ACCEPTED:** typed partial-capability contract, conditional fail-closed path resolution, isolated libbpf observer, launched-tree scoping, explicit loss/limit handling and observation-only CLI bridge proved. Default `observe`, `learn`, and `check` retain ptrace semantics.
+5. **M8.4 — CLOSED / PROVED:** producer loss, truncation, consumer lag, post-root descendant drain, lifecycle timeout, machine-readable collector/decode failures and post-start containment were proved fail-closed. eBPF PASS authority remained withheld.
+6. **M8.5 — CLOSED / ACCEPTED:** cross-backend semantic differential harness proved bounded parity for selected process/exec and focused successful-open evidence classes, including real counterexamples and fail-closed incomplete-state handling. It did not establish full-surface equivalence.
+7. **M8.6 — CLOSED / ACCEPTED — MEASUREMENT GATE:** exact-host performance/compatibility work showed the current per-invocation libbpf lifecycle is dominated by teardown; isolated detach was roughly 490 ms median on the measured host while target-runtime overhead was small. The result motivated persistent attachment rather than timer shortcuts.
+8. **M8.7 — CLOSED / ACCEPTED — BOUNDED PERSISTENT SESSION ARCHITECTURE FEASIBLE:** persistent attachment, explicit session epochs, root-registration barrier, task-creation propagation, descendant drain, deterministic reset checks, crash/restart isolation, real routing failure, producer loss, event-budget exhaustion and live stale-epoch rejection were proved for the tested single-active-session architecture. M8.7c exact-host measurement reduced the conservative two-session amortized median by about 16.7% versus per-invocation libbpf, but remained about 50.5x the ptrace median; therefore no performance-based backend promotion is justified. Independent Red Team accepted only the bounded architecture claim.
+9. **M8.8 — OPEN / NEXT:** controlled public-alpha integration decision. First decide whether any eBPF exposure is justified despite the remaining performance, privilege/service, compatibility and semantic-surface gaps. Any exposure must be explicit opt-in and cannot promote eBPF PASS, auto-selection, cross-backend baseline interchangeability or full comparability without new evidence.
 
-No eBPF path may produce evidence-equivalent PASS until loss accounting, privacy, capability metadata, and cross-backend comparability are proved through the later gates. M8.4 proves fail-closed collection health and lifecycle behavior, not semantic parity or production authority.
+### M8 authority boundary after M8.7
+
+- ptrace correctness reference: **RETAINED**;
+- eBPF full-surface comparability: **FALSE**;
+- eBPF PASS authority: **NOT AUTHORIZED**;
+- eBPF `learn` / `check`: **NOT AUTHORIZED**;
+- backend auto-selection: **NOT AUTHORIZED**;
+- cross-backend baseline interchangeability: **NOT AUTHORIZED**;
+- production persistent daemon/service: **NOT AUTHORIZED**;
+- default public install path: **UNCHANGED**.
 
 Architecture: `docs/milestones/M8_EBPF_ARCHITECTURE.md`.
 M8.2 decision: `docs/milestones/M8_2_STACK_DECISION.md`.
 M8.3 collector evidence: `docs/milestones/M8_3C_COLLECTOR.md`.
 M8.3 CLI evidence: `docs/milestones/M8_3C2_CLI_BRIDGE.md`.
 M8.4 evidence: `docs/milestones/M8_4_LOSS_SEMANTICS.md`.
-Tracking: GitHub Issues #34, #37 and #40.
+M8.5 evidence: `docs/milestones/M8_5_SEMANTIC_PARITY.md`.
+M8.6 evidence: `docs/milestones/M8_6_PERFORMANCE_COMPATIBILITY.md` and `docs/milestones/M8_6_RED_TEAM_REVIEW.md`.
+M8.7 evidence: `docs/milestones/M8_7_PERSISTENT_OBSERVER.md`, `docs/milestones/M8_7C_PERFORMANCE_PROTOCOL.md`, and `docs/milestones/M8_7_RED_TEAM_REVIEW.md`.
+Tracking: GitHub Issues #34, #37, #40, #42, #44 and #46.
