@@ -81,7 +81,8 @@ int execsurface_m84_exit(void *ctx)
     __u64 pid_tgid;
     (void)ctx;
     pid_tgid = bpf_get_current_pid_tgid();
-    return submit_event(EVENT_EXIT, (__u32)(pid_tgid >> 32), 0, 0);
+    /* Lower 32 bits are the task/TID identity returned by clone/fork. */
+    return submit_event(EVENT_EXIT, (__u32)pid_tgid, 0, 0);
 }
 
 static __always_inline int record_spawn_exit(struct syscall_exit_ctx *ctx, __u32 mechanism)
