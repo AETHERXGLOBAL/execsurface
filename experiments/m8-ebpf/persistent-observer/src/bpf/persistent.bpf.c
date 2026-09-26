@@ -16,6 +16,10 @@
 #define AX_SIGCHLD 17ULL
 #define AX_CLONE_VFORK 0x00004000ULL
 
+#ifndef M8_7_RINGBUF_MAX_ENTRIES
+#define M8_7_RINGBUF_MAX_ENTRIES 65536
+#endif
+
 #ifndef M8_7_TASK_EPOCH_MAX_ENTRIES
 #define M8_7_TASK_EPOCH_MAX_ENTRIES 4096
 #endif
@@ -58,7 +62,8 @@ struct sched_process_fork_ctx {
 
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 65536);
+    /* M8.7b5 may shrink this only in an isolated fault-evidence build. */
+    __uint(max_entries, M8_7_RINGBUF_MAX_ENTRIES);
 } events SEC(".maps");
 
 struct {
