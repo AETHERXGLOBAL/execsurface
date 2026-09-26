@@ -6,7 +6,6 @@ rust-version = "1.87"
 publish = false
 
 [dependencies]
-anyhow = "1"
 aya = "=0.14.0"
 
 [workspace]
