@@ -17,7 +17,7 @@ ExecSurface is a Linux-first developer tool that learns an accepted **runtime ex
 
 It is designed for software, CI pipelines, dependencies, developer tools and AI tooling where code review alone does not show every runtime effect.
 
-> **Public Alpha:** Linux x86_64 only. Current product version: **0.1.0-alpha.1**.
+> **Public Alpha:** Linux x86_64 only. Current product version: **0.1.0-alpha.2**.
 
 ### The idea in 10 seconds
 
@@ -40,7 +40,7 @@ ExecSurface does **not** infer that this is malicious. It reports observed drift
 ### 1. Install the public alpha — no source clone
 
 ```bash
-VERSION=v0.1.0-alpha.1
+VERSION=v0.1.0-alpha.2
 TARGET=x86_64-unknown-linux-gnu
 ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
 
@@ -80,7 +80,7 @@ ExecSurface Doctor
 [PASS] x86_64
 [PASS] ptrace observer available
 [PASS] workspace writable
-[PASS] ExecSurface 0.1.0-alpha.1
+[PASS] ExecSurface 0.1.0-alpha.2
 
 Ready.
 ```
@@ -115,15 +115,25 @@ execsurface check   --policy execsurface-policy.json   -- /bin/bash -lc 'cargo t
 
 For a five-minute controlled drift demonstration, see **[Five-Minute Start](docs/QUICKSTART_5_MIN.md)**.
 
-## Cargo fallback
+## Cargo installation
 
-A source clone is not required:
+A source clone is not required. Until the first crates.io publication is completed, use the immutable Git tag:
 
 ```bash
-cargo install   --git https://github.com/AETHERXGLOBAL/execsurface.git   --tag v0.1.0-alpha.1   execsurface-cli   --locked
+cargo install \
+  --git https://github.com/AETHERXGLOBAL/execsurface.git \
+  --tag v0.1.0-alpha.2 \
+  execsurface \
+  --locked
 ```
 
-This fallback is tested from a fresh runner. crates.io publishing is intentionally deferred for the public alpha; the workspace is not being distorted merely to publish a registry name.
+The workspace is now registry-ready without changing its runtime semantics. After the first crates.io publication is verified, the Rust-native install path will become:
+
+```bash
+cargo install execsurface --locked
+```
+
+See [crates.io Publishing](docs/CRATES_IO_PUBLISHING.md).
 
 ## GitHub Actions
 
@@ -274,8 +284,8 @@ cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace --all-targets
 
-cargo run -p execsurface-cli -- --version
-cargo run -p execsurface-cli -- doctor
+cargo run -p execsurface -- --version
+cargo run -p execsurface -- doctor
 ```
 
 Architecture-affecting changes remain evidence-gated. See [CONTRIBUTING.md](CONTRIBUTING.md) and [GOVERNANCE.md](GOVERNANCE.md).
