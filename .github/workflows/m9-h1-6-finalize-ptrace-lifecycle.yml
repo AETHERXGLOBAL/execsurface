@@ -19,6 +19,8 @@ jobs:
     env:
       RUST_TOOLCHAIN: 1.90.0
       JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+      FIXTURE_TIMEOUT_SECONDS: 10
+      JUST_TIMEOUT_SECONDS: 120
     steps:
       - name: Checkout hardening branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
@@ -98,15 +100,27 @@ jobs:
           cargo "+$RUST_TOOLCHAIN" build -p execsurface \
             2>&1 | tee m9-h1-6-evidence/build.log
 
-      - name: Stress finalized exit-group lifecycle 120 times
+      - name: Stress finalized exit-group lifecycle 120 times with fail-closed watchdog
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           : > m9-h1-6-evidence/exit-group-summary.txt
           for attempt in $(seq 1 120); do
-            target/debug/execsurface observe -- /tmp/m9-h1-exit-group-race \
+            set +e
+            timeout --signal=KILL "${FIXTURE_TIMEOUT_SECONDS}s" \
+              target/debug/execsurface observe -- /tmp/m9-h1-exit-group-race \
               > "m9-h1-6-evidence/exit-group-${attempt}.json" \
               2> "m9-h1-6-evidence/exit-group-${attempt}.stderr"
+            rc=$?
+            set -e
+            printf 'attempt=%s rc=%s\n' "$attempt" "$rc" \
+              >> m9-h1-6-evidence/exit-group-summary.txt
+            if [ "$rc" -ne 0 ]; then
+              printf 'FAIL attempt=%s rc=%s (timeout/hang or observer failure)\n' \
+                "$attempt" "$rc" >&2
+              cat "m9-h1-6-evidence/exit-group-${attempt}.stderr" >&2 || true
+              exit 1
+            fi
             python3 - "$attempt" <<'PY'
           import json
           import sys
@@ -120,20 +134,30 @@ jobs:
           assert outcome.get("signal") is None, (path, outcome)
           PY
             test ! -s "m9-h1-6-evidence/exit-group-${attempt}.stderr"
-            printf 'attempt=%s complete=true exit=0 stderr_empty=true\n' \
-              "$attempt" >> m9-h1-6-evidence/exit-group-summary.txt
           done
+          printf 'complete_runs=120\nwatchdog_seconds=%s\n' "$FIXTURE_TIMEOUT_SECONDS" \
+            >> m9-h1-6-evidence/exit-group-summary.txt
 
-      - name: Re-prove pre-registration lifecycle fixture
+      - name: Re-prove pre-registration lifecycle fixture with fail-closed watchdog
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           : > m9-h1-6-evidence/prereg-summary.txt
           for attempt in $(seq 1 12); do
-            target/debug/execsurface observe -- \
+            set +e
+            timeout --signal=KILL "${FIXTURE_TIMEOUT_SECONDS}s" \
+              target/debug/execsurface observe -- \
               /tmp/m9-h1-thread-lifecycle-repro 12 16 4 \
               > "m9-h1-6-evidence/prereg-${attempt}.stdout" \
               2> "m9-h1-6-evidence/prereg-${attempt}.stderr"
+            rc=$?
+            set -e
+            printf 'attempt=%s rc=%s\n' "$attempt" "$rc" \
+              >> m9-h1-6-evidence/prereg-summary.txt
+            if [ "$rc" -ne 0 ]; then
+              cat "m9-h1-6-evidence/prereg-${attempt}.stderr" >&2 || true
+              exit 1
+            fi
             python3 - "$attempt" <<'PY'
           import json
           import sys
@@ -149,27 +173,36 @@ jobs:
           assert outcome.get("signal") is None, outcome
           PY
             test ! -s "m9-h1-6-evidence/prereg-${attempt}.stderr"
-            printf 'attempt=%s complete=true exit=0 stderr_empty=true\n' \
-              "$attempt" >> m9-h1-6-evidence/prereg-summary.txt
           done
 
       - name: Prime pinned external workload directly
         shell: bash
         run: |
           set -euo pipefail
-          (cd external/just && cargo "+$RUST_TOOLCHAIN" test --all >/dev/null 2>&1)
+          timeout --signal=KILL 180s \
+            bash -lc "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1"
 
-      - name: Prove pinned casey just five consecutive times
+      - name: Prove pinned casey just five consecutive times with fail-closed watchdog
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           : > m9-h1-6-evidence/just-summary.txt
           for attempt in 1 2 3 4 5; do
-            target/debug/execsurface observe -- \
+            set +e
+            timeout --signal=KILL "${JUST_TIMEOUT_SECONDS}s" \
+              target/debug/execsurface observe -- \
               /bin/bash -lc \
               "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
               > "m9-h1-6-evidence/just-${attempt}.json" \
               2> "m9-h1-6-evidence/just-${attempt}.stderr"
+            rc=$?
+            set -e
+            printf 'attempt=%s rc=%s\n' "$attempt" "$rc" \
+              >> m9-h1-6-evidence/just-summary.txt
+            if [ "$rc" -ne 0 ]; then
+              cat "m9-h1-6-evidence/just-${attempt}.stderr" >&2 || true
+              exit 1
+            fi
             python3 - "$attempt" <<'PY'
           import json
           import sys
@@ -183,21 +216,24 @@ jobs:
           assert outcome.get("signal") is None, (path, outcome)
           PY
             test ! -s "m9-h1-6-evidence/just-${attempt}.stderr"
-            printf 'attempt=%s complete=true exit=0 stderr_empty=true\n' \
-              "$attempt" >> m9-h1-6-evidence/just-summary.txt
           done
 
       - name: Seal evidence
+        if: always()
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           {
             printf 'run_id=%s\n' "$GITHUB_RUN_ID"
             printf 'input_head_sha=%s\n' "$GITHUB_SHA"
             printf 'just_sha=%s\n' "$JUST_SHA"
             printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
+            printf 'fixture_timeout_seconds=%s\n' "$FIXTURE_TIMEOUT_SECONDS"
+            printf 'just_timeout_seconds=%s\n' "$JUST_TIMEOUT_SECONDS"
             printf 'kernel=%s\n' "$(uname -srmo)"
-            printf 'final_source_sha256=%s\n' "$(sha256sum crates/execsurface-observe/src/linux_ptrace.rs | cut -d' ' -f1)"
+            if [ -f crates/execsurface-observe/src/linux_ptrace.rs ]; then
+              printf 'final_source_sha256=%s\n' "$(sha256sum crates/execsurface-observe/src/linux_ptrace.rs | cut -d' ' -f1)"
+            fi
           } > m9-h1-6-evidence/environment.txt
           find m9-h1-6-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
             | sort -z | xargs -0 sha256sum > m9-h1-6-evidence/SHA256SUMS
