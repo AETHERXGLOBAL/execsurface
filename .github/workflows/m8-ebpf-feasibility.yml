@@ -36,11 +36,22 @@ jobs:
           ulimit -l
           mount | grep -E 'tracefs|debugfs' || true
           test -d /sys/kernel/tracing/events || test -d /sys/kernel/debug/tracing/events
+      - name: Prove syscall-exit tracepoint record contract
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for name in clone clone3 fork vfork; do
+            format="/sys/kernel/tracing/events/syscalls/sys_exit_${name}/format"
+            test -r "$format"
+            cat "$format"
+            grep -Eq 'field:long ret;[[:space:]]+offset:16;[[:space:]]+size:8;' "$format"
+          done
+          echo 'M8_SYSCALL_EXIT_RET_OFFSET_PASS offset=16 size=8'
 
   aya:
     name: Aya / build + lifecycle probe
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
       - name: Install pinned Rust toolchains
@@ -63,23 +74,6 @@ jobs:
           tar --zstd -xf "$RUNNER_TEMP/$ASSET" -C "$RUNNER_TEMP/bpf-linker"
           find "$RUNNER_TEMP/bpf-linker" -maxdepth 2 -type f -print
           echo "$RUNNER_TEMP/bpf-linker" >> "$GITHUB_PATH"
-      - name: Generate task_struct binding from host BTF
-        shell: bash
-        run: |
-          set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libclang-dev
-          cargo +1.87.0 install bindgen-cli --version 0.73.2 --locked
-          cargo +nightly-2026-09-14 install \
-            --git https://github.com/aya-rs/aya \
-            --rev 1b551098762e9264811d06bc25d533b5a755e5fe \
-            --locked aya-tool
-          aya-tool generate --btf /sys/kernel/btf/vmlinux task_struct \
-            > experiments/m8-ebpf/aya-ebpf/src/vmlinux.rs
-          test -s experiments/m8-ebpf/aya-ebpf/src/vmlinux.rs
-          sha256sum experiments/m8-ebpf/aya-ebpf/src/vmlinux.rs
-          grep -n -m1 'pub struct task_struct' experiments/m8-ebpf/aya-ebpf/src/vmlinux.rs
-          grep -n -m1 'pub pid:' experiments/m8-ebpf/aya-ebpf/src/vmlinux.rs
       - name: Build Aya eBPF object with BTF metadata
         shell: bash
         run: |
@@ -144,7 +138,7 @@ jobs:
           sudo "$BIN" "$OBJ" 2>&1 | tee "$RUNNER_TEMP/aya-proof.log"
           grep -q '^M8_AYA_ATTACH_PASS$' "$RUNNER_TEMP/aya-proof.log"
           grep -q '^M8_AYA_EVENT_TRANSPORT_PASS ' "$RUNNER_TEMP/aya-proof.log"
-          grep -q '^M8_AYA_BTF_LINEAGE_PASS ' "$RUNNER_TEMP/aya-proof.log"
+          grep -q '^M8_AYA_LINEAGE_PASS ' "$RUNNER_TEMP/aya-proof.log"
           grep -q '^M8_AYA_LOSS_ACCOUNTING_PASS ' "$RUNNER_TEMP/aya-proof.log"
           grep -q '^M8_AYA_PRIVACY_SCHEMA_PASS ' "$RUNNER_TEMP/aya-proof.log"
           ! grep -Fq 'AX_M8_ARGV_SENTINEL_DO_NOT_PERSIST' "$RUNNER_TEMP/aya-proof.log"
