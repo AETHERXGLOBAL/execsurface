@@ -16,6 +16,10 @@
 #define AX_SIGCHLD 17ULL
 #define AX_CLONE_VFORK 0x00004000ULL
 
+#ifndef M8_7_TASK_EPOCH_MAX_ENTRIES
+#define M8_7_TASK_EPOCH_MAX_ENTRIES 4096
+#endif
+
 struct metadata_event {
     __u64 epoch;
     __u32 kind;
@@ -59,7 +63,12 @@ struct {
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 4096);
+    /*
+     * Production-feasibility builds use 4096. M8.7b5 may compile this
+     * experiment with a deliberately tiny map to force a real kernel-side
+     * propagation failure and prove routing_errors closes the session.
+     */
+    __uint(max_entries, M8_7_TASK_EPOCH_MAX_ENTRIES);
     __type(key, __u32);
     __type(value, __u64);
 } task_epoch SEC(".maps");
