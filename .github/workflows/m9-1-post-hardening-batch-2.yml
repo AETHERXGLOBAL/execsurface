@@ -1,0 +1,242 @@
+name: M9.1 post-hardening zero-contact batch 2
+
+on:
+  push:
+    branches:
+      - milestone/m9-1-post-hardening-external-workloads
+    paths:
+      - docs/milestones/M9_1_POST_HARDENING_BATCH_2_PROTOCOL.md
+      - .github/workflows/m9-1-post-hardening-batch-2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stable-runtime-batch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+      FZF_SHA: b1be3a8be1b833ce5b92fbbac11637643d60a046
+      FD_SHA: ce97e473ebaec49697c07daa50a7bc2b32f713d2
+
+    steps:
+      - name: Checkout ExecSurface batch branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pinned external projects
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet https://github.com/casey/just.git /tmp/m9-b2-just
+          git -C /tmp/m9-b2-just checkout --quiet "$JUST_SHA"
+          git clone --quiet https://github.com/junegunn/fzf.git /tmp/m9-b2-fzf-src
+          git -C /tmp/m9-b2-fzf-src checkout --quiet "$FZF_SHA"
+          git clone --quiet https://github.com/sharkdp/fd.git /tmp/m9-b2-fd
+          git -C /tmp/m9-b2-fd checkout --quiet "$FD_SHA"
+          test "$(git -C /tmp/m9-b2-just rev-parse HEAD)" = "$JUST_SHA"
+          test "$(git -C /tmp/m9-b2-fzf-src rev-parse HEAD)" = "$FZF_SHA"
+          test "$(git -C /tmp/m9-b2-fd rev-parse HEAD)" = "$FD_SHA"
+          test -z "$(git -C /tmp/m9-b2-just status --porcelain)"
+          test -z "$(git -C /tmp/m9-b2-fzf-src status --porcelain)"
+          test -z "$(git -C /tmp/m9-b2-fd status --porcelain)"
+
+      - name: Install frozen toolchain and build outside observation
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          cargo "+$RUST_TOOLCHAIN" build --locked -p execsurface
+          (cd /tmp/m9-b2-just && cargo "+$RUST_TOOLCHAIN" build --locked --release)
+          (cd /tmp/m9-b2-fd && cargo "+$RUST_TOOLCHAIN" build --locked --release --all-features)
+          (cd /tmp/m9-b2-fzf-src && go build -o /tmp/m9-b2-fzf .)
+          test -x /tmp/m9-b2-just/target/release/just
+          test -x /tmp/m9-b2-fd/target/release/fd
+          test -x /tmp/m9-b2-fzf
+          mkdir -p /tmp/m9-b2-fixtures/fdroot/sub m9-b2-evidence
+          cat > /tmp/m9-b2-fixtures/justfile <<'EOF'
+          alpha:
+              @echo alpha
+          beta:
+              @echo beta
+          EOF
+          printf 'alpha\nbeta\ngamma\n' > /tmp/m9-b2-fixtures/fzf-input.txt
+          printf 'alpha\n' > /tmp/m9-b2-fixtures/fdroot/alpha.txt
+          printf 'beta\n' > /tmp/m9-b2-fixtures/fdroot/sub/beta.txt
+          target/debug/execsurface doctor
+          {
+            echo "execsurface_head=$(git rev-parse HEAD)"
+            echo "main_hardening_merge=6234da919d1e46b60564114929db593bbce8ef31"
+            echo "just_sha=$JUST_SHA"
+            echo "fzf_sha=$FZF_SHA"
+            echo "fd_sha=$FD_SHA"
+            echo "rustc=$(rustc +$RUST_TOOLCHAIN --version)"
+            echo "go=$(go version)"
+            echo "kernel=$(uname -srmo)"
+            echo "evidence_class=ZERO_CONTACT_EXTERNAL_REPRO"
+            echo "adoption_claim=false"
+          } > m9-b2-evidence/environment.txt
+
+      - name: Run frozen Batch 2 protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_case() {
+            name="$1"
+            cmd="$2"
+            drift_file="$3"
+            dir="m9-b2-evidence/$name"
+            mkdir -p "$dir"
+            printf '%s\n' "$cmd" > "$dir/command.txt"
+
+            /bin/bash -lc "$cmd" >/dev/null 2>&1
+            echo "direct=PASS" > "$dir/status.txt"
+
+            target/debug/execsurface learn --output "$dir/baseline.json" -- /bin/bash -lc "$cmd" \
+              >"$dir/learn.stdout" 2>"$dir/learn.stderr"
+
+            for n in 1 2; do
+              set +e
+              target/debug/execsurface check \
+                --baseline "$dir/baseline.json" \
+                --json-output "$dir/check-${n}.json" \
+                --markdown-output "$dir/check-${n}.md" \
+                -- /bin/bash -lc "$cmd" \
+                >"$dir/check-${n}.stdout" 2>"$dir/check-${n}.stderr"
+              rc=$?
+              set -e
+              test "$rc" -eq 0 -o "$rc" -eq 10
+              printf 'unchanged_check_%s_rc=%s\n' "$n" "$rc" >> "$dir/status.txt"
+            done
+
+            controlled="$cmd; /usr/bin/sha256sum '$drift_file' >/dev/null"
+            set +e
+            target/debug/execsurface check \
+              --baseline "$dir/baseline.json" \
+              --json-output "$dir/controlled.json" \
+              --markdown-output "$dir/controlled.md" \
+              -- /bin/bash -lc "$controlled" \
+              >"$dir/controlled.stdout" 2>"$dir/controlled.stderr"
+            controlled_rc=$?
+            set -e
+            test "$controlled_rc" -eq 10
+
+            python3 - "$dir" <<'PY'
+          import json, sys
+          from pathlib import Path
+          d = Path(sys.argv[1])
+          summary = {}
+          for n in (1, 2):
+              data = json.loads((d / f"check-{n}.json").read_text())
+              summary[f"check_{n}_verdict"] = data["verdict"]
+              summary[f"check_{n}_findings"] = len(data.get("findings", []))
+          controlled = json.loads((d / "controlled.json").read_text())
+          assert controlled["verdict"] == "review", controlled["verdict"]
+          hits = []
+          for finding in controlled.get("findings", []):
+              if finding.get("change") != "added" or finding.get("effect_kind") != "process_exec":
+                  continue
+              executable = finding.get("evidence", {}).get("effect", {}).get("executable", {})
+              if executable.get("family") == "sha256sum":
+                  hits.append(finding)
+          assert hits, "controlled sha256sum process expansion missing"
+          summary["controlled_verdict"] = controlled["verdict"]
+          summary["controlled_sha256sum_findings"] = len(hits)
+          (d / "semantic-summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(summary, sort_keys=True))
+          PY
+
+            : > "$dir/direct-ms.txt"
+            : > "$dir/ptrace-ms.txt"
+
+            for n in 1 2 3; do
+              /bin/bash -lc "$cmd" >/dev/null 2>&1
+              target/debug/execsurface observe -- /bin/bash -lc "$cmd" \
+                >"$dir/warmup-ptrace-${n}.json" 2>"$dir/warmup-ptrace-${n}.stderr"
+            done
+
+            for n in $(seq 1 15); do
+              start=$(date +%s%N)
+              /bin/bash -lc "$cmd" >/dev/null 2>&1
+              end=$(date +%s%N)
+              python3 - "$start" "$end" >> "$dir/direct-ms.txt" <<'PY'
+          import sys
+          print((int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000)
+          PY
+
+              start=$(date +%s%N)
+              target/debug/execsurface observe -- /bin/bash -lc "$cmd" \
+                >"$dir/ptrace-${n}.json" 2>"$dir/ptrace-${n}.stderr"
+              end=$(date +%s%N)
+              python3 - "$start" "$end" >> "$dir/ptrace-ms.txt" <<'PY'
+          import sys
+          print((int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000)
+          PY
+
+              python3 - "$dir/ptrace-${n}.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          data = json.loads(Path(sys.argv[1]).read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            done
+
+            python3 - "$dir" <<'PY'
+          import json, statistics, sys
+          from pathlib import Path
+          d = Path(sys.argv[1])
+          direct = [float(x) for x in (d / "direct-ms.txt").read_text().splitlines() if x.strip()]
+          ptrace = [float(x) for x in (d / "ptrace-ms.txt").read_text().splitlines() if x.strip()]
+          assert len(direct) == 15 and len(ptrace) == 15
+          D = statistics.median(direct)
+          P = statistics.median(ptrace)
+          slowdown = P / D if D else None
+          overhead = P - D
+          trigger = (D >= 100.0 and slowdown > 2.0) or (overhead > 500.0)
+          out = {
+              "direct_samples": 15,
+              "ptrace_samples": 15,
+              "median_direct_ms": D,
+              "median_ptrace_ms": P,
+              "absolute_overhead_ms": overhead,
+              "slowdown": slowdown,
+              "m6_5_trigger": trigger,
+          }
+          (d / "performance-summary.json").write_text(json.dumps(out, indent=2, sort_keys=True) + "\n")
+          print(json.dumps(out, sort_keys=True))
+          PY
+          }
+
+          just_cmd="/tmp/m9-b2-just/target/release/just --justfile /tmp/m9-b2-fixtures/justfile --list >/dev/null"
+          fzf_cmd="/tmp/m9-b2-fzf --filter alpha < /tmp/m9-b2-fixtures/fzf-input.txt >/dev/null"
+          fd_cmd="/tmp/m9-b2-fd/target/release/fd --type f . /tmp/m9-b2-fixtures/fdroot >/dev/null"
+
+          run_case just "$just_cmd" /tmp/m9-b2-fixtures/justfile
+          run_case fzf "$fzf_cmd" /tmp/m9-b2-fixtures/fzf-input.txt
+          run_case fd "$fd_cmd" /tmp/m9-b2-fixtures/fdroot/alpha.txt
+
+      - name: Seal Batch 2 evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          find m9-b2-evidence -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-b2-evidence/SHA256SUMS
+
+      - name: Upload Batch 2 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-1-post-hardening-batch-2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-b2-evidence
+          if-no-files-found: error
+          retention-days: 30
