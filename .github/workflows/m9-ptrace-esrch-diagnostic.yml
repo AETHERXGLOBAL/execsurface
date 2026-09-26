@@ -1,0 +1,119 @@
+name: M9 ptrace ESRCH diagnostic
+
+on:
+  push:
+    branches:
+      - "hardening/m9-ptrace-esrch-just"
+    paths:
+      - ".github/workflows/m9-ptrace-esrch-diagnostic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+  RUST_TOOLCHAIN: "1.90.0"
+  EXECSURFACE_VERSION: "0.1.0-alpha.2"
+
+jobs:
+  diagnose:
+    name: identify failing ptrace request without semantic changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified casey/just
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: casey/just
+          ref: ${{ env.JUST_SHA }}
+          path: external/just
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install frozen toolchain and public ExecSurface
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C external/just rev-parse HEAD)" = "$JUST_SHA"
+          test -z "$(git -C external/just status --porcelain)"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          cargo "+$RUST_TOOLCHAIN" install execsurface \
+            --version "=$EXECSURFACE_VERSION" \
+            --locked \
+            --root "$RUNNER_TEMP/execsurface-m9-diagnostic"
+          "$RUNNER_TEMP/execsurface-m9-diagnostic/bin/execsurface" --version
+          "$RUNNER_TEMP/execsurface-m9-diagnostic/bin/execsurface" doctor
+          strace --version | head -n 1
+
+      - name: Warm pinned upstream workload directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd external/just
+          cargo "+$RUST_TOOLCHAIN" test --all >/dev/null 2>&1
+
+      - name: Trace only observer parent ptrace lifecycle syscalls
+        id: diagnostic
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p m9-hardening
+          BIN="$RUNNER_TEMP/execsurface-m9-diagnostic/bin/execsurface"
+          set +e
+          strace \
+            -qq \
+            -ttt \
+            -s 128 \
+            -e trace=ptrace,wait4,clone,fork,vfork \
+            -o m9-hardening/parent-syscalls.log \
+            "$BIN" observe -- \
+            /bin/bash -lc "cd '$GITHUB_WORKSPACE/external/just' && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
+            >m9-hardening/observe.stdout \
+            2>m9-hardening/observe.stderr
+          rc=$?
+          set -e
+          printf '%s\n' "$rc" >m9-hardening/observe.exit-code
+          grep -n -E 'ESRCH|No such process' m9-hardening/parent-syscalls.log \
+            >m9-hardening/esrch-lines.txt || true
+          {
+            echo "observe_rc=$rc"
+            echo "esrch_count=$(wc -l < m9-hardening/esrch-lines.txt)"
+            echo "just_sha=$JUST_SHA"
+            echo "execsurface_version=$EXECSURFACE_VERSION"
+            uname -a | sed 's/^/uname=/'
+          } >m9-hardening/summary.txt
+          cat m9-hardening/summary.txt
+          cat m9-hardening/esrch-lines.txt || true
+          exit "$rc"
+
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-ptrace-esrch-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-hardening
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Require reproduction, not a green result
+        if: always()
+        shell: bash
+        env:
+          DIAGNOSTIC_OUTCOME: ${{ steps.diagnostic.outcome }}
+        run: |
+          set -euo pipefail
+          test -f m9-hardening/observe.exit-code
+          rc="$(cat m9-hardening/observe.exit-code)"
+          test "$rc" != "0"
+          test -s m9-hardening/esrch-lines.txt
+          test "$DIAGNOSTIC_OUTCOME" = "failure"
+          echo M9_PTRACE_ESRCH_DIAGNOSTIC_REPRODUCED
