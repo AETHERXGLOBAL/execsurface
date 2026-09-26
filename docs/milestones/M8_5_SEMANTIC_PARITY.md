@@ -148,6 +148,10 @@ Conclusion: **PROVED for the controlled fork and nested classic-clone lineage wi
 
 Controlled vfork -> exec semantics reached scoped parity with ptrace.
 
+The first fixture used Rust `libc::vfork()` with all Rust-owned objects prepared before the call and only `execl/_exit` in the child. The Rust/libc binding nevertheless emits an explicit deprecation/memory-corruption warning for `vfork`, so the red team rejected that path as the final evidence fixture.
+
+Final vfork evidence therefore uses a native C fixture compiled with clang. It opens and reads `/dev/zero`, invokes `vfork`, performs only `execl`/`_exit` in the child, waits for clean child exit, and keeps the descriptor alive briefly for metadata resolution. The Rust vfork execution path was removed.
+
 ### clone3
 
 An attempted user-memory metadata path required a GPL-restricted BPF helper under the tested attachment/program context. ExecSurface retained the Apache-2.0 license boundary rather than changing license or weakening the gate.
@@ -156,7 +160,7 @@ When clone3 mechanism metadata cannot be established defensibly, the candidate r
 
 Accepted behavior:
 
-- vfork controlled fixture: scoped parity **PASS**;
+- native-C vfork controlled fixture: scoped parity **PASS**;
 - clone3 adversarial fixture: unresolved mechanism remains explicit and does not become equivalence;
 - eBPF PASS authority remains disabled.
 
@@ -194,37 +198,38 @@ The gate was not weakened; the proposition was made explicit.
 
 ### Positive successful-open evidence
 
-Run `36256075043` established:
+A later controlled run established:
 
 - ptrace witness: `root|/dev/zero`;
 - eBPF witness: `root|/dev/zero`;
 - focused `SuccessfulOpenFdIdentity = equivalent` for this controlled positive existential proposition;
-- unrelated unresolved candidate opens remain recorded;
+- unrelated unresolved candidate opens, when present, remain recorded;
 - `full_surface_comparable = false`;
 - `ebpf_pass_authorized = false`.
 
-### Failed-open negative evidence
+### Failed-open negative evidence and resolution variability
 
 A controlled missing path `/__execsurface_m8_5_missing__/open-probe` is observed as an open attempt by ptrace but must never be promoted into successful-open evidence.
 
-Run `36256075043` correctly produced:
+Two valid runner outcomes were observed:
 
-- ptrace open attempt present;
-- no ptrace FD-attributed successful witness for the missing path;
-- no resolved eBPF successful-open witness for the missing path;
-- because unrelated eBPF successful-open identities were unresolved, the requested absence conclusion became `blocked_incomplete` rather than `non_comparable` or false equivalence.
+- when unrelated candidate successful-open identities remain unresolved, absence is `blocked_incomplete`;
+- when every candidate successful-open identity in that run resolves and both focused witness sets are empty, the class is `non_comparable`.
 
-The workflow expectation was updated to the stricter fail-closed result instead of weakening the harness.
+In neither case is the missing path promoted to successful-open evidence, and in neither case does absence become equivalence.
 
-### Final accepted M8.5d evidence
+Run `36256614065` was deliberately preserved because it exposed this scheduler/runner-dependent resolution-health distinction: the semantic harness correctly returned `non_comparable`, while the workflow still expected `blocked_incomplete`. The workflow was corrected to bind its expected verdict to the actual candidate resolution health rather than to one runner-specific shape.
 
-At commit `e6bae3b89b37760144fa463bd697d7c3a228d6fe`:
+## Final accepted M8.5 evidence
 
-- normal repository CI: **PASS** — run `36256349509`;
-- M8.5 semantic differential: **PASS** — run `36256349532`;
+Final closure candidate at commit `a73cf1bd7ce485d0649268480cc3696113cb8a6c`:
+
+- normal repository CI: **PASS** — run `36256996309`;
+- M8.5 semantic differential: **PASS** — run `36256996339`;
+- clean fork/exec class-local parity: **PASS**;
 - focused `/dev/zero` positive successful-open proposition: `equivalent`;
-- failed missing-path open: **not promoted**, requested absence remains `blocked_incomplete` under unresolved evidence;
-- vfork controlled parity remains PASS;
+- failed missing-path open: **not promoted**, with verdict bound to actual resolution health rather than a hard-coded runner outcome;
+- native C vfork controlled parity: **PASS**;
 - clone3 unresolved behavior remains fail-closed;
 - same-count/different-semantics mutation remains `contradicted`;
 - forced incomplete evidence remains `blocked_incomplete`;
@@ -241,7 +246,8 @@ The independent review in `M8_5_RED_TEAM_REVIEW.md` attempted to defeat parity t
 - clone3 overclaim;
 - loss/truncation;
 - unrelated unresolved successful opens;
-- failed-open absence inference;
+- failed-open absence inference under variable resolution health;
+- unsafe/ambiguous vfork fixture construction;
 - unsupported capability promotion;
 - premature CLI/PASS integration.
 
@@ -271,7 +277,8 @@ M8.5 intentionally retains failures because they define the safe boundary:
 - `36252411516` — nested-thread TGID/TID parent attribution contradiction;
 - verifier rejection of the GPL-restricted clone3 helper path under the Apache-2.0 boundary;
 - `36255562056` — positive focused-open proposition incorrectly blocked by unrelated unresolved opens;
-- `36256075043` — positive proof passed, while stale negative-test expectation was rejected by stricter `blocked_incomplete` absence semantics.
+- `36256075043` — positive focused proof passed and the first negative-test shape exposed the need for evidence-health-dependent absence handling;
+- `36256614065` — all relevant candidate identities resolved on a later runner, correctly yielding `non_comparable` and exposing the stale hard-coded `blocked_incomplete` test expectation.
 
 ## M8.5 conclusion
 
