@@ -1,0 +1,219 @@
+name: M8.6 Performance Compatibility
+
+on:
+  push:
+    branches:
+      - "milestone/m8-6-performance-compatibility"
+    paths:
+      - "experiments/m8-ebpf/perf-harness/**"
+      - "experiments/m8-ebpf/libbpf-observer/**"
+      - "crates/execsurface-observe/**"
+      - "crates/execsurface-cli/**"
+      - "Cargo.lock"
+      - "docs/milestones/M8_6_PERFORMANCE_COMPATIBILITY.md"
+      - ".github/workflows/m8-6-performance-compatibility.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  performance-compatibility:
+    name: direct vs ptrace vs libbpf evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Install declared native build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+          clang --version
+          pkg-config --modversion libelf
+
+      - name: Install resolver and product-MSRV Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          cargo +1.87.0 --version
+          rustc +1.82.0 --version --verbose
+          cargo +1.82.0 --version
+
+      - name: Resolve Rust-1.82-compatible isolated collector lock
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f experiments/m8-ebpf/libbpf-observer/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml
+
+      - name: Build benchmark subjects and validate harness syntax
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 -m py_compile \
+            experiments/m8-ebpf/perf-harness/run_benchmark.py \
+            experiments/m8-ebpf/perf-harness/collect_compatibility.py \
+            experiments/m8-ebpf/perf-harness/phase_attribution.py
+          cargo +1.82.0 fmt \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            -- --check
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            --release --locked --bins
+          cargo +1.82.0 build \
+            --manifest-path crates/execsurface-cli/Cargo.toml \
+            --release --locked
+          clang -O2 -Wall -Wextra -Werror \
+            experiments/m8-ebpf/perf-harness/m8_6_perf_fixture.c \
+            -o "$RUNNER_TEMP/m8_6_perf_fixture"
+          clang -O2 -Wall -Wextra -Werror \
+            experiments/m8-ebpf/perf-harness/m8_6_phase_fixture.c \
+            -o "$RUNNER_TEMP/m8_6_phase_fixture"
+
+          OBS="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer"
+          PROBE="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/m8_6_attach_detach_probe"
+          CLI="$PWD/target/release/execsurface"
+          FIX="$RUNNER_TEMP/m8_6_perf_fixture"
+          PHASE_FIX="$RUNNER_TEMP/m8_6_phase_fixture"
+          test -x "$OBS"
+          test -x "$PROBE"
+          test -x "$CLI"
+          test -x "$FIX"
+          test -x "$PHASE_FIX"
+          sha256sum "$OBS" "$PROBE" "$CLI" "$FIX" "$PHASE_FIX"
+
+      - name: Capture exact-host compatibility evidence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer"
+          FIX="$RUNNER_TEMP/m8_6_perf_fixture"
+          OUT="$RUNNER_TEMP/m8-6-compatibility.json"
+          python3 experiments/m8-ebpf/perf-harness/collect_compatibility.py \
+            --collector "$OBS" \
+            --fixture "$FIX" \
+            --output "$OUT" \
+            --commit-sha "$GITHUB_SHA"
+          cat "$OUT"
+
+      - name: Measure end-to-end direct ptrace and libbpf invocation cost
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer"
+          CLI="$PWD/target/release/execsurface"
+          FIX="$RUNNER_TEMP/m8_6_perf_fixture"
+          OUT="$RUNNER_TEMP/m8-6-benchmark.json"
+
+          sudo env \
+            PATH="$PATH" \
+            RUNNER_NAME="${RUNNER_NAME:-}" \
+            RUNNER_OS="${RUNNER_OS:-}" \
+            RUNNER_ARCH="${RUNNER_ARCH:-}" \
+            python3 experiments/m8-ebpf/perf-harness/run_benchmark.py \
+              --cli "$CLI" \
+              --collector "$OBS" \
+              --fixture "$FIX" \
+              --output "$OUT" \
+              --commit-sha "$GITHUB_SHA" \
+              --warmups 2 \
+              --samples 11
+
+          python3 - "$OUT" <<'PY'
+          import json, sys
+          evidence = json.load(open(sys.argv[1], encoding='utf-8'))
+          print('M8_6_MEASURED_SUMMARY')
+          for workload, row in evidence['workloads'].items():
+              print(workload)
+              for mode, summary in row['summary'].items():
+                  assert summary['eligible'] is True, (workload, mode, summary)
+                  print(' ', mode, 'median_ms=', round(summary['median_ms'], 6), 'mad_ms=', round(summary['mad_ms'], 6), 'p90_ms=', round(summary['p90_ms'], 6))
+              ratios = row['computed_ratios']
+              print('  ratios=', {k: round(v, 6) for k, v in ratios.items()})
+          PY
+
+      - name: Attribute pre-target target-runtime and post-target phases
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer"
+          CLI="$PWD/target/release/execsurface"
+          FIX="$RUNNER_TEMP/m8_6_phase_fixture"
+          OUT="$RUNNER_TEMP/m8-6-phase-attribution.json"
+
+          sudo env PATH="$PATH" \
+            python3 experiments/m8-ebpf/perf-harness/phase_attribution.py \
+              --cli "$CLI" \
+              --collector "$OBS" \
+              --fixture "$FIX" \
+              --output "$OUT" \
+              --commit-sha "$GITHUB_SHA" \
+              --warmups 1 \
+              --samples 7
+          cat "$OUT"
+
+      - name: Isolate libbpf open load attach and detach cost
+        shell: bash
+        run: |
+          set -euxo pipefail
+          PROBE="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/m8_6_attach_detach_probe"
+          OUT="$RUNNER_TEMP/m8-6-attach-detach.json"
+          sudo "$PROBE" 7 > "$OUT"
+          python3 - "$OUT" <<'PY'
+          import json, statistics, sys
+          evidence = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert evidence['schema_version'] == 1
+          assert len(evidence['samples']) == 7
+          for field in ('open_ms', 'load_ms', 'attach_ms', 'detach_ms', 'total_ms'):
+              values = [row[field] for row in evidence['samples']]
+              print('M8_6_LIFECYCLE', field, 'median_ms=', round(statistics.median(values), 6), 'min_ms=', round(min(values), 6), 'max_ms=', round(max(values), 6))
+          PY
+          cat "$OUT"
+
+      - name: Verify authority and compatibility boundaries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - "$RUNNER_TEMP/m8-6-benchmark.json" "$RUNNER_TEMP/m8-6-compatibility.json" "$RUNNER_TEMP/m8-6-phase-attribution.json" "$RUNNER_TEMP/m8-6-attach-detach.json" <<'PY'
+          import json, sys
+          bench = json.load(open(sys.argv[1], encoding='utf-8'))
+          compat = json.load(open(sys.argv[2], encoding='utf-8'))
+          phase = json.load(open(sys.argv[3], encoding='utf-8'))
+          lifecycle = json.load(open(sys.argv[4], encoding='utf-8'))
+          assert bench['schema_version'] == 1
+          assert compat['schema_version'] == 1
+          assert phase['schema_version'] == 1
+          assert lifecycle['schema_version'] == 1
+          boundary = compat['known_semantic_boundary']
+          assert boundary['full_surface_comparable'] is False
+          assert boundary['ebpf_pass_authorized'] is False
+          assert boundary['clone3_universal_parity'] is False
+          priv = compat['privileged_probe']['report']
+          assert compat['privileged_probe']['exit_code'] == 0, compat['privileged_probe']
+          assert priv['completeness'] == 'incomplete_capability', priv
+          assert priv['dropped_events'] == 0, priv
+          assert priv['lifecycle_drain_complete'] is True, priv
+          for mode in ('direct', 'ptrace', 'libbpf'):
+              assert all(row['eligible'] for row in phase['summary'][mode].values()), phase['summary'][mode]
+          print('M8_6_AUTHORITY_BOUNDARY_PASS')
+          PY
+
+      - name: Upload raw M8.6 evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: m8-6-performance-compatibility-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/m8-6-benchmark.json
+            ${{ runner.temp }}/m8-6-compatibility.json
+            ${{ runner.temp }}/m8-6-phase-attribution.json
+            ${{ runner.temp }}/m8-6-attach-detach.json
+          if-no-files-found: error
+          retention-days: 30

@@ -1,13 +1,16 @@
 # M8 — Pluggable Observation Backends & eBPF Evidence Architecture
 
 Date: 2026-09-26
-Status: **OPEN — M8.0–M8.5 CLOSED / M8.6 NEXT**
-Tracking: #34, #37, #40, #42
+Status: **OPEN — M8.0–M8.6 CLOSED / M8.7 PERSISTENT OBSERVER NEXT**
+Tracking: #34, #37, #40, #42, #44
 M8.2 decision: `docs/milestones/M8_2_STACK_DECISION.md`
 M8.2 evidence: `docs/milestones/M8_2_EVIDENCE.md`
 M8.4 evidence: `docs/milestones/M8_4_LOSS_SEMANTICS.md`
 M8.5 evidence: `docs/milestones/M8_5_SEMANTIC_PARITY.md`
 M8.5 red-team: `docs/milestones/M8_5_RED_TEAM_REVIEW.md`
+M8.6 evidence: `docs/milestones/M8_6_PERFORMANCE_COMPATIBILITY.md`
+M8.6 root-cause evidence: `docs/milestones/M8_6D_POST_TARGET_LATENCY.md`
+M8.6 red-team: `docs/milestones/M8_6_RED_TEAM_REVIEW.md`
 
 ## Objective
 
@@ -253,6 +256,8 @@ Prefer stable kernel tracepoints or other documented BPF attachment mechanisms w
 
 Dynamic kprobe/fentry/fexit use must be justified per semantic class and kernel compatibility target. Internal kernel implementation details are not treated as stable product semantics without a compatibility strategy.
 
+M8.6 measured that the current per-invocation libbpf design pays a dominant teardown cost on the tested host. M8.7 therefore investigates persistent attachment with explicit bounded observation sessions before any public-alpha integration.
+
 ## Rootless / privilege boundary
 
 The current ptrace path remains the ordinary rootless-friendly reference for commands launched by ExecSurface.
@@ -327,23 +332,43 @@ Acceptance requires a controlled ptrace-vs-eBPF workload matrix with semantic di
 
 ### M8.6 — Performance / compatibility gate
 
-Acceptance requires representative direct/ptrace/eBPF measurements and a declared kernel/platform support matrix.
+Acceptance requires representative direct/ptrace/eBPF measurements, phase attribution, a declared kernel/platform support matrix, preserved negative performance evidence, and independent red-team review.
 
-### M8.7 — Public-alpha integration gate
+**Status: CLOSED / ACCEPTED — exact-host measurement only.** The current per-invocation libbpf path is slower end-to-end than ptrace on the measured host/workloads, and isolated measurement attributes the dominant lifecycle cost to per-invocation detach. See `M8_6_PERFORMANCE_COMPATIBILITY.md`, `M8_6D_POST_TARGET_LATENCY.md`, and `M8_6_RED_TEAM_REVIEW.md`.
 
-Acceptance requires safe backend selection, expanded incomplete-state CLI/schema surfacing, documentation, technical evaluation updates, release evidence, and no regression of the stable current path.
+### M8.7 — Persistent observer architecture gate
+
+Acceptance requires executable proof that persistent attachment can amortize the measured teardown cost without weakening evidence semantics. At minimum:
+
+- explicit single-active-session epoch and root/descendant attribution;
+- rejection of stale/cross-session events;
+- per-session loss/truncation accounting or fail-closed ambiguity;
+- preservation of M8.4 lifecycle/quiescence semantics;
+- bounded and explicit privilege lifetime;
+- deterministic session state reset;
+- crash/restart invalidation of ambiguous in-flight work;
+- no default install/CLI regression;
+- no eBPF PASS promotion;
+- independent security/evidence Red Team.
+
+Multi-session concurrency is not authorized until independent attribution is proved.
+
+### M8.8 — Public-alpha integration gate
+
+Acceptance requires safe backend selection, expanded incomplete-state CLI/schema surfacing, documentation, technical evaluation updates, release evidence, and no regression of the stable current path. M8.8 may not begin until M8.7 closes or the persistent path is explicitly killed and an alternative architecture is selected.
 
 ## Current status
 
-- M8 objective: **OPEN — M8.6 NEXT**
+- M8 objective: **OPEN — M8.7 PERSISTENT OBSERVER NEXT**
 - M8.0 architecture: **CLOSED / ACCEPTED**
 - M8.1 observer abstraction: **CLOSED / ACCEPTED**
 - M8.2 eBPF implementation selection: **CLOSED / ACCEPTED — libbpf-rs / libbpf selected**
 - M8.3 metadata-only eBPF observer: **CLOSED / ACCEPTED — experimental observation-only path**
 - M8.4 fail-closed loss/lifecycle gate: **CLOSED / PROVED**
 - M8.5 ptrace/eBPF parity gate: **CLOSED / ACCEPTED — bounded semantic parity only**
-- M8.6 performance / compatibility gate: **NEXT / NOT STARTED**
-- M8.7 public-alpha integration gate: **NOT STARTED**
+- M8.6 performance / compatibility gate: **CLOSED / ACCEPTED — exact-host measurement; per-invocation detach dominant measured lifecycle cost**
+- M8.7 persistent observer architecture gate: **NEXT / NOT STARTED**
+- M8.8 public-alpha integration gate: **NOT STARTED**
 - eBPF full-surface comparability: **FALSE**
 - eBPF PASS authority: **NOT AUTHORIZED**
 - automatic cross-backend baseline interchangeability: **NOT AUTHORIZED**
