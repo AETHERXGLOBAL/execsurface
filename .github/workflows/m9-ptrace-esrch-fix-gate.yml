@@ -45,7 +45,7 @@ jobs:
           rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
           rustc "+$RUST_TOOLCHAIN" --version --verbose
 
-      - name: Apply lifecycle-confirmed candidate
+      - name: Apply diagnostic lifecycle candidate
         shell: bash
         run: |
           set -euo pipefail
@@ -77,14 +77,43 @@ jobs:
       - name: Prove pinned just observation three times
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           mkdir -p m9-fix-evidence
+          cp /tmp/m9-esrch-fix.diff m9-fix-evidence/candidate.diff
+          : > m9-fix-evidence/diagnostic-summary.txt
+          printf 'run_id=%s\nhead_sha=%s\njust_sha=%s\nrust_toolchain=%s\n' \
+            "$GITHUB_RUN_ID" "$GITHUB_SHA" "$JUST_SHA" "$RUST_TOOLCHAIN" \
+            >> m9-fix-evidence/diagnostic-summary.txt
+
+          failed=0
           for attempt in 1 2 3; do
+            set +e
             target/debug/execsurface observe -- \
               /bin/bash -lc \
               "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
-              > "m9-fix-evidence/observe-${attempt}.json"
+              > "m9-fix-evidence/observe-${attempt}.json" \
+              2> "m9-fix-evidence/observe-${attempt}.stderr"
+            rc=$?
+            set -e
+            printf '%s\n' "$rc" > "m9-fix-evidence/observe-${attempt}.rc"
+            printf '\nattempt=%s rc=%s\n' "$attempt" "$rc" \
+              >> m9-fix-evidence/diagnostic-summary.txt
+            grep -E 'M9_|PTRACE_|ESRCH|ECHILD|ExecSurface: ERROR|observer OS error|Protocol' \
+              "m9-fix-evidence/observe-${attempt}.stderr" \
+              >> m9-fix-evidence/diagnostic-summary.txt || true
+            if [ "$rc" -ne 0 ]; then
+              failed=1
+              break
+            fi
           done
+
+          sha256sum m9-fix-evidence/* > m9-fix-evidence/SHA256SUMS
+
+          if [ "$failed" -ne 0 ]; then
+            cat m9-fix-evidence/diagnostic-summary.txt
+            exit 1
+          fi
+
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -96,8 +125,6 @@ jobs:
               assert outcome.get('signal') is None, (path, outcome)
           print('M9_PTRACE_ESRCH_EXTERNAL_REGRESSION_PASS')
           PY
-          cp /tmp/m9-esrch-fix.diff m9-fix-evidence/candidate.diff
-          sha256sum m9-fix-evidence/* > m9-fix-evidence/SHA256SUMS
 
       - name: Preserve candidate evidence
         if: always()
@@ -107,6 +134,22 @@ jobs:
           path: m9-fix-evidence
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Commit fail-closed diagnostic evidence
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s m9-fix-evidence/diagnostic-summary.txt
+          evidence_dir="docs/milestones/evidence/m9-ptrace-esrch/run-${GITHUB_RUN_ID}"
+          mkdir -p "$evidence_dir"
+          cp m9-fix-evidence/diagnostic-summary.txt "$evidence_dir/diagnostic-summary.txt"
+          cp m9-fix-evidence/SHA256SUMS "$evidence_dir/SHA256SUMS"
+          git add "$evidence_dir"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "M9 hardening: preserve ESRCH diagnostic run ${GITHUB_RUN_ID}"
+          git push origin HEAD:hardening/m9-ptrace-esrch-just
 
       - name: Commit only proved product fix
         shell: bash
@@ -119,5 +162,5 @@ jobs:
           test "$(git diff --cached --name-only)" = "crates/execsurface-observe/src/linux_ptrace.rs"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "M9 hardening: confirm terminal tracee before accepting restart ESRCH"
+          git commit -m "M9 hardening: prove lifecycle-specific restart ESRCH handling"
           git push origin HEAD:hardening/m9-ptrace-esrch-just
