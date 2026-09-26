@@ -1,4 +1,4 @@
-name: M9.1 Batch B fzf runtime retry
+name: M9.1 Batch B fzf corrected runtime
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 jobs:
-  fzf-runtime-retry:
+  fzf-runtime-corrected:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -21,9 +21,12 @@ jobs:
       INSTALL_ROOT: /tmp/execsurface-m9-b-fzf-install
       WORK_ROOT: /tmp/execsurface-m9-b-fzf
       FREEZE_COMMIT: b020369a6a6861cc8b530fc9e63a7db428999466
+      CORRECTION_COMMIT: 4eb2e20446298cf5869103b113d36458b07c4585
       FZF_REVISION: b1be3a8be1b833ce5b92fbbac11637643d60a046
-      PRIOR_PARTIAL_RUN: 36279671507
-      PRIOR_PARTIAL_ARTIFACT: 10918905123
+      PRIOR_PARTIAL_RUN_1: 36279671507
+      PRIOR_PARTIAL_ARTIFACT_1: 10918905123
+      PRIOR_PARTIAL_RUN_2: 36279861164
+      PRIOR_PARTIAL_ARTIFACT_2: 10918252014
 
     steps:
       - name: Checkout ExecSurface evidence branch with history
@@ -42,12 +45,14 @@ jobs:
           fetch-tags: true
           persist-credentials: false
 
-      - name: Verify frozen case and prepare isolated checkout
+      - name: Verify frozen correction and prepare isolated checkout
         shell: bash
         run: |
           set -euo pipefail
-          git merge-base --is-ancestor "$FREEZE_COMMIT" "$GITHUB_SHA"
+          git merge-base --is-ancestor "$FREEZE_COMMIT" "$CORRECTION_COMMIT"
+          git merge-base --is-ancestor "$CORRECTION_COMMIT" "$GITHUB_SHA"
           test -f docs/milestones/M9_1_BATCH_B_RUNTIME_WORKLOADS.md
+          test -f docs/milestones/M9_1_FZF_RUNTIME_PATH_CORRECTION.md
           test "$(git -C external/fzf rev-parse HEAD)" = "$FZF_REVISION"
           test -z "$(git -C external/fzf status --porcelain)"
           rustup toolchain install "$EXECSURFACE_RUST_TOOLCHAIN" --profile minimal
@@ -56,18 +61,21 @@ jobs:
           cp -a external/fzf "$WORK_ROOT"
           test "$(git -C "$WORK_ROOT" rev-parse HEAD)" = "$FZF_REVISION"
           test -z "$(git -C "$WORK_ROOT" status --porcelain)"
-          evidence="m9-batch-b-fzf-retry"
+          evidence="m9-batch-b-fzf-corrected"
           mkdir -p "$evidence" "$INSTALL_ROOT"
 
-          printf '%s\n' "cd '$WORK_ROOT' && printf 'alpha\\nbeta\\ngamma\\n' | ./target/fzf --filter=beta --select-1 --exit-0 >/dev/null" > /tmp/m9-b-fzf-runtime-command
+          printf '%s\n' "cd '$WORK_ROOT' && printf 'alpha\\nbeta\\ngamma\\n' | ./target/fzf-linux_amd64 --filter=beta --select-1 --exit-0 >/dev/null" > /tmp/m9-b-fzf-runtime-command
           {
             printf 'run_id=%s\n' "$GITHUB_RUN_ID"
             printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
             printf 'execsurface_source_sha=%s\n' "$GITHUB_SHA"
             printf 'freeze_commit=%s\n' "$FREEZE_COMMIT"
+            printf 'correction_commit=%s\n' "$CORRECTION_COMMIT"
             printf 'fzf_revision=%s\n' "$FZF_REVISION"
-            printf 'prior_partial_run=%s\n' "$PRIOR_PARTIAL_RUN"
-            printf 'prior_partial_artifact=%s\n' "$PRIOR_PARTIAL_ARTIFACT"
+            printf 'prior_partial_run_1=%s\n' "$PRIOR_PARTIAL_RUN_1"
+            printf 'prior_partial_artifact_1=%s\n' "$PRIOR_PARTIAL_ARTIFACT_1"
+            printf 'prior_partial_run_2=%s\n' "$PRIOR_PARTIAL_RUN_2"
+            printf 'prior_partial_artifact_2=%s\n' "$PRIOR_PARTIAL_ARTIFACT_2"
             printf 'kernel=%s\n' "$(uname -srmo)"
             printf 'architecture=%s\n' "$(uname -m)"
             printf 'cpu=%s\n' "$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)"
@@ -80,39 +88,41 @@ jobs:
         shell: bash
         run: |
           set +e
-          evidence="m9-batch-b-fzf-retry"
+          evidence="m9-batch-b-fzf-corrected"
           cargo "+$EXECSURFACE_RUST_TOOLCHAIN" install --locked --path crates/execsurface-cli --root "$INSTALL_ROOT" \
             > "$evidence/install.stdout" 2> "$evidence/install.stderr"
           rc=$?
           printf 'install_rc=%s\n' "$rc" > "$evidence/install.status"
-          if [ "$rc" -eq 0 ]; then
-            "$INSTALL_ROOT/bin/execsurface" --version > "$evidence/execsurface-version.txt" 2>&1 || true
-          fi
+          if [ "$rc" -eq 0 ]; then "$INSTALL_ROOT/bin/execsurface" --version > "$evidence/execsurface-version.txt" 2>&1 || true; fi
           exit 0
 
       - name: Build frozen fzf source with upstream make
         shell: bash
         run: |
           set +e
-          evidence="m9-batch-b-fzf-retry"
+          evidence="m9-batch-b-fzf-corrected"
           (cd "$WORK_ROOT" && make) > "$evidence/build.stdout" 2> "$evidence/build.stderr"
           rc=$?
           printf 'build_rc=%s\n' "$rc" > "$evidence/build.status"
           git -C "$WORK_ROOT" status --porcelain --untracked-files=no > "$evidence/tracked-status-after-build.txt"
+          test -x "$WORK_ROOT/target/fzf-linux_amd64"
+          binary_rc=$?
+          printf 'binary_exists_rc=%s\n' "$binary_rc" > "$evidence/binary.status"
           exit 0
 
-      - name: Collect frozen runtime compatibility and performance evidence
+      - name: Collect corrected runtime compatibility and frozen performance evidence
         shell: bash
         run: |
           set -uo pipefail
-          evidence="m9-batch-b-fzf-retry"
+          evidence="m9-batch-b-fzf-corrected"
           exe="$INSTALL_ROOT/bin/execsurface"
           cmd="$(cat /tmp/m9-b-fzf-runtime-command)"
           install_rc="$(sed -n 's/^install_rc=//p' "$evidence/install.status")"
           build_rc="$(sed -n 's/^build_rc=//p' "$evidence/build.status")"
+          binary_rc="$(sed -n 's/^binary_exists_rc=//p' "$evidence/binary.status")"
 
           install_status=FAIL; [ "$install_rc" -eq 0 ] && install_status=PASS
-          build_status=FAIL; [ "$build_rc" -eq 0 ] && build_status=PASS
+          build_status=FAIL; [ "$build_rc" -eq 0 ] && [ "$binary_rc" -eq 0 ] && build_status=PASS
           source_clean=FAIL; [ ! -s "$evidence/tracked-status-after-build.txt" ] && source_clean=PASS
           direct_status=NOT_RUN; doctor_status=NOT_RUN; baseline_status=NOT_RUN; check_status=NOT_RUN; performance_status=NOT_RUN
           operational_error=''
@@ -120,7 +130,7 @@ jobs:
           if [ "$install_status" != PASS ]; then
             operational_error='ExecSurface source installation failed'
           elif [ "$build_status" != PASS ]; then
-            operational_error="external fzf build failed rc=$build_rc"
+            operational_error="external fzf build or expected upstream binary failed build_rc=$build_rc binary_rc=$binary_rc"
           elif [ "$source_clean" != PASS ]; then
             operational_error='fzf build modified tracked upstream source files'
           else
@@ -129,7 +139,7 @@ jobs:
             direct_rc=$?
             set -e
             printf 'direct_rc=%s\n' "$direct_rc" > "$evidence/direct.status"
-            if [ "$direct_rc" -eq 0 ]; then direct_status=PASS; else direct_status=FAIL; operational_error="direct frozen runtime workload failed rc=$direct_rc"; fi
+            if [ "$direct_rc" -eq 0 ]; then direct_status=PASS; else direct_status=FAIL; operational_error="direct corrected runtime workload failed rc=$direct_rc"; fi
 
             set +e
             "$exe" doctor > "$evidence/doctor.stdout" 2> "$evidence/doctor.stderr"
@@ -156,17 +166,17 @@ jobs:
                   [ "$rc" -eq 0 ] || check_fail=1
                 done
                 python3 - "$evidence" > "$evidence/check-verdicts.txt" <<'PY'
-          import json, sys
+          import json,sys
           from pathlib import Path
           root=Path(sys.argv[1])
           for n in (1,2):
               p=root/f'check-{n}.json'
               if not p.exists(): print(f'check{n}=MISSING findings=-1'); continue
-              d=json.loads(p.read_text()); print(f"check{n}={d.get('verdict')} findings={len(d.get('findings', []))}")
+              d=json.loads(p.read_text()); print(f"check{n}={d.get('verdict')} findings={len(d.get('findings',[]))}")
           PY
                 v1="$(sed -n 's/^check1=\([^ ]*\).*/\1/p' "$evidence/check-verdicts.txt")"; v2="$(sed -n 's/^check2=\([^ ]*\).*/\1/p' "$evidence/check-verdicts.txt")"
                 f1="$(sed -n 's/^check1=[^ ]* findings=//p' "$evidence/check-verdicts.txt")"; f2="$(sed -n 's/^check2=[^ ]* findings=//p' "$evidence/check-verdicts.txt")"
-                if [ "$check_fail" -eq 0 ] && [ "$v1" = pass ] && [ "$v2" = pass ] && [ "$f1" = 0 ] && [ "$f2" = 0 ]; then check_status=PASS; else check_status=FAIL; operational_error="${operational_error:+$operational_error; }unchanged runtime checks did not produce two zero-finding PASS results"; fi
+                if [ "$check_fail" -eq 0 ] && [ "$v1" = pass ] && [ "$v2" = pass ] && [ "$f1" = 0 ] && [ "$f2" = 0 ]; then check_status=PASS; else check_status=FAIL; operational_error="${operational_error:+$operational_error; }unchanged corrected runtime checks did not produce two zero-finding PASS results"; fi
               else
                 baseline_status=FAIL; operational_error="${operational_error:+$operational_error; }baseline creation failed rc=$learn_rc"
               fi
@@ -184,6 +194,7 @@ jobs:
           o=d.get('outcome',{}); assert o.get('exit_code')==0 and o.get('signal') is None
           PY
               fi
+
               if [ "$preperf_complete" -eq 1 ]; then
                 : > "$evidence/warmup-direct-ms.txt"; : > "$evidence/warmup-ptrace-ms.txt"; : > "$evidence/measured-direct-ms.txt"; : > "$evidence/measured-ptrace-ms.txt"
                 perf_fail=0
@@ -231,17 +242,17 @@ jobs:
           PY
           exit 0
 
-      - name: Build and validate retry evidence record
+      - name: Build and validate corrected evidence record
         shell: bash
         run: |
           set -euo pipefail
-          evidence="m9-batch-b-fzf-retry"
+          evidence="m9-batch-b-fzf-corrected"
           find "$evidence" -maxdepth 1 -type f ! -name RAW_SHA256SUMS ! -name evidence.json -print0 | sort -z | xargs -0 sha256sum > "$evidence/RAW_SHA256SUMS"
           manifest_sha="$(sha256sum "$evidence/RAW_SHA256SUMS" | awk '{print $1}')"; version="$($INSTALL_ROOT/bin/execsurface --version 2>/dev/null || echo unavailable)"; timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; run_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          python3 - "$evidence" "$manifest_sha" "$version" "$timestamp" "$run_url" "$GITHUB_SHA" "$FREEZE_COMMIT" "$FZF_REVISION" "$PRIOR_PARTIAL_RUN" "$PRIOR_PARTIAL_ARTIFACT" <<'PY'
+          python3 - "$evidence" "$manifest_sha" "$version" "$timestamp" "$run_url" "$GITHUB_SHA" "$FREEZE_COMMIT" "$CORRECTION_COMMIT" "$FZF_REVISION" "$PRIOR_PARTIAL_RUN_1" "$PRIOR_PARTIAL_ARTIFACT_1" "$PRIOR_PARTIAL_RUN_2" "$PRIOR_PARTIAL_ARTIFACT_2" <<'PY'
           import json,statistics,subprocess,sys
           from pathlib import Path
-          root_s,manifest_sha,version,timestamp,run_url,source_sha,freeze_commit,revision,prior_run,prior_artifact=sys.argv[1:]; root=Path(root_s); state=json.loads((root/'state.json').read_text())
+          root_s,manifest_sha,version,timestamp,run_url,source_sha,freeze_commit,correction_commit,revision,prior_run1,prior_artifact1,prior_run2,prior_artifact2=sys.argv[1:]; root=Path(root_s); state=json.loads((root/'state.json').read_text())
           failures=[]
           if state['operational_error']: failures.append({'kind':'runtime_or_measurement_failure','description':state['operational_error'],'retained':True})
           performance=None
@@ -249,27 +260,27 @@ jobs:
               vals=lambda n:[float(x) for x in (root/n).read_text().splitlines() if x.strip()]; wd=vals('warmup-direct-ms.txt'); wp=vals('warmup-ptrace-ms.txt'); d=vals('measured-direct-ms.txt'); p=vals('measured-ptrace-ms.txt'); md=float(statistics.median(d)); mp=float(statistics.median(p)); overhead=mp-md; ratio=mp/md if md>0 else float('inf')
               performance={'warmup_direct_ms':wd,'warmup_ptrace_ms':wp,'measured_direct_ms':d,'measured_ptrace_ms':p,'median_direct_ms':md,'median_ptrace_ms':mp,'median_absolute_overhead_ms':overhead,'slowdown_ratio':ratio,'timeout_seconds':120.0,'m65_trigger_crossed':((md>=100.0 and ratio>2.0) or overhead>500.0),'excluded_samples':[]}
           comparable=all(state[k]=='PASS' for k in ('install_status','build_status','source_clean','direct_status','doctor_status','baseline_status','check_status','performance_status'))
-          record={'schema_version':'m9-evidence-v1','evidence_id':'M9-ZC-05-FZF-RUNTIME-002','timestamp_utc':timestamp,'independence_class':'ZERO_CONTACT_EXTERNAL_REPRO','claim_status':'COMPUTATIONAL_EVIDENCE' if comparable else 'PARTIAL','external_reference':f'https://github.com/junegunn/fzf/commit/{revision}','provenance':{'initiated_by':'AETHER_X','executed_by':'AETHER_X','aether_x_material_involvement':True,'third_party_attestation':None},'project':{'name':'fzf','repository':'https://github.com/junegunn/fzf','revision':revision,'modified_by_aether_x':False},'execsurface':{'version':version,'source_sha':source_sha,'install_path':'cargo install --locked --path crates/execsurface-cli from main-derived M9.1 branch','backend':'ptrace'},'host':{'os':'Ubuntu 24.04 GitHub-hosted runner','kernel':subprocess.check_output(['uname','-srmo'],text=True).strip(),'architecture':subprocess.check_output(['uname','-m'],text=True).strip(),'cpu_description':subprocess.check_output("lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1",shell=True,text=True).strip(),'runner_image':'ubuntu-24.04'},'workflow':{'command':Path('/tmp/m9-b-fzf-runtime-command').read_text().strip(),'baseline_attempted':state['baseline_status']!='NOT_RUN','rerun_check_attempted':state['check_status']!='NOT_RUN','drift_case_attempted':False,'notes':f'Frozen Batch B workload from {freeze_commit}. Retry preserves prior PARTIAL run {prior_run} artifact {prior_artifact}; retry changes only checkout history/tags so upstream make can derive version metadata.'},'outcome':{'installation':state['install_status'],'doctor':state['doctor_status'],'baseline':state['baseline_status'],'rerun_check':state['check_status'],'drift_case':'NOT_RUN','verdict':'PASS' if state['check_status']=='PASS' else None,'comparable':comparable,'complete':comparable,'operational_error':state['operational_error'] or None,'false_positive_reported':False,'suspected_false_negative':False,'usability_friction':None},'privacy':{'metadata_only_confirmed':True,'prohibited_sensitive_payload_collected':False,'notes':'No file contents, environment-variable values, stdin contents, network payloads, secrets, credentials, or unrestricted argv were collected into accepted evidence.'},'performance':performance,'artifacts':[{'name':'raw evidence SHA-256 manifest','sha256':manifest_sha,'location':run_url}],'failures_exclusions':failures,'reproduction':{'instructions':f'Checkout junegunn/fzf@{revision} with git tags/history; follow frozen Batch B manifest {freeze_commit}; make; run frozen runtime command; doctor, learn, two checks, frozen 3+15 performance protocol.','expected_scope':'Exact pinned external runtime compatibility/performance evidence; not independent adoption and not a universal Linux claim.'}}
+          record={'schema_version':'m9-evidence-v1','evidence_id':'M9-ZC-05-FZF-RUNTIME-003','timestamp_utc':timestamp,'independence_class':'ZERO_CONTACT_EXTERNAL_REPRO','claim_status':'COMPUTATIONAL_EVIDENCE' if comparable else 'PARTIAL','external_reference':f'https://github.com/junegunn/fzf/commit/{revision}','provenance':{'initiated_by':'AETHER_X','executed_by':'AETHER_X','aether_x_material_involvement':True,'third_party_attestation':None},'project':{'name':'fzf','repository':'https://github.com/junegunn/fzf','revision':revision,'modified_by_aether_x':False},'execsurface':{'version':version,'source_sha':source_sha,'install_path':'cargo install --locked --path crates/execsurface-cli from main-derived M9.1 branch','backend':'ptrace'},'host':{'os':'Ubuntu 24.04 GitHub-hosted runner','kernel':subprocess.check_output(['uname','-srmo'],text=True).strip(),'architecture':subprocess.check_output(['uname','-m'],text=True).strip(),'cpu_description':subprocess.check_output("lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1",shell=True,text=True).strip(),'runner_image':'ubuntu-24.04'},'workflow':{'command':Path('/tmp/m9-b-fzf-runtime-command').read_text().strip(),'baseline_attempted':state['baseline_status']!='NOT_RUN','rerun_check_attempted':state['check_status']!='NOT_RUN','drift_case_attempted':False,'notes':f'Corrected executable path frozen before execution in {correction_commit}, derived from pinned upstream Makefile. Original Batch B freeze {freeze_commit}. Prior PARTIAL evidence preserved: run/artifact {prior_run1}/{prior_artifact1} and {prior_run2}/{prior_artifact2}.'},'outcome':{'installation':state['install_status'],'doctor':state['doctor_status'],'baseline':state['baseline_status'],'rerun_check':state['check_status'],'drift_case':'NOT_RUN','verdict':'PASS' if state['check_status']=='PASS' else None,'comparable':comparable,'complete':comparable,'operational_error':state['operational_error'] or None,'false_positive_reported':False,'suspected_false_negative':False,'usability_friction':None},'privacy':{'metadata_only_confirmed':True,'prohibited_sensitive_payload_collected':False,'notes':'No file contents, environment-variable values, stdin contents, network payloads, secrets, credentials, or unrestricted argv were collected into accepted evidence.'},'performance':performance,'artifacts':[{'name':'raw evidence SHA-256 manifest','sha256':manifest_sha,'location':run_url}],'failures_exclusions':failures,'reproduction':{'instructions':f'Checkout junegunn/fzf@{revision} with git tags/history; make; run corrected frozen command from {correction_commit}; doctor, learn, two checks, frozen 3+15 performance protocol.','expected_scope':'Exact pinned external runtime compatibility/performance evidence; not independent adoption and not a universal Linux claim.'}}
           (root/'evidence.json').write_text(json.dumps(record,indent=2,sort_keys=True)+'\n')
           PY
           python3 scripts/m9_validate_evidence.py "$evidence/evidence.json" | tee "$evidence/validator.txt"
           sha256sum "$evidence/evidence.json" > "$evidence/evidence.sha256"
 
-      - name: Upload complete retry evidence
+      - name: Upload complete corrected evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: m9-1-batch-b-ZC-05-FZF-RUNTIME-002-${{ github.run_id }}-${{ github.run_attempt }}
-          path: m9-batch-b-fzf-retry
+          name: m9-1-batch-b-ZC-05-FZF-RUNTIME-003-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-batch-b-fzf-corrected
           if-no-files-found: error
           retention-days: 30
 
-      - name: Enforce accepted retry after evidence preservation
+      - name: Enforce accepted corrected result after evidence preservation
         shell: bash
         run: |
           set -euo pipefail
-          python3 - m9-batch-b-fzf-retry/state.json <<'PY'
+          python3 - m9-batch-b-fzf-corrected/state.json <<'PY'
           import json,sys
           s=json.load(open(sys.argv[1])); required=('install_status','build_status','source_clean','direct_status','doctor_status','baseline_status','check_status','performance_status'); bad={k:s[k] for k in required if s[k]!='PASS'}
-          if bad: raise SystemExit(f'fzf retry preserved as PARTIAL: {bad}')
+          if bad: raise SystemExit(f'fzf corrected case preserved as PARTIAL: {bad}')
           PY
