@@ -90,7 +90,9 @@ jobs:
           cargo +1.82.0 build \
             --manifest-path experiments/m8-ebpf/libbpf-path-bridge/Cargo.toml \
             --release --locked
-          cargo +1.82.0 build --release --locked -p execsurface-cli
+          cargo +1.82.0 build \
+            --manifest-path crates/execsurface-cli/Cargo.toml \
+            --release --locked
 
           OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
           CHECK=experiments/m8-ebpf/libbpf-observer/target/release/contract-check
