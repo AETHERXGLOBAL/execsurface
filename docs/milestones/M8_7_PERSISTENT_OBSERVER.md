@@ -1,7 +1,7 @@
 # M8.7 — Persistent eBPF Observer Session Architecture
 
 Date: 2026-09-26
-Status: **OPEN — ARCHITECTURE CONTRACT FROZEN / FEASIBILITY NEXT**
+Status: **OPEN — M8.7a CLOSED / PROVED — M8.7b NEXT**
 Tracking: #46
 Parent: `docs/milestones/M8_EBPF_ARCHITECTURE.md`
 Motivation: `docs/milestones/M8_6D_POST_TARGET_LATENCY.md`
@@ -50,7 +50,7 @@ Attack:
 ### Dynamic specialists
 
 - Linux/eBPF map/link lifecycle;
-- Rust process supervision and async-signal-safe launch barriers;
+- Rust process supervision and launch barriers;
 - process identity / TID / TGID semantics;
 - ring-buffer ordering and loss accounting;
 - IPC/session protocol design;
@@ -72,7 +72,7 @@ It does **not**:
 - authorize cross-backend baseline interchangeability;
 - authorize eBPF PASS.
 
-The normal `cargo install execsurface --locked` path must remain unchanged during feasibility work.
+The normal `cargo install execsurface --locked` path remains unchanged during feasibility work.
 
 ## Selected prototype architecture
 
@@ -88,11 +88,13 @@ Persistent privileged collector
         +-- single active session controller
                 |
                 +-- allocate monotonic epoch
-                +-- spawn target behind launch barrier
+                +-- spawn controlled bootstrap target
+                +-- receive stable root TID/PID from spawn
                 +-- register root TID -> epoch in BPF map
                 +-- arm userspace tracker for same epoch/root
-                +-- release target barrier
-                +-- BPF propagates epoch to descendants
+                +-- release bootstrap barrier
+                +-- bootstrap execs itself into workload mode with same PID
+                +-- BPF propagates epoch at task creation
                 +-- accept only matching-epoch events
                 +-- drain root/descendants fail-closed
                 +-- snapshot per-session health/loss
@@ -103,16 +105,11 @@ Persistent privileged collector
 
 ## Why kernel-side session filtering
 
-The current per-invocation prototype can observe host-wide tracepoints because the process lifetime itself bounds the observation window. A persistent attachment removes that implicit boundary.
+The per-invocation prototype could use process lifetime as part of the observation boundary. Persistent attachment removes that implicit boundary.
 
-Accepting every ambient event into the shared ring buffer and filtering only in userspace is rejected for the first persistent design because it:
+Accepting ambient host events into the shared ring buffer and filtering only in userspace is rejected for the first persistent design because it increases unrelated ring-buffer pressure, weakens loss attribution, risks ambient metadata entering session state, and makes ownership of accepted events harder to prove.
 
-- increases unrelated ring-buffer pressure;
-- makes producer loss harder to attribute;
-- risks ambient process metadata entering session state;
-- weakens the ability to prove that an accepted event belongs to the active observation.
-
-Therefore the feasibility design uses a kernel map keyed by task/TID identity. A BPF program emits a user-visible event only when the current task belongs to a registered session epoch.
+Therefore the prototype uses a kernel map keyed by task/TID identity. A BPF program emits an accepted event only when the current task belongs to a registered non-zero session epoch.
 
 ## Session epoch
 
@@ -122,54 +119,69 @@ Rules:
 
 - epoch `0` means no session;
 - an epoch is never reused within one collector process;
-- collector restart starts a new collector identity and invalidates all prior in-flight session authority;
-- a user-space event record must carry its epoch;
-- events whose epoch differs from the active session are stale/cross-session evidence and must never be promoted into that session;
-- epoch mismatch is an explicit health failure, not an ignored optimization detail.
-
-M8.7 does not claim mathematical impossibility of 64-bit wraparound. Wraparound must be treated as collector exhaustion/restart, not epoch reuse.
+- collector restart creates a new collector lifetime and invalidates prior in-flight authority;
+- every accepted event carries its epoch;
+- an event whose epoch differs from the active session is stale/cross-session evidence and must not be promoted;
+- epoch mismatch is a health failure, not an optimization detail;
+- 64-bit wraparound is collector exhaustion/restart, not epoch reuse.
 
 ## Task identity and propagation
 
-The first prototype keys membership by Linux TID because process creation and thread-level parentage are task-scoped and M8.5 established that TGID substitution can corrupt lineage.
+The prototype keys membership by Linux TID. M8.5 already established that replacing task identity with TGID can corrupt lineage.
 
-For an active parent task:
+### Accepted propagation design — PROVED in M8.7a
 
-1. spawn/fork/vfork/clone completion identifies the child task identity;
-2. the BPF program copies the parent's session epoch to the child task map entry **before** emitting the accepted spawn record;
-3. map-update failure increments an explicit state/loss counter and makes the session non-clean;
-4. task exit emits an internal epoch-tagged lifecycle marker and removes the task membership entry.
+1. syscall-entry hooks record the best available spawn mechanism (`fork`, `vfork`, `clone`, or explicit `unknown` for unresolved `clone3` semantics);
+2. the ordinary `tracepoint/sched/sched_process_fork` hook is the **task-creation propagation boundary**;
+3. that hook reads `parent_pid` and `child_pid` from the tracepoint payload, looks up the parent's epoch, writes the same epoch into the child's `task_epoch` entry, and only then emits the accepted spawn record;
+4. syscall-exit hooks clean pending mechanism classification but are not the membership propagation boundary;
+5. task exit emits an epoch-tagged lifecycle marker and removes task membership;
+6. map update/delete ambiguity increments an explicit routing-state counter and prevents a clean session.
 
-Path resolution may still use TGID where `/proc/<tgid>/...` semantics require it; task membership and process-path identity are not conflated.
+The raw `sched_process_fork` payload layout is audited against the live kernel before the workflow treats it as evidence. On the closing M8.7a runner the audit proved:
+
+- `parent_pid`: offset 12, size 4;
+- `child_pid`: offset 20, size 4.
+
+### KILLED — syscall-exit membership propagation
+
+The earlier design copied epoch membership from the parent's `sys_exit_*` hook. It was rejected because the new child may be scheduled and emit observable events before the parent's syscall-return hook executes. That creates a silent first-event loss race.
+
+### KILLED — `tp_btf/sched_process_fork` + direct `task_struct` access under Apache-2.0
+
+A BTF task-creation implementation was attempted because it offered typed task arguments. The Linux BPF verifier rejected direct `task_struct` access from the Apache-2.0 program as requiring GPL-compatible program licensing. M8.7 does **not** change the project's Apache-2.0 licensing merely to make that prototype pass. The ordinary stable tracepoint path was selected instead.
 
 ## Root-registration barrier
 
-The first instruction of the target workload must not race ahead of session registration.
+The target workload must not race ahead of root-session registration.
 
-The feasibility launcher therefore uses a parent/child barrier:
+### Accepted bootstrap-exec barrier — PROVED in M8.7a
 
-1. parent creates a pipe before spawn;
-2. child enters a minimal async-signal-safe pre-exec wait on the inherited read descriptor;
-3. parent receives the child TID/PID;
-4. parent writes `root_tid -> epoch` into the BPF membership map;
-5. parent arms the userspace session tracker;
-6. parent releases the barrier;
-7. successful exec closes the barrier descriptor through close-on-exec behavior.
+1. parent creates a pipe;
+2. Rust `pre_exec` performs only non-blocking launch setup (`setpgid`, descriptor ownership, and clearing `FD_CLOEXEC` on the barrier read descriptor);
+3. the first exec starts the controlled fixture in `barrier FD` mode;
+4. `Command::spawn()` returns to the parent with the stable root PID/TID;
+5. parent writes `root_tid -> epoch` into the BPF membership map and arms the userspace tracker;
+6. parent releases the barrier with one byte;
+7. the bootstrap fixture execs itself into `tree` workload mode with the **same PID**;
+8. only then does the test workload fork/exec descendants.
 
-If registration or release fails, the target is terminated/reaped and the session fails before producing clean evidence.
+If registration or release fails, the target must be terminated/reaped and the session cannot become clean.
 
-This barrier is a feasibility mechanism, not yet a public API commitment.
+### KILLED — blocking wait inside Rust `pre_exec`
+
+The earlier prototype blocked on `read()` inside `pre_exec`. Rust `Command::spawn()` itself waits for the child to reach exec through its internal exec-error protocol, so the child waiting for a parent release before exec while the parent waited for `spawn()` created a circular deadlock. This design is permanently rejected.
 
 ## Event transport
 
-The persistent prototype uses an epoch-tagged event record. Minimum fields:
+The persistent prototype uses an epoch-tagged event record containing at minimum:
 
 - `epoch: u64`;
 - event kind;
 - actor TID;
-- actor TGID when needed for path identity;
-- event value (child task, fd, etc.);
-- mechanism/flags field where already proved.
+- actor TGID where needed;
+- event value;
+- mechanism/flags field where already established.
 
 An event without a non-zero registered epoch is not emitted into the accepted session stream.
 
@@ -177,22 +189,16 @@ An event without a non-zero registered epoch is not emitted into the accepted se
 
 M8.4 remains authoritative.
 
-Persistent mode adds a second class of ambiguity: state-routing errors.
-
-At minimum the BPF side maintains monotonic counters for:
+Persistent mode additionally exposes routing-state ambiguity. The BPF side maintains monotonic counters for:
 
 - ring-buffer producer drops;
 - task-epoch map update/delete failures or equivalent routing-state failures.
 
-For each session, userspace snapshots counters immediately before activation and after fail-closed drain.
-
-A non-zero delta makes the session incomplete unless the error is provably attributable outside the active session. The first prototype deliberately does not attempt sophisticated concurrent attribution: **single active session means any unexpected delta during the session fails it closed.**
-
-If counters change while no session should be able to emit events, the next session cannot start cleanly until stale state is diagnosed/reset or the collector restarts.
+For each session, userspace snapshots counters before activation and after fail-closed drain. Under the first single-session architecture, any unexpected counter delta while a session is active prevents a clean result. Counters are not reset merely to manufacture a clean next session.
 
 ## Session state machine
 
-Minimum states:
+Minimum conceptual states:
 
 ```text
 IDLE
@@ -208,61 +214,45 @@ IDLE
 Any error -> FAILED -> RESETTING or COLLECTOR_RESTART_REQUIRED
 ```
 
-`COMPLETE_INCOMPLETE_ONLY` is named intentionally: M8.7 may prove lifecycle/session completeness under its selected capability subset, but eBPF remains unauthorized to produce normal product PASS.
+`COMPLETE_INCOMPLETE_ONLY` is intentional: M8.7 may establish session/lifecycle completeness for its capability subset, but it does not authorize normal product PASS.
 
-A second session request outside `IDLE` is rejected explicitly.
+A second session request outside `IDLE` must be rejected explicitly.
 
 ## Drain and completion
 
-Persistent attachment does not remove the need for lifecycle drain.
+Persistent attachment does not remove lifecycle drain.
 
-A session may finish only when:
+A session may finish cleanly only when:
 
-- the root outcome is known;
-- all registered active descendants for that epoch have emitted/established exit;
-- the existing quiescence requirement has been satisfied;
-- ring-buffer polling completed without error;
-- producer-drop/state-error deltas are zero for a clean sample;
-- event/event-budget limits were not exceeded;
+- root outcome is known;
+- all registered descendants for that epoch have completed;
+- quiescence is satisfied;
+- polling completed without error;
+- producer-drop/routing-state/decode deltas are zero;
+- event/resource limits were not exceeded;
 - no stale/mismatched epoch event was observed;
 - no unresolved collector failure occurred.
 
-A timeout remains `incomplete_lifecycle`; it is not converted to success to improve timing.
+A timeout remains incomplete; it is never converted into success for benchmark reasons.
 
 ## Deterministic reset
 
-At session end the controller must clear:
+At session end the controller clears session-local userspace state and requires kernel membership/pending-classification maps to be empty after a clean drain. Residual kernel entries are a health failure.
 
-- active root identity;
-- known/active descendant sets;
-- pending event queues;
-- per-session sequence counter;
-- event/warning buffers;
-- path-resolution health;
-- decode/lifecycle flags;
-- session-local counter snapshots.
-
-Kernel membership entries for the completed epoch must be empty after normal drain. Residual entries are a session/collector health failure.
-
-Global monotonic producer/state counters are **not reset merely to make the next session clean**; their deltas are accounted across the boundary.
+Global monotonic producer/state counters remain accounted across session boundaries.
 
 ## Crash / restart semantics
 
 If the persistent collector crashes or is killed:
 
 - no in-flight session may be reported clean;
-- kernel links/maps owned by the process are allowed to close with process teardown under the prototype lifecycle;
-- a new collector process has a new collector identity and epoch sequence;
-- no previous in-flight report may be resumed as clean evidence;
-- target containment behavior must be tested separately before any service architecture is approved.
-
-M8.7 does not yet approve pinned BPF links/maps surviving collector death.
+- prototype links/maps close with process teardown; pinned survival is not approved in M8.7;
+- a new collector lifetime must not resume the old in-flight report as clean evidence;
+- target containment/restart behavior remains an M8.7b adversarial requirement.
 
 ## Privilege boundary
 
-The measured host requires privilege for BPF load/attach.
-
-Persistent mode therefore introduces a longer-lived privilege lifetime and must make that explicit.
+The tested host requires privilege for BPF load/attach. Persistent mode therefore creates a longer-lived privilege lifetime and must keep that fact explicit.
 
 Prototype rules:
 
@@ -270,10 +260,10 @@ Prototype rules:
 - no sysctl/LSM/seccomp weakening;
 - no hidden root helper installation;
 - no remote/network control plane;
-- no arbitrary command execution API beyond the local controlled feasibility harness;
-- privilege lifetime and collector identity must be recorded in evidence.
+- no public arbitrary-command service API;
+- privilege lifetime remains local to the isolated feasibility harness.
 
-Production privilege separation is OPEN and belongs to a later productization gate.
+Production privilege separation remains OPEN.
 
 ## Privacy boundary
 
@@ -286,25 +276,57 @@ Unchanged metadata-only policy:
 - no secret material;
 - no unrestricted argv persistence.
 
-A persistent collector must not become a general host telemetry collector.
+A persistent collector must not become a generic host telemetry collector.
 
 ## M8.7a — kernel epoch-filter feasibility
 
-Acceptance requires:
+**Status: CLOSED / PROVED — bounded feasibility only.**
 
-- isolated persistent-observer crate outside default workspace/product install;
-- BPF membership map `task/TID -> epoch`;
-- epoch-tagged ring-buffer events;
-- root registration before target release;
-- descendant epoch propagation;
-- two sequential sessions under one attach lifetime;
-- no event from session A accepted into session B;
-- membership map empty after clean drain;
-- producer/state counters visible;
-- final detach occurs once after both sessions;
-- CI and normal product CI remain green.
+Acceptance evidence on commit `b89501e8fa1133a74596c5e2b98bcac48e59a5c0`:
+
+- M8.7 workflow run `36262244488`: **SUCCESS**;
+- normal product CI run `36262244518`: **SUCCESS**;
+- live `sched_process_fork` ABI audit: **PASS**;
+- two sequential sessions executed under one open/load/attach lifetime and one final detach;
+- epochs observed exactly `[1, 2]` with different roots;
+- each session recorded 1 spawn, 2 execs, 2 exits;
+- `stale_epoch_events = 0` for both sessions;
+- `integrity_errors = 0` for both sessions;
+- `producer_drop_delta = 0` for both sessions;
+- `routing_error_delta = 0` for both sessions;
+- `decode_error_delta = 0` for both sessions;
+- lifecycle drain completed and active task count reached zero;
+- task membership and pending-mechanism maps were empty after each clean session and at final shutdown;
+- no events arrived while userspace had no active session;
+- eBPF PASS/product integration authority remained false.
+
+Closing-run timing evidence on that exact hosted runner:
+
+- one-time open: `0.107031 ms`;
+- one-time load: `1.335743 ms`;
+- one-time attach: `0.949341 ms`;
+- session 1 elapsed: `111.967298 ms`;
+- session 2 elapsed: `112.000849 ms`;
+- one-time final detach: `706.846054 ms`.
+
+These are feasibility measurements, not a universal performance claim. M8.7c will perform repeated controlled performance comparison only after adversarial M8.7b closes.
+
+Raw evidence artifact from the closing run contains both the session JSON and the live tracepoint format. The artifact ZIP SHA-256 recorded by GitHub Actions is:
+
+`fd1145492f255af2c91e6452c2eede98b4dea0a2f57398b07ab0dc393460c83a`
+
+### M8.7a negative evidence retained
+
+- **KILLED:** syscall-exit-only descendant membership propagation — scheduling race before parent syscall return;
+- **KILLED under Apache-2.0:** `tp_btf` direct `task_struct` access — verifier required GPL-compatible program licensing;
+- **KILLED:** blocking root barrier inside Rust `pre_exec` — deadlocked with `Command::spawn()` exec synchronization;
+- initial Rust formatting/ownership failures were implementation defects only and were corrected without weakening acceptance criteria.
+
+M8.7a proves only that the selected persistent attachment + epoch-isolation architecture is executable for the controlled sequential-session case on the tested environment. It does not prove adversarial isolation, crash safety, production service safety, full semantic equivalence, or public integration readiness.
 
 ## M8.7b — adversarial session isolation
+
+**Status: NEXT / NOT STARTED.**
 
 Must attack:
 
