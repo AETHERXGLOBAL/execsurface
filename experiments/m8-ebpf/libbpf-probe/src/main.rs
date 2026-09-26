@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
-use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
+use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder, TracepointCategory};
 
 mod probe {
     include!(concat!(env!("OUT_DIR"), "/probe.skel.rs"));
@@ -33,6 +33,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut open_object = MaybeUninit::uninit();
     let open_skel = builder.open(&mut open_object)?;
     let mut skel = open_skel.load()?;
+
+    if std::env::var_os("AX_M8_INVALID_ATTACH").is_some() {
+        let _link = skel.progs.execsurface_m8_exec.attach_tracepoint(
+            TracepointCategory::Syscalls,
+            "execsurface_m8_missing_tracepoint",
+        )?;
+        return Err("invalid libbpf attach unexpectedly succeeded".into());
+    }
+
     skel.attach()?;
 
     let stats = Rc::new(RefCell::new(EventStats::default()));
