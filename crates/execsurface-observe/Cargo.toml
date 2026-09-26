@@ -8,6 +8,10 @@ rust-version.workspace = true
 description = "Linux metadata-only observer for AETHER X ExecSurface"
 readme.workspace = true
 
+[features]
+default = []
+m8-parity-internal = []
+
 [dependencies]
 execsurface-model = { path = "../execsurface-model", version = "=0.1.0-alpha.2" }
 libc.workspace = true
