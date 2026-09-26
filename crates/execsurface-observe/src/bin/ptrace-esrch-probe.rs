@@ -73,7 +73,13 @@ fn thread_group_snapshot(tid: libc::pid_t) -> String {
     let mut tids = match fs::read_dir(&task_dir) {
         Ok(entries) => entries
             .flatten()
-            .filter_map(|entry| entry.file_name().to_string_lossy().parse::<libc::pid_t>().ok())
+            .filter_map(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .parse::<libc::pid_t>()
+                    .ok()
+            })
             .collect::<Vec<_>>(),
         Err(_) => return format!("tgid={tgid};tasks=unreadable"),
     };
@@ -93,11 +99,7 @@ fn readonly_syscall_info_probe(tid: libc::pid_t) -> String {
     };
     if result == -1 {
         let error = io::Error::last_os_error();
-        return format!(
-            "result=-1;errno={:?};error={}",
-            error.raw_os_error(),
-            error
-        );
+        return format!("result=-1;errno={:?};error={}", error.raw_os_error(), error);
     }
     let info = unsafe { info.assume_init() };
     format!(
@@ -277,7 +279,10 @@ fn main() -> io::Result<()> {
             if error.raw_os_error() == Some(libc::ECHILD) && tracees.is_empty() {
                 break;
             }
-            eprintln!("M9_PTRACE_PROBE_ERROR op=waitpid errno={:?} error={error}", error.raw_os_error());
+            eprintln!(
+                "M9_PTRACE_PROBE_ERROR op=waitpid errno={:?} error={error}",
+                error.raw_os_error()
+            );
             return Err(error);
         }
         waits += 1;
@@ -345,7 +350,11 @@ fn main() -> io::Result<()> {
             *flag = false;
             was_newborn
         });
-        let forwarded = if newborn || signal == libc::SIGTRAP { 0 } else { signal };
+        let forwarded = if newborn || signal == libc::SIGTRAP {
+            0
+        } else {
+            signal
+        };
         if let Err(error) = resume(tid, forwarded, status) {
             eprintln!(
                 "M9_PTRACE_PROBE_CONTEXT kind=signal tid={tid} signal={signal} newborn={newborn} tracked={} {}",

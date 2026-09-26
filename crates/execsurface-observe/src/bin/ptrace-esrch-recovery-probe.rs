@@ -301,7 +301,11 @@ fn main() -> io::Result<()> {
             *flag = false;
             value
         });
-        let forwarded = if newborn || signal == libc::SIGTRAP { 0 } else { signal };
+        let forwarded = if newborn || signal == libc::SIGTRAP {
+            0
+        } else {
+            signal
+        };
         match resume(tid, forwarded)? {
             ResumeResult::Resumed => {}
             ResumeResult::Reaped(terminal) => {
