@@ -64,7 +64,7 @@ The persisted feasibility event is 16 bytes and contains only:
 
 - event kind;
 - process id;
-- related process id;
+- a metadata value whose meaning is event-kind-specific (for example child process id for lineage or returned file descriptor for the E9 file event);
 - reserved field.
 
 Both candidates demonstrated:
@@ -76,9 +76,25 @@ Both candidates demonstrated:
 - a producer-side per-CPU drop counter that increased when the ring was deliberately not consumed;
 - no persisted argv/environment sentinel content.
 
+## Post-selection E9 hardening
+
+After the stack decision, the feasibility harness was strengthened so E9 also requires one file-related metadata semantic from both candidates.
+
+The chosen probe observes successful `openat` syscall exits and persists only process identity plus the returned file descriptor. It does not persist filename, file content, argv, environment, stdin, or user-memory content.
+
+Corrected common-gate evidence:
+
+- head `6e4ba2dc0fde94c77ca63abbdf7e4eac9a9162f1`;
+- `M8 eBPF Feasibility` — run `36242866289` — **SUCCESS**;
+- Host / BTF / privilege audit — **SUCCESS**;
+- Aya / build + lifecycle probe — **SUCCESS**;
+- libbpf-rs / build + lifecycle probe — **SUCCESS**.
+
+The pre-correction libbpf userspace decoder failure is preserved as `M8_2_NEGATIVE_010_LIBBPF_FILE_EVENT_DECODER_GAP.md` rather than rewritten.
+
 ## libbpf-rs packaging evidence
 
-Final packaging head:
+Reference measured packaging head:
 
 `e297e6713949d84887952b2fd3e4504423011e25`
 
@@ -104,6 +120,12 @@ The vendored packaging job proved:
 - explicit pressure loss: 1366 dropped events;
 - metadata-only privacy schema retained.
 
+A later packaging regression gate retained the E9 file-metadata semantic:
+
+- head `81b273dc667ffaae8b3b08ae9acd3ed4794fa61c`;
+- `M8 eBPF Packaging Probe` — run `36242882478` — **SUCCESS**;
+- vendored runtime packaging — **SUCCESS** including retained feasibility semantics.
+
 ## Preserved negative evidence
 
 M8.2 intentionally retains failed approaches and harness discoveries:
@@ -116,7 +138,8 @@ M8.2 intentionally retains failed approaches and harness discoveries:
 6. Apache/task_struct boundary;
 7. tracefs audit permission requirement;
 8. vendored libbpf `autopoint` requirement;
-9. vendored libbpf Rust 1.82 `rustfmt` requirement.
+9. vendored libbpf Rust 1.82 `rustfmt` requirement;
+10. libbpf E9 file-event userspace decoder/schema drift.
 
 These failures constrain M8.3. They are not rewritten as successes.
 
@@ -155,6 +178,7 @@ M8.3 may now implement the selected libbpf-rs backend, subject to all of the fol
 
 - Aya feasibility: **PROVED on reference M8.2 environment**
 - libbpf-rs feasibility: **PROVED on reference M8.2 environment**
+- E9 file-related metadata semantic: **PROVED for both candidates on reference M8.2 environment**
 - vendored libbpf runtime packaging: **PROVED on reference M8.2 environment**
 - selected M8.3 stack: **libbpf-rs / libbpf — ACCEPTED**
 - eBPF PASS authority: **NOT AUTHORIZED**
