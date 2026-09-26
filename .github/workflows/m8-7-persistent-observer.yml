@@ -1,0 +1,146 @@
+name: M8.7 Persistent Observer
+
+on:
+  push:
+    branches:
+      - "milestone/m8-7-persistent-observer"
+    paths:
+      - "experiments/m8-ebpf/persistent-observer/**"
+      - "docs/milestones/M8_7_PERSISTENT_OBSERVER.md"
+      - ".github/workflows/m8-7-persistent-observer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  persistent-session:
+    name: epoch isolation and sequential-session feasibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+
+      - name: Install declared native build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+          clang --version
+          pkg-config --modversion libelf
+
+      - name: Install resolver and product-MSRV Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          cargo +1.87.0 --version
+          rustc +1.82.0 --version --verbose
+          cargo +1.82.0 --version
+
+      - name: Resolve Rust-1.82-compatible isolated lock
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f experiments/m8-ebpf/persistent-observer/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml
+
+      - name: Format and build persistent observer and fixture
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo +1.82.0 fmt \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml \
+            -- --check
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml \
+            --release --locked
+          clang -O2 -Wall -Wextra -Werror \
+            experiments/m8-ebpf/persistent-observer/m8_7_session_fixture.c \
+            -o "$RUNNER_TEMP/m8_7_session_fixture"
+
+          OBS="$PWD/experiments/m8-ebpf/persistent-observer/target/release/execsurface-m8-persistent-observer"
+          FIX="$RUNNER_TEMP/m8_7_session_fixture"
+          test -x "$OBS"
+          test -x "$FIX"
+          sha256sum "$OBS" "$FIX"
+
+      - name: Prove two sequential epochs under one attachment lifetime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS="$PWD/experiments/m8-ebpf/persistent-observer/target/release/execsurface-m8-persistent-observer"
+          FIX="$RUNNER_TEMP/m8_7_session_fixture"
+          REPORT="$RUNNER_TEMP/m8-7a-persistent-session.json"
+
+          sudo "$OBS" --report "$REPORT" --fixture "$FIX"
+          cat "$REPORT"
+
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert report['protocol_version'] == 1, report
+          assert report['architecture'] == 'persistent-attached-libbpf-feasibility-v1'
+          assert report['session_model'] == 'single-active-session-epoch-v1'
+          assert report['kernel_filter'] == 'task-tid-to-u64-epoch'
+          assert report['unexpected_without_session'] == 0, report
+          assert report['decode_errors_total'] == 0, report
+          assert report['final_membership_map_empty'] is True, report
+          assert report['final_pending_mechanism_map_empty'] is True, report
+
+          sessions = report['sessions']
+          assert [s['epoch'] for s in sessions] == [1, 2], sessions
+          assert len({s['root_tid'] for s in sessions}) == 2, sessions
+          for session in sessions:
+              assert session['clean_for_m8_7a'] is True, session
+              assert session['lifecycle_drain_complete'] is True, session
+              assert session['active_remaining'] == 0, session
+              assert session['stale_epoch_events'] == 0, session
+              assert session['integrity_errors'] == 0, session
+              assert session['decode_error_delta'] == 0, session
+              assert session['producer_drop_delta'] == 0, session
+              assert session['routing_error_delta'] == 0, session
+              assert session['membership_map_empty'] is True, session
+              assert session['pending_mechanism_map_empty'] is True, session
+              assert session['event_limit_hit'] is False, session
+              assert session['spawn_count'] >= 1, session
+              assert session['exec_count'] >= 2, session
+              assert session['exit_count'] >= 2, session
+
+          authority = report['authority']
+          assert authority['ptrace_correctness_reference'] is True
+          assert authority['full_surface_comparable'] is False
+          assert authority['ebpf_pass_authorized'] is False
+          assert authority['product_integration_authorized'] is False
+
+          lifecycle = report['one_time_lifecycle']
+          print('M8_7A_PERSISTENT_EPOCH_ISOLATION_PASS')
+          print('M8_7A_SESSION_MS', [round(s['elapsed_ms'], 6) for s in sessions])
+          print('M8_7A_ONE_TIME_LIFECYCLE_MS', {k: round(v, 6) for k, v in lifecycle.items()})
+          PY
+
+      - name: Preserve product authority boundary
+        shell: bash
+        run: |
+          set -euxo pipefail
+          REPORT="$RUNNER_TEMP/m8-7a-persistent-session.json"
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert report['authority']['ebpf_pass_authorized'] is False
+          assert report['authority']['product_integration_authorized'] is False
+          print('M8_7A_NO_PASS_AUTHORITY_PRESERVED')
+          PY
+
+      - name: Upload raw M8.7a evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: m8-7a-persistent-observer-${{ github.sha }}
+          path: ${{ runner.temp }}/m8-7a-persistent-session.json
+          if-no-files-found: error
+          retention-days: 30
