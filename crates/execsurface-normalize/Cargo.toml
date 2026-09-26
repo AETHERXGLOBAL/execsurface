@@ -6,11 +6,12 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Deterministic canonicalization for AETHER X ExecSurface"
+readme.workspace = true
 
 [dependencies]
-execsurface-model = { path = "../execsurface-model" }
+execsurface-model = { path = "../execsurface-model", version = "=0.1.0-alpha.2" }
 libc.workspace = true
 
 [dev-dependencies]
-execsurface-observe = { path = "../execsurface-observe" }
+execsurface-observe = { path = "../execsurface-observe", version = "=0.1.0-alpha.2" }
 serde_json.workspace = true
