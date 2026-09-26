@@ -20,4 +20,8 @@ path = "src/main.rs"
 name = "m8_5_parity_fixture"
 path = "src/bin/m8_5_parity_fixture.rs"
 
+[[bin]]
+name = "m8_5_nested_thread_fixture"
+path = "src/bin/m8_5_nested_thread_fixture.rs"
+
 [workspace]
