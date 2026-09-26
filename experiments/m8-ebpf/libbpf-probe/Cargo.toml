@@ -1,0 +1,27 @@
+[package]
+name = "execsurface-m8-libbpf-probe"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.82"
+build = "build.rs"
+publish = false
+
+[features]
+default = []
+# Packaging-only feasibility mode. This vendors libbpf, libelf and zlib through
+# libbpf-rs/libbpf-sys so we can measure whether the final userspace binary can
+# avoid requiring those shared libraries at runtime. It does not affect the
+# ExecSurface workspace or the normal ptrace installation path.
+vendored-runtime = ["libbpf-rs/vendored"]
+
+[dependencies]
+libbpf-rs = "=0.27.0"
+
+[build-dependencies]
+libbpf-cargo = "=0.27.0"
+clap = "=4.5.60"
+clap_lex = "=1.0.0"
+getrandom = "=0.3.1"
+tempfile = "=3.27.0"
+
+[workspace]

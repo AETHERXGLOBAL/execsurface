@@ -122,24 +122,25 @@ GitHub Release binaries and the stable `AETHERXGLOBAL/execsurface@v0.1` Action c
 
 ## M8 — Pluggable Observation Backends & eBPF Evidence Path
 
-**OPEN — ARCHITECTURE / NON-BREAKING ABSTRACTION**
+**OPEN — M8.0–M8.2 CLOSED / M8.3 NEXT**
 
 M8 adds a pluggable collection layer so ExecSurface can evaluate an eBPF fast path without replacing or weakening the current native ptrace correctness reference.
 
 The milestone is explicitly additive. Existing canonicalization, baseline, diff, policy, verdict, report, public installation, and `@v0.1` behavior remain stable until an evidence-backed gate authorizes a change.
 
-Required gates:
+Gate status:
 
-1. M8.0 — backend contract, capability/completeness/loss/privacy/comparability architecture;
-2. M8.1 — non-breaking ptrace abstraction with no intended behavior change;
-3. M8.2 — reproducible Aya vs libbpf-rs/libbpf CO-RE feasibility decision;
-4. M8.3 — metadata-only eBPF observer with explicit unsupported semantics;
-5. M8.4 — fail-closed event-loss and truncation proof;
-6. M8.5 — ptrace/eBPF semantic parity harness;
-7. M8.6 — performance and kernel/platform compatibility evidence;
-8. M8.7 — opt-in public-alpha integration and release gate.
+1. **M8.0 — CLOSED / ACCEPTED:** backend contract, capability/completeness/loss/privacy/comparability architecture.
+2. **M8.1 — CLOSED / ACCEPTED:** current native ptrace implementation moved behind the backend abstraction with existing CI/distribution/action behavior preserved.
+3. **M8.2 — CLOSED / ACCEPTED:** Aya and libbpf-rs both passed the feasibility hard gates; **libbpf-rs / libbpf selected for experimental M8.3 implementation**. Vendored packaging proved a Rust 1.82 build can remove `libelf`, `zlib`, and `zstd` from runtime dependencies while preserving the feasibility semantics. Aya remains a viable preserved alternative.
+4. **M8.3 — OPEN / NEXT:** metadata-only libbpf-rs eBPF observer with explicit unsupported semantics.
+5. **M8.4 — OPEN:** fail-closed event-loss and truncation proof.
+6. **M8.5 — OPEN:** ptrace/eBPF semantic parity harness.
+7. **M8.6 — OPEN:** performance and kernel/platform compatibility evidence.
+8. **M8.7 — OPEN:** opt-in public-alpha integration and release gate.
 
-No eBPF path may produce evidence-equivalent PASS until loss accounting, privacy, capability metadata, and cross-backend comparability are proved.
+No eBPF path may produce evidence-equivalent PASS until loss accounting, privacy, capability metadata, and cross-backend comparability are proved through the later gates.
 
 Architecture: `docs/milestones/M8_EBPF_ARCHITECTURE.md`.
+M8.2 decision: `docs/milestones/M8_2_STACK_DECISION.md`.
 Tracking: GitHub Issue #34.
