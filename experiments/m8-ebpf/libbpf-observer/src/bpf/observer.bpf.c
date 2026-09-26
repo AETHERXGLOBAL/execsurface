@@ -118,13 +118,18 @@ int execsurface_m84_exit(void *ctx)
 static __always_inline int record_spawn_exit(struct syscall_exit_ctx *ctx, __u32 mechanism)
 {
     __s64 child_pid = ctx->ret;
-    __u32 parent_pid;
+    __u64 pid_tgid;
+    __u32 parent_tid;
 
     if (child_pid <= 0 || child_pid > 0xffffffffLL)
         return 0;
 
-    parent_pid = (__u32)(bpf_get_current_pid_tgid() >> 32);
-    return submit_event(EVENT_SPAWN, parent_pid, (__u32)child_pid, mechanism);
+    /* Process creation is task-scoped. The low 32 bits are the current TID,
+     * which equals PID for a process leader but preserves the actual parent
+     * when a non-leader thread creates another task. */
+    pid_tgid = bpf_get_current_pid_tgid();
+    parent_tid = (__u32)pid_tgid;
+    return submit_event(EVENT_SPAWN, parent_tid, (__u32)child_pid, mechanism);
 }
 
 static __always_inline __u32 classify_clone_mechanism(__u64 flags, __u64 exit_signal)
