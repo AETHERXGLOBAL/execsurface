@@ -1,0 +1,57 @@
+name: M9.1 repair zero-contact evidence harness
+
+on:
+  push:
+    branches:
+      - milestone/m9-1-post-hardening-external-workloads
+    paths:
+      - .github/workflows/m9-1-repair-zero-contact-harness.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: m9-1-repair-zero-contact-harness
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply bounded harness repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/m9_fix_zero_contact_harness.py
+          git diff --check
+          changed="$(git diff --name-only)"
+          test "$changed" = ".github/workflows/m9-1-post-hardening-zero-contact.yml"
+          grep -F "printf 'operational_status=%q" .github/workflows/m9-1-post-hardening-zero-contact.yml >/dev/null 2>&1 && {
+            echo 'unexpected obsolete marker' >&2
+            exit 1
+          } || true
+          grep -F "printf 'operational_error=%q" .github/workflows/m9-1-post-hardening-zero-contact.yml >/dev/null
+          grep -F 'direct-diagnostic.stderr' .github/workflows/m9-1-post-hardening-zero-contact.yml >/dev/null
+
+      - name: Commit harness-only patch with remote-head lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin milestone/m9-1-post-hardening-external-workloads
+          remote="$(git rev-parse origin/milestone/m9-1-post-hardening-external-workloads)"
+          test "$remote" = "$GITHUB_SHA"
+          test "$(git diff --name-only)" = ".github/workflows/m9-1-post-hardening-zero-contact.yml"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/m9-1-post-hardening-zero-contact.yml
+          git diff --cached --check
+          git commit -m "M9.1: make failure evidence serialization shell-safe"
+          git push origin HEAD:milestone/m9-1-post-hardening-external-workloads
