@@ -15,9 +15,9 @@ permissions:
 
 jobs:
   loss-semantics:
-    name: real producer loss and truncation proof
+    name: loss lag teardown and lifecycle proof
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
 
@@ -52,7 +52,7 @@ jobs:
           grep -A2 -E '^name = "(getrandom|clap_lex|libbpf-rs|libbpf-cargo)"' \
             experiments/m8-ebpf/libbpf-observer/Cargo.lock
 
-      - name: Format and build real observer plus storm fixture
+      - name: Format and build real observer and adversarial fixtures
         shell: bash
         run: |
           set -euxo pipefail
@@ -64,9 +64,11 @@ jobs:
             --release --locked
           OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
           STORM=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_event_storm
+          TEARDOWN=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_teardown_race
           test -x "$OBS"
           test -x "$STORM"
-          sha256sum "$OBS" "$STORM"
+          test -x "$TEARDOWN"
+          sha256sum "$OBS" "$STORM" "$TEARDOWN"
 
       - name: Prove event-budget truncation is explicit and fail-closed
         shell: bash
@@ -85,6 +87,7 @@ jobs:
           assert report['observation_complete'] is False
           assert report['completeness'] == 'incomplete_limit', report
           assert report['dropped_events'] == 0, report['dropped_events']
+          assert report['lifecycle_drain_complete'] is True, report
           assert 'event_limit_exceeded' in codes, codes
           print('M8_4_EVENT_LIMIT_FAIL_CLOSED_PASS')
           PY
@@ -98,7 +101,6 @@ jobs:
           REPORT="$RUNNER_TEMP/m8-4-loss.json"
 
           sudo "$OBS" --report "$REPORT" --event-limit 1000000 -- "$STORM" 32 100000
-          cat "$REPORT"
           python3 - "$REPORT" <<'PY'
           import json, sys
           report = json.load(open(sys.argv[1], encoding='utf-8'))
@@ -110,11 +112,85 @@ jobs:
           print(f"M8_4_REAL_RINGBUF_LOSS_PASS dropped={report['dropped_events']}")
           PY
 
+      - name: Prove controlled consumer lag cannot become clean evidence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          STORM=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_event_storm
+          REPORT="$RUNNER_TEMP/m8-4-consumer-lag.json"
+
+          sudo "$OBS" --report "$REPORT" --event-limit 1000000 --consumer-lag-ms 150 -- \
+            "$STORM" 16 100000
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          codes = {w['code'] for w in report['warnings']}
+          assert report['consumer_lag_ms'] == 150, report
+          assert report['observation_complete'] is False
+          assert report['dropped_events'] > 0, report['dropped_events']
+          assert report['completeness'] == 'incomplete_loss', report['completeness']
+          assert 'consumer_lag_injected' in codes, codes
+          assert 'producer_event_loss' in codes, codes
+          print(f"M8_4_CONSUMER_LAG_FAIL_CLOSED_PASS dropped={report['dropped_events']}")
+          PY
+
+      - name: Prove post-root descendant activity is drained before report closure
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          TEARDOWN=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_teardown_race
+          REPORT="$RUNNER_TEMP/m8-4-teardown-complete.json"
+
+          sudo "$OBS" --report "$REPORT" --lifecycle-timeout-ms 2000 -- "$TEARDOWN" 250
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert report['observation_complete'] is False
+          assert report['dropped_events'] == 0, report['dropped_events']
+          assert report['lifecycle_drain_complete'] is True, report
+          assert report['completeness'] == 'incomplete_capability', report['completeness']
+          spawns = [e for e in report['events'] if e['event_type'] == 'process_spawn']
+          assert spawns, report['events']
+          child_ids = {e['child_pid'] for e in spawns}
+          late_opens = [e for e in report['events'] if e['event_type'] == 'successful_open_identity' and e['pid'] in child_ids]
+          assert late_opens, report['events']
+          print(f"M8_4_TEARDOWN_DRAIN_PASS descendants={len(child_ids)} late_opens={len(late_opens)}")
+          PY
+
+      - name: Prove lifecycle timeout is explicit and fail-closed
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          TEARDOWN=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_teardown_race
+          REPORT="$RUNNER_TEMP/m8-4-teardown-timeout.json"
+
+          sudo "$OBS" --report "$REPORT" --lifecycle-timeout-ms 40 -- "$TEARDOWN" 250
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          codes = {w['code'] for w in report['warnings']}
+          assert report['observation_complete'] is False
+          assert report['dropped_events'] == 0, report['dropped_events']
+          assert report['lifecycle_drain_complete'] is False, report
+          assert report['completeness'] == 'incomplete_lifecycle', report['completeness']
+          assert 'lifecycle_drain_timeout' in codes, codes
+          print('M8_4_LIFECYCLE_TIMEOUT_FAIL_CLOSED_PASS')
+          PY
+          sleep 0.4
+
       - name: Preserve no-PASS authority boundary
         shell: bash
         run: |
           set -euxo pipefail
-          python3 - "$RUNNER_TEMP/m8-4-limit.json" "$RUNNER_TEMP/m8-4-loss.json" <<'PY'
+          python3 \
+            "$RUNNER_TEMP/m8-4-limit.json" \
+            "$RUNNER_TEMP/m8-4-loss.json" \
+            "$RUNNER_TEMP/m8-4-consumer-lag.json" \
+            "$RUNNER_TEMP/m8-4-teardown-complete.json" \
+            "$RUNNER_TEMP/m8-4-teardown-timeout.json" <<'PY'
           import json, sys
           for path in sys.argv[1:]:
               report = json.load(open(path, encoding='utf-8'))
