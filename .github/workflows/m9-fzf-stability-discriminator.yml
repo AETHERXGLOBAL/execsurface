@@ -1,0 +1,137 @@
+name: M9.1 fzf residual stability discriminator
+
+on:
+  push:
+    branches:
+      - fix/m9-go-temp-canonicalization
+    paths:
+      - .github/workflows/m9-fzf-stability-discriminator.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discriminate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      FZF_SHA: b1be3a8be1b833ce5b92fbbac11637643d60a046
+      WORK_ROOT: /tmp/execsurface-m9-fzf-discriminator
+    steps:
+      - name: Checkout ExecSurface candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified fzf
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: junegunn/fzf
+          ref: ${{ env.FZF_SHA }}
+          path: external/fzf
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build candidate and prime upstream three times
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          cargo "+$RUST_TOOLCHAIN" build --locked -p execsurface
+          rm -rf "$WORK_ROOT"
+          cp -a external/fzf "$WORK_ROOT"
+          test "$(git -C "$WORK_ROOT" rev-parse HEAD)" = "$FZF_SHA"
+          test -z "$(git -C "$WORK_ROOT" status --porcelain)"
+          mkdir -p m9-fzf-discriminator-evidence
+          for n in 1 2 3; do
+            (cd "$WORK_ROOT" && go test ./...) \
+              > "m9-fzf-discriminator-evidence/direct-prime-${n}.stdout" \
+              2> "m9-fzf-discriminator-evidence/direct-prime-${n}.stderr"
+          done
+          {
+            printf 'execsurface_sha=%s\n' "$GITHUB_SHA"
+            printf 'fzf_sha=%s\n' "$FZF_SHA"
+            printf 'go=%s\n' "$(go version)"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > m9-fzf-discriminator-evidence/environment.txt
+
+      - name: Learn once and collect six unchanged checks without early exit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmd="cd '$WORK_ROOT' && go test ./... >/dev/null 2>&1"
+          target/debug/execsurface learn \
+            --output m9-fzf-discriminator-evidence/fzf.lock.json \
+            -- /bin/bash -lc "$cmd"
+          : > m9-fzf-discriminator-evidence/summary.txt
+          for n in 1 2 3 4 5 6; do
+            set +e
+            target/debug/execsurface check \
+              --baseline m9-fzf-discriminator-evidence/fzf.lock.json \
+              --json-output "m9-fzf-discriminator-evidence/check-${n}.json" \
+              --markdown-output "m9-fzf-discriminator-evidence/check-${n}.md" \
+              -- /bin/bash -lc "$cmd" \
+              > "m9-fzf-discriminator-evidence/check-${n}.stdout" \
+              2> "m9-fzf-discriminator-evidence/check-${n}.stderr"
+            rc=$?
+            set -e
+            python3 - "$n" "$rc" <<'PY' | tee -a m9-fzf-discriminator-evidence/summary.txt
+          import collections, json, sys
+          from pathlib import Path
+          n, rc = sys.argv[1], int(sys.argv[2])
+          d=json.loads(Path(f'm9-fzf-discriminator-evidence/check-{n}.json').read_text())
+          fs=d.get('findings', [])
+          kinds=collections.Counter(f.get('effect_kind') for f in fs)
+          actors=collections.Counter(
+              (((f.get('evidence') or {}).get('effect') or {}).get('actor') or {}).get('family')
+              for f in fs
+          )
+          paths=[]
+          for f in fs:
+              effect=((f.get('evidence') or {}).get('effect') or {})
+              target=effect.get('target') or {}
+              if isinstance(target, dict) and target.get('value'):
+                  paths.append(target['value'])
+          gcc_tmp=sum(1 for p in paths if p.startswith('$TMP/cc') and p.endswith('.s'))
+          go_cache=sum(1 for p in paths if p.startswith('$HOME/.cache/go-build/'))
+          print(json.dumps({
+              'check':int(n),'rc':rc,'verdict':d.get('verdict'),'findings':len(fs),
+              'kinds':dict(kinds),'actors':dict(actors),'gcc_tmp':gcc_tmp,
+              'go_cache':go_cache,'sample_paths':paths[:12]
+          }, sort_keys=True))
+          PY
+          done
+
+      - name: Analyze convergence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee m9-fzf-discriminator-evidence/convergence.txt
+          import json
+          from pathlib import Path
+          rows=[json.loads(x) for x in Path('m9-fzf-discriminator-evidence/summary.txt').read_text().splitlines() if x.strip()]
+          assert len(rows)==6, rows
+          print('finding_counts=' + ','.join(str(r['findings']) for r in rows))
+          print('gcc_tmp_counts=' + ','.join(str(r['gcc_tmp']) for r in rows))
+          print('go_cache_counts=' + ','.join(str(r['go_cache']) for r in rows))
+          print('all_pass=' + str(all(r['rc']==0 and r['verdict']=='pass' and r['findings']==0 for r in rows)).lower())
+          PY
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          find m9-fzf-discriminator-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-fzf-discriminator-evidence/SHA256SUMS
+
+      - name: Upload discriminator evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-fzf-discriminator-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-fzf-discriminator-evidence
+          if-no-files-found: error
+          retention-days: 30
