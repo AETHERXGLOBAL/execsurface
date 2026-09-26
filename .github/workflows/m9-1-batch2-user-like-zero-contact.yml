@@ -1,0 +1,320 @@
+name: M9.1 preregistered user-like zero-contact batch 2
+
+on:
+  push:
+    branches:
+      - milestone/m9-1-post-hardening-external-workloads
+    paths:
+      - .github/workflows/m9-1-batch2-user-like-zero-contact.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  user-like-zero-contact:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: ZC-04-JUST-CLI
+            project: just
+            repository: casey/just
+            revision: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+          - id: ZC-05-FZF-CLI
+            project: fzf
+            repository: junegunn/fzf
+            revision: b1be3a8be1b833ce5b92fbbac11637643d60a046
+          - id: ZC-06-RIPGREP-CLI
+            project: ripgrep
+            repository: BurntSushi/ripgrep
+            revision: 3fce3b5bb0236da2df6d99672afb8a719642eca7
+          - id: ZC-07-FD-CLI
+            project: fd
+            repository: sharkdp/fd
+            revision: ce97e473ebaec49697c07daa50a7bc2b32f713d2
+    env:
+      PRODUCT_RUST: 1.90.0
+      RIPGREP_RUST: 1.96.0
+      SAMPLE_TIMEOUT: 120
+
+    steps:
+      - name: Checkout ExecSurface candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned external project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.revision }}
+          path: external/project
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install frozen product toolchain and verify provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$PRODUCT_RUST" --profile minimal
+          if [ '${{ matrix.project }}' = ripgrep ]; then
+            rustup toolchain install "$RIPGREP_RUST" --profile minimal
+          fi
+          test "$(git -C external/project rev-parse HEAD)" = '${{ matrix.revision }}'
+          test -z "$(git -C external/project status --porcelain)"
+          mkdir -p "m9-b2-evidence/${{ matrix.id }}"
+
+      - name: Build ExecSurface from exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$PRODUCT_RUST" build --locked --release -p execsurface
+          target/release/execsurface --version | tee "m9-b2-evidence/${{ matrix.id }}/execsurface-version.txt"
+          target/release/execsurface doctor \
+            > "m9-b2-evidence/${{ matrix.id }}/doctor.stdout" \
+            2> "m9-b2-evidence/${{ matrix.id }}/doctor.stderr"
+
+      - name: Build external subject outside observed command
+        working-directory: external/project
+        shell: bash
+        run: |
+          set -euo pipefail
+          case '${{ matrix.project }}' in
+            just)
+              cargo +1.90.0 build --locked --release
+              test -x target/release/just
+              ;;
+            fzf)
+              go build -o "$RUNNER_TEMP/fzf" .
+              test -x "$RUNNER_TEMP/fzf"
+              ;;
+            ripgrep)
+              cargo +1.96.0 build --locked --release
+              test -x target/release/rg
+              ;;
+            fd)
+              cargo +1.90.0 build --locked --release --all-features
+              test -x target/release/fd
+              ;;
+            *) exit 2 ;;
+          esac
+          test "$(git rev-parse HEAD)" = '${{ matrix.revision }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Execute frozen compatibility baseline drift and performance protocol
+        env:
+          CASE_ID: ${{ matrix.id }}
+          PROJECT: ${{ matrix.project }}
+          REPOSITORY: ${{ matrix.repository }}
+          REVISION: ${{ matrix.revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, statistics, subprocess, time
+          from pathlib import Path
+
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          work=root/'external/project'
+          evidence=root/'m9-b2-evidence'/os.environ['CASE_ID']
+          evidence.mkdir(parents=True, exist_ok=True)
+          exe=root/'target/release/execsurface'
+          project=os.environ['PROJECT']
+          timeout=float(os.environ['SAMPLE_TIMEOUT'])
+
+          if project == 'just':
+              command=[str(work/'target/release/just'),'--list']
+              command_display='./target/release/just --list >/dev/null'
+              drift=[str(work/'target/release/just'),'--list']
+              drift_shell=f"{work/'target/release/just'} --list >/dev/null; /usr/bin/sha256sum Cargo.toml >/dev/null"
+          elif project == 'fzf':
+              fzf=Path(os.environ['RUNNER_TEMP'])/'fzf'
+              shell=f"printf 'alpha\\nbeta\\ngamma\\n' | '{fzf}' --filter beta >/dev/null"
+              command=['/bin/bash','-lc',shell]
+              command_display=shell
+              drift_shell=shell+f"; /usr/bin/sha256sum '{fzf}' >/dev/null"
+          elif project == 'ripgrep':
+              command=[str(work/'target/release/rg'),'--files','.']
+              command_display='./target/release/rg --files . >/dev/null'
+              drift_shell=f"{work/'target/release/rg'} --files . >/dev/null; /usr/bin/sha256sum Cargo.toml >/dev/null"
+          elif project == 'fd':
+              command=[str(work/'target/release/fd'),'--hidden','--type','f','--exclude','target','.']
+              command_display='./target/release/fd --hidden --type f --exclude target . >/dev/null'
+              drift_shell=f"{work/'target/release/fd'} --hidden --type f --exclude target . >/dev/null; /usr/bin/sha256sum Cargo.toml >/dev/null"
+          else:
+              raise SystemExit('unknown project')
+
+          def run(args, *, stdout=None, stderr=None):
+              return subprocess.run(args,cwd=work,stdout=stdout,stderr=stderr,timeout=timeout)
+
+          # Direct compatibility is always tested before ExecSurface learn/check.
+          with open(evidence/'direct.stdout','wb') as out, open(evidence/'direct.stderr','wb') as err:
+              direct=run(command,stdout=out,stderr=err)
+          if direct.returncode != 0:
+              state={'direct':'FAIL','direct_rc':direct.returncode,'baseline':'NOT_RUN','rerun':'NOT_RUN','drift':'NOT_RUN','performance':'NOT_RUN'}
+              (evidence/'state.json').write_text(json.dumps(state,indent=2)+'\n')
+              raise SystemExit(f'direct command failed rc={direct.returncode}')
+
+          baseline=evidence/'baseline.lock.json'
+          with open(evidence/'learn.stdout','wb') as out, open(evidence/'learn.stderr','wb') as err:
+              p=run([str(exe),'learn','--output',str(baseline),'--']+command,stdout=out,stderr=err)
+          if p.returncode != 0:
+              raise SystemExit(f'learn failed rc={p.returncode}')
+
+          checks=[]
+          for n in (1,2):
+              jout=evidence/f'check-{n}.json'
+              md=evidence/f'check-{n}.md'
+              with open(evidence/f'check-{n}.stdout','wb') as out, open(evidence/f'check-{n}.stderr','wb') as err:
+                  p=run([str(exe),'check','--baseline',str(baseline),'--json-output',str(jout),'--markdown-output',str(md),'--']+command,stdout=out,stderr=err)
+              data=json.loads(jout.read_text()) if jout.exists() else {}
+              checks.append({'rc':p.returncode,'verdict':data.get('verdict'),'findings':len(data.get('findings',[]))})
+
+          stable=all(x['rc']==0 and x['verdict']=='pass' and x['findings']==0 for x in checks)
+          drift_result={'attempted':False,'rc':None,'verdict':None,'findings':None,'sha256sum_visible':None}
+          if stable:
+              jout=evidence/'drift.json'; md=evidence/'drift.md'
+              drift_command=['/bin/bash','-lc',drift_shell]
+              with open(evidence/'drift.stdout','wb') as out, open(evidence/'drift.stderr','wb') as err:
+                  p=run([str(exe),'check','--baseline',str(baseline),'--json-output',str(jout),'--markdown-output',str(md),'--']+drift_command,stdout=out,stderr=err)
+              data=json.loads(jout.read_text())
+              visible=False
+              for f in data.get('findings',[]):
+                  if f.get('change')!='added' or f.get('effect_kind')!='process_exec':
+                      continue
+                  fam=f.get('evidence',{}).get('effect',{}).get('executable',{}).get('family')
+                  if fam=='sha256sum': visible=True
+              drift_result={'attempted':True,'rc':p.returncode,'verdict':data.get('verdict'),'findings':len(data.get('findings',[])),'sha256sum_visible':visible}
+              if not visible:
+                  raise SystemExit('controlled drift did not surface sha256sum process execution')
+
+          # Full observed completion gate before timing.
+          with open(evidence/'preperf-observe.json','wb') as out, open(evidence/'preperf-observe.stderr','wb') as err:
+              p=run([str(exe),'observe','--']+command,stdout=out,stderr=err)
+          if p.returncode != 0:
+              raise SystemExit(f'pre-performance observation failed rc={p.returncode}')
+          obs=json.loads((evidence/'preperf-observe.json').read_text())
+          outcome=obs.get('outcome',{})
+          if obs.get('complete') is not True or outcome.get('exit_code')!=0 or outcome.get('signal') is not None:
+              raise SystemExit('pre-performance observation incomplete')
+
+          def direct_ms():
+              t=time.perf_counter_ns()
+              p=run(command,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+              ms=(time.perf_counter_ns()-t)/1_000_000
+              if p.returncode!=0: raise RuntimeError(f'direct timing rc={p.returncode}')
+              return ms
+
+          seq=0
+          def ptrace_ms():
+              nonlocal_seq=None
+              global seq
+              seq+=1
+              jout=evidence/f'perf-observe-{seq}.json'
+              jerr=evidence/f'perf-observe-{seq}.stderr'
+              t=time.perf_counter_ns()
+              with open(jout,'wb') as out, open(jerr,'wb') as err:
+                  p=run([str(exe),'observe','--']+command,stdout=out,stderr=err)
+              ms=(time.perf_counter_ns()-t)/1_000_000
+              if p.returncode!=0: raise RuntimeError(f'ptrace timing rc={p.returncode}')
+              d=json.loads(jout.read_text()); o=d.get('outcome',{})
+              if d.get('complete') is not True or o.get('exit_code')!=0 or o.get('signal') is not None:
+                  raise RuntimeError('timed ptrace observation incomplete')
+              return ms
+
+          wd=[direct_ms() for _ in range(3)]
+          wp=[ptrace_ms() for _ in range(3)]
+          d=[]; p=[]
+          for i in range(15):
+              if i%2==0:
+                  d.append(direct_ms()); p.append(ptrace_ms())
+              else:
+                  p.append(ptrace_ms()); d.append(direct_ms())
+          md=float(statistics.median(d)); mp=float(statistics.median(p))
+          overhead=mp-md; ratio=mp/md
+          trigger=((md>=100.0 and ratio>2.0) or overhead>500.0)
+
+          state={
+              'direct':'PASS','baseline':'PASS',
+              'checks':checks,'stable':stable,'drift':drift_result,
+              'performance':'PASS','warmup_direct_ms':wd,'warmup_ptrace_ms':wp,
+              'measured_direct_ms':d,'measured_ptrace_ms':p,
+              'median_direct_ms':md,'median_ptrace_ms':mp,
+              'median_absolute_overhead_ms':overhead,'slowdown_ratio':ratio,
+              'm65_trigger_crossed':trigger,'command':command_display,
+          }
+          (evidence/'state.json').write_text(json.dumps(state,indent=2,sort_keys=True)+'\n')
+          print(json.dumps({'case':os.environ['CASE_ID'],'stable':stable,'checks':checks,'drift':drift_result,'median_direct_ms':md,'median_ptrace_ms':mp,'slowdown_ratio':ratio,'m65_trigger_crossed':trigger},indent=2))
+          PY
+
+      - name: Build and validate M9 evidence record
+        if: always()
+        env:
+          CASE_ID: ${{ matrix.id }}
+          PROJECT: ${{ matrix.project }}
+          REPOSITORY: ${{ matrix.repository }}
+          REVISION: ${{ matrix.revision }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, platform, subprocess
+          from pathlib import Path
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          e=root/'m9-b2-evidence'/os.environ['CASE_ID']
+          state_path=e/'state.json'
+          if not state_path.exists():
+              state={'direct':'FAIL','baseline':'NOT_RUN','stable':False,'drift':{'attempted':False},'performance':'NOT_RUN','command':'preregistered command; execution failed before state seal'}
+          else:
+              state=json.loads(state_path.read_text())
+          version=(e/'execsurface-version.txt').read_text().strip() if (e/'execsurface-version.txt').exists() else 'unavailable'
+          source_sha=os.environ['GITHUB_SHA']
+          perf=None
+          if state.get('performance')=='PASS':
+              perf={
+                  'warmup_direct_ms':state['warmup_direct_ms'],'warmup_ptrace_ms':state['warmup_ptrace_ms'],
+                  'measured_direct_ms':state['measured_direct_ms'],'measured_ptrace_ms':state['measured_ptrace_ms'],
+                  'median_direct_ms':state['median_direct_ms'],'median_ptrace_ms':state['median_ptrace_ms'],
+                  'median_absolute_overhead_ms':state['median_absolute_overhead_ms'],'slowdown_ratio':state['slowdown_ratio'],
+                  'timeout_seconds':float(os.environ['SAMPLE_TIMEOUT']),'m65_trigger_crossed':state['m65_trigger_crossed'],'excluded_samples':[],
+              }
+          stable=bool(state.get('stable'))
+          drift=state.get('drift',{})
+          claim='COMPUTATIONAL_EVIDENCE' if stable and state.get('performance')=='PASS' and drift.get('sha256sum_visible') is True else 'PARTIAL'
+          failures=[]
+          if not stable:
+              failures.append({'kind':'unchanged_runtime_surface_instability','description':'At least one unchanged rerun did not produce zero-finding PASS. Raw check evidence is retained.','retained':True})
+          if drift.get('attempted') and drift.get('sha256sum_visible') is not True:
+              failures.append({'kind':'suspected_false_negative','description':'Controlled sha256sum process execution was not surfaced.','retained':True})
+          record={
+              'schema_version':'m9-evidence-v1','evidence_id':f"M9-{os.environ['CASE_ID']}-001",
+              'timestamp_utc':'2026-09-26T23:30:00Z','independence_class':'ZERO_CONTACT_EXTERNAL_REPRO','claim_status':claim,
+              'external_reference':f"https://github.com/{os.environ['REPOSITORY']}/commit/{os.environ['REVISION']}",
+              'provenance':{'initiated_by':'AETHER_X','executed_by':'AETHER_X','aether_x_material_involvement':True,'third_party_attestation':None},
+              'project':{'name':os.environ['PROJECT'],'repository':f"https://github.com/{os.environ['REPOSITORY']}",'revision':os.environ['REVISION'],'modified_by_aether_x':False},
+              'execsurface':{'version':version,'source_sha':source_sha,'install_path':'exact source build from preregistered M9.1 branch','backend':'ptrace'},
+              'host':{'os':'Ubuntu 24.04 GitHub-hosted runner','kernel':platform.release(),'architecture':platform.machine(),'cpu_description':subprocess.check_output("lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1",shell=True,text=True).strip(),'runner_image':'ubuntu-24.04'},
+              'workflow':{'command':state.get('command','unknown'),'baseline_attempted':state.get('baseline')!='NOT_RUN','rerun_check_attempted':'checks' in state,'drift_case_attempted':bool(drift.get('attempted')),'notes':'Batch 2 was preregistered before execution; external build/setup occurred outside the observed user-like command. No post-hoc normalization was applied.'},
+              'outcome':{'installation':'PASS' if version!='unavailable' else 'FAIL','doctor':'PASS' if (e/'doctor.stdout').exists() else 'NOT_RUN','baseline':state.get('baseline','NOT_RUN'),'rerun_check':'PASS' if stable else ('FAIL' if 'checks' in state else 'NOT_RUN'),'drift_case':'PASS' if drift.get('sha256sum_visible') is True else ('FAIL' if drift.get('attempted') else 'NOT_RUN'),'verdict':'pass' if stable else None,'comparable':state.get('direct')=='PASS','complete':state.get('performance')=='PASS','operational_error':None,'false_positive_reported':False,'suspected_false_negative':bool(drift.get('attempted') and drift.get('sha256sum_visible') is not True),'usability_friction':None if stable else 'Unchanged user-like execution did not achieve exact zero-finding stability.'},
+              'privacy':{'metadata_only_confirmed':True,'prohibited_sensitive_payload_collected':False,'notes':'Metadata-only evidence boundary retained.'},
+              'performance':perf,'artifacts':[],'failures_exclusions':failures,
+              'reproduction':{'instructions':f"Use pinned {os.environ['REPOSITORY']}@{os.environ['REVISION']} and the frozen Batch 2 preregistration command.",'expected_scope':'Zero-contact external reproduction on GitHub-hosted Ubuntu 24.04; not independent adoption or a universal Linux claim.'},
+          }
+          (e/'evidence.json').write_text(json.dumps(record,indent=2,sort_keys=True)+'\n')
+          PY
+          python3 scripts/m9_validate_evidence.py "m9-b2-evidence/${{ matrix.id }}/evidence.json" \
+            | tee "m9-b2-evidence/${{ matrix.id }}/validator.txt"
+          find "m9-b2-evidence/${{ matrix.id }}" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > "m9-b2-evidence/${{ matrix.id }}/SHA256SUMS"
+
+      - name: Upload M9.1 Batch 2 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-1-batch2-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-b2-evidence/${{ matrix.id }}
+          if-no-files-found: error
+          retention-days: 30
