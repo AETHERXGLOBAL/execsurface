@@ -72,7 +72,10 @@ jobs:
             m9-evidence/just-post-freeze/evidence-record.json
           python3 -m json.tool \
             m9-evidence/just-post-freeze/evidence-record.json >/dev/null
-          sha256sum -c m9-evidence/just-post-freeze/SHA256SUMS
+          (
+            cd m9-evidence/just-post-freeze
+            sha256sum -c SHA256SUMS
+          )
           echo M9_JUST_CANONICAL_RECORD_VALID
 
       - name: Preserve canonical and raw evidence
