@@ -1,0 +1,178 @@
+name: M9.2 Independent Adoption Evidence
+description: Submit independently initiated and executed ExecSurface evidence for provenance and semantics review.
+title: "[M9.2 Independent Evidence] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form is for third-party evidence. Do not paste secrets, tokens, credentials, private file contents, sensitive environment values, stdin contents, network payloads, or unrestricted child argv.
+
+        A submission is intake evidence, not automatic acceptance. To count as `INDEPENDENT_USER`, you must have initiated and executed the evaluation yourself without material AETHER X execution/debugging assistance.
+
+  - type: input
+    id: external_reference
+    attributes:
+      label: Public or consented external reference
+      description: Link to your repository, CI run, issue, or other attributable evidence source.
+      placeholder: https://github.com/example/project/actions/runs/...
+    validations:
+      required: true
+
+  - type: input
+    id: project_repository
+    attributes:
+      label: Evaluated project repository
+      placeholder: https://github.com/example/project
+    validations:
+      required: true
+
+  - type: input
+    id: project_revision
+    attributes:
+      label: Exact project revision
+      description: Prefer the full git commit SHA.
+      placeholder: 0123456789abcdef...
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact evaluated command
+      description: Use only a non-secret command. Include the same wrapper used for baseline/check.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: ExecSurface version
+      placeholder: execsurface 0.1.0-alpha.2
+    validations:
+      required: true
+
+  - type: input
+    id: install_path
+    attributes:
+      label: Installation path
+      placeholder: cargo install execsurface --version =0.1.0-alpha.2 --locked
+    validations:
+      required: true
+
+  - type: textarea
+    id: host
+    attributes:
+      label: Host facts
+      description: OS, kernel, architecture, and CPU description. Do not include secrets.
+      placeholder: |
+        OS: Ubuntu 24.04
+        Kernel: ...
+        Architecture: x86_64
+        CPU: ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation outcome
+      options:
+        - PASS
+        - FAIL
+        - NOT_RUN
+    validations:
+      required: true
+
+  - type: dropdown
+    id: doctor
+    attributes:
+      label: execsurface doctor outcome
+      options:
+        - PASS
+        - FAIL
+        - NOT_RUN
+    validations:
+      required: true
+
+  - type: dropdown
+    id: baseline
+    attributes:
+      label: Baseline creation outcome
+      options:
+        - PASS
+        - FAIL
+        - NOT_RUN
+    validations:
+      required: true
+
+  - type: dropdown
+    id: unchanged
+    attributes:
+      label: Unchanged rerun/check outcome
+      options:
+        - PASS
+        - REVIEW
+        - BLOCK
+        - ERROR
+        - NOT_RUN
+    validations:
+      required: true
+
+  - type: dropdown
+    id: drift
+    attributes:
+      label: Drift case outcome
+      description: Select NOT_RUN if you did not run a natural or controlled drift case.
+      options:
+        - REVIEW
+        - BLOCK
+        - PASS
+        - ERROR
+        - NOT_RUN
+    validations:
+      required: true
+
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Evidence artifact locations and SHA-256 values
+      description: List privacy-safe artifact URLs/locations and their SHA-256 digests.
+      placeholder: |
+        pass-1.json — <sha256> — <location>
+        pass-2.json — <sha256> — <location>
+        drift.json — <sha256> — <location, if used>
+    validations:
+      required: true
+
+  - type: textarea
+    id: failures
+    attributes:
+      label: Failures, exclusions, false-positive concerns, suspected false negatives, or usability friction
+      description: Preserve negative evidence. Write "none observed" only if that is accurate.
+    validations:
+      required: true
+
+  - type: textarea
+    id: attestation
+    attributes:
+      label: Independent execution attestation
+      description: State in your own words that you initiated and executed this evaluation and that AETHER X did not materially execute, edit, tune, or debug it for you.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I initiated this evaluation as a third party.
+          required: true
+        - label: I executed the workflow myself without material AETHER X execution or debugging assistance.
+          required: true
+        - label: The evaluated workload was not modified by AETHER X for this result.
+          required: true
+        - label: I have not included secrets, credentials, private file contents, sensitive environment values, stdin contents, network payloads, or unrestricted child argv in this public submission.
+          required: true
+        - label: I consent to the public/linked metadata in this issue being used as provenance for the submitted ExecSurface evidence.
+          required: true

@@ -1,0 +1,78 @@
+name: M9.2 Independent Adoption Protocol
+
+on:
+  push:
+    branches:
+      - milestone/m9-2-independent-adoption
+    paths:
+      - docs/milestones/M9_2_INDEPENDENT_ADOPTION_PROTOCOL.md
+      - docs/milestones/M9_2_EXTERNAL_QUICKSTART.md
+      - scripts/m9_validate_independent_adoption.py
+      - .github/ISSUE_TEMPLATE/m9-independent-adoption.yml
+      - .github/workflows/m9-2-independent-adoption-protocol.yml
+  pull_request:
+    paths:
+      - docs/milestones/M9_2_INDEPENDENT_ADOPTION_PROTOCOL.md
+      - docs/milestones/M9_2_EXTERNAL_QUICKSTART.md
+      - scripts/m9_validate_independent_adoption.py
+      - .github/ISSUE_TEMPLATE/m9-independent-adoption.yml
+      - .github/workflows/m9-2-independent-adoption-protocol.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protocol-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Compile M9 validators
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/m9_validate_evidence.py
+          python3 -m py_compile scripts/m9_validate_independent_adoption.py
+
+      - name: Run synthetic in-memory validator self-test
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 scripts/m9_validate_independent_adoption.py --self-test)"
+          printf '%s\n' "$output"
+          test "$output" = "M9_2_VALIDATOR_SELF_TEST_PASS"
+
+      - name: Verify frozen M9.2 authority and intake markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          protocol=docs/milestones/M9_2_INDEPENDENT_ADOPTION_PROTOCOL.md
+          quickstart=docs/milestones/M9_2_EXTERNAL_QUICKSTART.md
+          form=.github/ISSUE_TEMPLATE/m9-independent-adoption.yml
+
+          grep -F 'at least **two** countable `INDEPENDENT_USER` records' "$protocol"
+          grep -F 'eBPF `learn`, `check`, and PASS authority are not authorized' "$protocol"
+          grep -F 'AETHER X does not execute commands' "$protocol"
+          grep -F 'material execution help' "$quickstart"
+          grep -F 'I initiated this evaluation as a third party.' "$form"
+          grep -F 'without material AETHER X execution or debugging assistance' "$form"
+
+      - name: Prove zero-contact M9.1 records cannot satisfy M9.2 validator
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="$(find docs/milestones/evidence -type f -name '*.json' -print 2>/dev/null | head -n 1 || true)"
+          if [ -n "$candidate" ]; then
+            set +e
+            python3 scripts/m9_validate_independent_adoption.py "$candidate" >/tmp/m9-2-negative.stdout 2>/tmp/m9-2-negative.stderr
+            rc=$?
+            set -e
+            test "$rc" -ne 0
+          else
+            echo 'No committed evidence JSON fixture found; in-memory negative self-test remains authoritative.'
+          fi
