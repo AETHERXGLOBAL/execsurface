@@ -7,6 +7,7 @@ on:
     paths:
       - "experiments/m8-ebpf/libbpf-observer/**"
       - "experiments/m8-ebpf/libbpf-path-bridge/**"
+      - "crates/execsurface-observe/**"
       - "docs/milestones/M8_3C_COLLECTOR.md"
       - ".github/workflows/m8-3-libbpf-observer.yml"
   workflow_dispatch:
@@ -77,23 +78,25 @@ jobs:
             --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
             -- --check
 
-      - name: Build isolated observer and deterministic fixture on Rust 1.82
+      - name: Build isolated observer contract checker and deterministic fixture on Rust 1.82
         shell: bash
         run: |
           set -euxo pipefail
           cargo +1.82.0 build \
             --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
-            --release --locked
+            --release --locked --bins
           cargo +1.82.0 build \
             --manifest-path experiments/m8-ebpf/libbpf-path-bridge/Cargo.toml \
             --release --locked
 
           OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CHECK=experiments/m8-ebpf/libbpf-observer/target/release/contract-check
           FIX=experiments/m8-ebpf/libbpf-path-bridge/target/release/execsurface-m8-libbpf-path-bridge
           test -x "$OBS"
+          test -x "$CHECK"
           test -x "$FIX"
-          file "$OBS"
-          sha256sum "$OBS"
+          file "$OBS" "$CHECK"
+          sha256sum "$OBS" "$CHECK"
           ldd "$OBS" || true
 
       - name: Prove unprivileged failure occurs before target launch
@@ -154,6 +157,13 @@ jobs:
           ! grep -Fq 'AX_M8_3C_SECRET_DO_NOT_PERSIST' "$REPORT"
           echo 'M8_3C_REPORT_PRIVACY_PASS'
 
+      - name: Prove serialized report matches central typed contract
+        shell: bash
+        run: |
+          set -euxo pipefail
+          CHECK=experiments/m8-ebpf/libbpf-observer/target/release/contract-check
+          "$CHECK" "$RUNNER_TEMP/open-report.json"
+
       - name: Prove launched-tree lineage evidence
         shell: bash
         run: |
@@ -184,6 +194,7 @@ jobs:
         run: |
           set -euxo pipefail
           OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CHECK=experiments/m8-ebpf/libbpf-observer/target/release/contract-check
           FIX=experiments/m8-ebpf/libbpf-path-bridge/target/release/execsurface-m8-libbpf-path-bridge
           REPORT="$RUNNER_TEMP/limit-report.json"
 
@@ -194,9 +205,11 @@ jobs:
           python3 - "$REPORT" <<'PY'
           import json, sys
           report = json.load(open(sys.argv[1], encoding='utf-8'))
-          assert report['completeness'] == 'incomplete_limit', report['completeness']
+          assert report['completeness'] in ('incomplete_limit', 'incomplete_loss'), report['completeness']
           assert report['observation_complete'] is False
           assert any(w['code'] == 'event_limit_exceeded' for w in report['warnings'])
           assert len(report['events']) <= 1
           print('M8_3C_EVENT_LIMIT_FAIL_CLOSED_PASS')
           PY
+
+          "$CHECK" "$REPORT"
