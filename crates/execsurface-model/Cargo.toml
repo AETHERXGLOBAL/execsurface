@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Raw observation model for AETHER X ExecSurface"
+readme.workspace = true
 
 [dependencies]
 serde.workspace = true
