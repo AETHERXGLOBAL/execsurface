@@ -43,7 +43,18 @@ jobs:
           python3 scripts/m9_apply_get_syscall_info_exit_group_fix.py
           cargo "+$RUST_TOOLCHAIN" fmt --all
           git diff --check
+
+          # cargo fmt may touch pre-existing unrelated Rust files. Restore every
+          # side effect except the exact observer source under promotion.
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            if [ "$path" != "$SOURCE" ]; then
+              git restore -- "$path"
+            fi
+          done < <(git diff --name-only)
+
           changed="$(git diff --name-only)"
+          printf 'changed_after_isolation=%s\n' "$changed"
           test "$changed" = "$SOURCE"
           actual="$(sha256sum "$SOURCE" | awk '{print $1}')"
           printf 'proved=%s\nactual=%s\n' "$PROVED_SOURCE_SHA256" "$actual"
@@ -61,6 +72,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git diff --name-only)" = "$SOURCE"
+          actual="$(sha256sum "$SOURCE" | awk '{print $1}')"
+          test "$actual" = "$PROVED_SOURCE_SHA256"
           git add "$SOURCE"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
