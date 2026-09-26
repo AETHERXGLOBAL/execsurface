@@ -1,0 +1,8 @@
+run_id=36272113371
+head_sha=02580ffbbbf0c1b0e2d04d23f25b8e00358168a2
+just_sha=5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+rust_toolchain=1.90.0
+
+attempt=1 rc=2
+ExecSurface: ERROR
+execsurface: observer protocol error: M9_STALE_TRACEES_AT_ECHILD tracked_tid_tgid=[(17533, 17533), (21594, 15824), (22075, 15824), (22108, 15824), (22112, 15824), (22907, 15824)]
