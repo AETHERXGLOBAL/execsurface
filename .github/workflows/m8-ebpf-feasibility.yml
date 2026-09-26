@@ -68,9 +68,7 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends linux-tools-common libclang-dev
-          command -v bpftool
-          bpftool version
+          sudo apt-get install -y --no-install-recommends libclang-dev
           cargo +1.87.0 install bindgen-cli --version 0.73.2 --locked
           cargo +nightly-2026-09-14 install \
             --git https://github.com/aya-rs/aya \
