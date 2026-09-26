@@ -1,0 +1,22 @@
+[package]
+name = "execsurface-m8-libbpf-observer"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.82"
+build = "build.rs"
+publish = false
+
+[dependencies]
+libbpf-rs = "=0.27.0"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+libc = "=0.2.189"
+
+[build-dependencies]
+libbpf-cargo = "=0.27.0"
+clap = "=4.5.60"
+clap_lex = "=1.0.0"
+getrandom = "=0.3.1"
+tempfile = "=3.27.0"
+
+[workspace]
