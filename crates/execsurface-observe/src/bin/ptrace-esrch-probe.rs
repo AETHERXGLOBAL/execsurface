@@ -41,12 +41,92 @@ fn proc_snapshot(tid: libc::pid_t) -> String {
         return "status=unreadable".to_owned();
     };
     let mut fields = Vec::new();
-    for key in ["State:", "Tgid:", "Pid:", "PPid:", "TracerPid:"] {
+    for key in [
+        "Name:",
+        "State:",
+        "Tgid:",
+        "Pid:",
+        "PPid:",
+        "TracerPid:",
+        "Threads:",
+    ] {
         if let Some(line) = status.lines().find(|line| line.starts_with(key)) {
             fields.push(line.replace('\t', " "));
         }
     }
     fields.join(";")
+}
+
+fn tracee_tgid(tid: libc::pid_t) -> Option<libc::pid_t> {
+    let status = fs::read_to_string(format!("/proc/{tid}/status")).ok()?;
+    status.lines().find_map(|line| {
+        line.strip_prefix("Tgid:")
+            .and_then(|value| value.trim().parse::<libc::pid_t>().ok())
+    })
+}
+
+fn thread_group_snapshot(tid: libc::pid_t) -> String {
+    let Some(tgid) = tracee_tgid(tid) else {
+        return "tgid=unreadable".to_owned();
+    };
+    let task_dir = format!("/proc/{tgid}/task");
+    let mut tids = match fs::read_dir(&task_dir) {
+        Ok(entries) => entries
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_string_lossy().parse::<libc::pid_t>().ok())
+            .collect::<Vec<_>>(),
+        Err(_) => return format!("tgid={tgid};tasks=unreadable"),
+    };
+    tids.sort_unstable();
+    format!("tgid={tgid};task_count={};tasks={tids:?}", tids.len())
+}
+
+fn readonly_syscall_info_probe(tid: libc::pid_t) -> String {
+    let mut info = MaybeUninit::<PtraceSyscallInfo>::zeroed();
+    let result = unsafe {
+        libc::ptrace(
+            PTRACE_GET_SYSCALL_INFO_REQUEST,
+            tid,
+            size_of::<PtraceSyscallInfo>() as *mut c_void,
+            info.as_mut_ptr() as *mut c_void,
+        )
+    };
+    if result == -1 {
+        let error = io::Error::last_os_error();
+        return format!(
+            "result=-1;errno={:?};error={}",
+            error.raw_os_error(),
+            error
+        );
+    }
+    let info = unsafe { info.assume_init() };
+    format!(
+        "result={result};op={};ip=0x{:x};sp=0x{:x}",
+        info.op, info.instruction_pointer, info.stack_pointer
+    )
+}
+
+fn post_esrch_snapshot(tid: libc::pid_t) {
+    eprintln!(
+        "M9_PTRACE_PROBE_POST_ESRCH stage=immediate tid={tid} proc_exists={} proc_status={} group={} readonly_syscall_info={}",
+        proc_exists(tid),
+        proc_snapshot(tid),
+        thread_group_snapshot(tid),
+        readonly_syscall_info_probe(tid)
+    );
+
+    let mut status = 0;
+    let wait_result = unsafe { libc::waitpid(tid, &mut status, libc::__WALL | libc::WNOHANG) };
+    let wait_error = io::Error::last_os_error();
+    eprintln!(
+        "M9_PTRACE_PROBE_POST_ESRCH stage=wait_nohang tid={tid} wait_result={wait_result} wait_status=0x{status:08x} wait_errno={:?} wait_error={} proc_exists={} proc_status={} group={} readonly_syscall_info={}",
+        wait_error.raw_os_error(),
+        wait_error,
+        proc_exists(tid),
+        proc_snapshot(tid),
+        thread_group_snapshot(tid),
+        readonly_syscall_info_probe(tid)
+    );
 }
 
 fn fail(op: &str, tid: libc::pid_t, status: i32) -> io::Error {
@@ -58,6 +138,9 @@ fn fail(op: &str, tid: libc::pid_t, status: i32) -> io::Error {
         proc_exists(tid),
         proc_snapshot(tid)
     );
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        post_esrch_snapshot(tid);
+    }
     error
 }
 
