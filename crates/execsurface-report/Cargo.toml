@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Human-readable GitHub and CI reporting for AETHER X ExecSurface"
+readme.workspace = true
 
 [dependencies]
-execsurface-policy = { path = "../execsurface-policy" }
+execsurface-policy = { path = "../execsurface-policy", version = "=0.1.0-alpha.2" }
