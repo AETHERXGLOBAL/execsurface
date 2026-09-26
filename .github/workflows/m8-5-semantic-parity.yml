@@ -1,0 +1,186 @@
+name: M8.5 Semantic Parity
+
+on:
+  push:
+    branches:
+      - "milestone/m8-5-semantic-parity"
+    paths:
+      - "experiments/m8-ebpf/parity-harness/**"
+      - "experiments/m8-ebpf/libbpf-observer/**"
+      - "crates/execsurface-observe/**"
+      - "crates/execsurface-model/**"
+      - "crates/execsurface-cli/**"
+      - "docs/milestones/M8_5_SEMANTIC_PARITY.md"
+      - ".github/workflows/m8-5-semantic-parity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-parity:
+    name: ptrace vs eBPF semantic differential
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install declared native build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+          clang --version
+          pkg-config --modversion libelf
+
+      - name: Install resolver and product-MSRV Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          cargo +1.87.0 --version
+          rustc +1.82.0 --version --verbose
+          cargo +1.82.0 --version
+
+      - name: Resolve Rust-1.82-compatible isolated locks
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for manifest in \
+            experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            experiments/m8-ebpf/parity-harness/Cargo.toml
+          do
+            rm -f "$(dirname "$manifest")/Cargo.lock"
+            CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+              cargo +1.87.0 generate-lockfile --manifest-path "$manifest"
+          done
+
+      - name: Format and build differential harness
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo +1.82.0 fmt \
+            --manifest-path experiments/m8-ebpf/parity-harness/Cargo.toml \
+            -- --check
+          cargo +1.82.0 fmt \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            -- --check
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/parity-harness/Cargo.toml \
+            --release --locked --bins
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            --release --locked --bins
+          cargo +1.82.0 build \
+            --manifest-path crates/execsurface-cli/Cargo.toml \
+            --release --locked
+
+          HARNESS=experiments/m8-ebpf/parity-harness/target/release/execsurface-m8-parity-harness
+          FIX=experiments/m8-ebpf/parity-harness/target/release/m8_5_parity_fixture
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CLI=target/release/execsurface
+          test -x "$HARNESS"
+          test -x "$FIX"
+          test -x "$OBS"
+          test -x "$CLI"
+          sha256sum "$HARNESS" "$FIX" "$OBS" "$CLI"
+
+      - name: Prove clean class-local parity without granting full equivalence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          HARNESS=experiments/m8-ebpf/parity-harness/target/release/execsurface-m8-parity-harness
+          FIX=experiments/m8-ebpf/parity-harness/target/release/m8_5_parity_fixture
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CLI=target/release/execsurface
+          REF="$RUNNER_TEMP/m8-5-reference.json"
+          CAND="$RUNNER_TEMP/m8-5-candidate.json"
+          OUT="$RUNNER_TEMP/m8-5-parity.json"
+
+          "$CLI" observe -- "$FIX" >"$REF"
+          sudo "$CLI" observe --backend experimental-libbpf --collector "$OBS" -- "$FIX" >"$CAND"
+          "$HARNESS" "$REF" "$CAND" "$OUT"
+          cat "$OUT"
+
+          python3 - "$OUT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          verdicts = {a['semantic_class']: a['verdict'] for a in report['assessments']}
+          assert report['reference_backend'] == 'linux-ptrace-metadata-v2'
+          assert report['candidate_backend'] == 'linux-libbpf-metadata-experimental-v1'
+          assert report['reference_complete'] is True
+          assert report['candidate_completeness'] == 'incomplete_capability'
+          assert report['full_surface_comparable'] is False
+          assert report['ebpf_pass_authorized'] is False
+          assert verdicts['process_spawn_lineage'] == 'equivalent', verdicts
+          assert verdicts['process_exec_occurrence'] == 'equivalent', verdicts
+          assert verdicts['successful_open_fd_identity'] == 'representation_difference', verdicts
+          assert verdicts['unconditional_process_exec_path_identity'] == 'non_comparable', verdicts
+          print('M8_5A_CLEAN_CLASS_LOCAL_PARITY_PASS')
+          PY
+
+      - name: Prove same-count different semantics is contradicted
+        shell: bash
+        run: |
+          set -euxo pipefail
+          HARNESS=experiments/m8-ebpf/parity-harness/target/release/execsurface-m8-parity-harness
+          REF="$RUNNER_TEMP/m8-5-reference.json"
+          CAND="$RUNNER_TEMP/m8-5-candidate.json"
+          MUT="$RUNNER_TEMP/m8-5-mutated-candidate.json"
+          OUT="$RUNNER_TEMP/m8-5-mutated-parity.json"
+
+          python3 - "$CAND" "$MUT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          spawns = [e for e in report['events'] if e['event_type'] == 'process_spawn']
+          assert spawns, report['events']
+          original = spawns[0]['mechanism']
+          spawns[0]['mechanism'] = 'clone' if original != 'clone' else 'fork'
+          json.dump(report, open(sys.argv[2], 'w', encoding='utf-8'), indent=2)
+          print(f"M8_5A_MUTATED_SAME_COUNT fixture_mechanism={original} mutated={spawns[0]['mechanism']}")
+          PY
+
+          "$HARNESS" "$REF" "$MUT" "$OUT"
+          cat "$OUT"
+          python3 - "$OUT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          verdicts = {a['semantic_class']: a['verdict'] for a in report['assessments']}
+          assert verdicts['process_spawn_lineage'] == 'contradicted', verdicts
+          assert report['full_surface_comparable'] is False
+          assert report['ebpf_pass_authorized'] is False
+          print('M8_5A_SAME_COUNT_NOT_PARITY_PASS')
+          PY
+
+      - name: Prove incomplete candidate blocks selected-class parity
+        shell: bash
+        run: |
+          set -euxo pipefail
+          HARNESS=experiments/m8-ebpf/parity-harness/target/release/execsurface-m8-parity-harness
+          FIX=experiments/m8-ebpf/parity-harness/target/release/m8_5_parity_fixture
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          REF="$RUNNER_TEMP/m8-5-reference.json"
+          CAND="$RUNNER_TEMP/m8-5-incomplete-candidate.json"
+          OUT="$RUNNER_TEMP/m8-5-incomplete-parity.json"
+
+          sudo "$OBS" --report "$CAND" --event-limit 1 -- "$FIX"
+          "$HARNESS" "$REF" "$CAND" "$OUT"
+          cat "$OUT"
+          python3 - "$OUT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          verdicts = {a['semantic_class']: a['verdict'] for a in report['assessments']}
+          assert report['candidate_completeness'] in ('incomplete_limit', 'incomplete_loss')
+          for name in (
+              'process_spawn_lineage',
+              'process_exec_occurrence',
+              'successful_open_fd_identity',
+              'loss_truncation_visibility',
+          ):
+              assert verdicts[name] == 'blocked_incomplete', (name, verdicts[name])
+          assert report['ebpf_pass_authorized'] is False
+          print('M8_5A_INCOMPLETE_BLOCKS_PARITY_PASS')
+          PY
