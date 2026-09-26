@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use libbpf_rs::skel::{OpenSkel, SkelBuilder};
+use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 
 mod probe {
     include!(concat!(env!("OUT_DIR"), "/probe.skel.rs"));
