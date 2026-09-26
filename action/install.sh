@@ -14,7 +14,7 @@ if [[ -d "$GITHUB_ACTION_PATH/.git" ]]; then
   target_dir="$RUNNER_TEMP/execsurface-action-target"
   cargo build --locked --release \
     --manifest-path "$GITHUB_ACTION_PATH/Cargo.toml" \
-    -p execsurface-cli --bin execsurface \
+    -p execsurface --bin execsurface \
     --target-dir "$target_dir"
   binary="$target_dir/release/execsurface"
 else
