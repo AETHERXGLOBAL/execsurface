@@ -27,7 +27,10 @@ mod state_machine_adversaries {
         assert!(error
             .to_string()
             .contains("concurrent persistent observation session"));
-        let active = tracker.active.as_ref().expect("first session must remain active");
+        let active = tracker
+            .active
+            .as_ref()
+            .expect("first session must remain active");
         assert_eq!(active.epoch, 11);
         assert_eq!(active.root_tid, 101);
     }
