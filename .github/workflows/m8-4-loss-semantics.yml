@@ -1,0 +1,310 @@
+name: M8.4 Loss Semantics
+
+on:
+  push:
+    branches:
+      - "milestone/m8-4-loss-semantics"
+    paths:
+      - "experiments/m8-ebpf/libbpf-observer/**"
+      - "docs/milestones/M8_4_LOSS_SEMANTICS.md"
+      - ".github/workflows/m8-4-loss-semantics.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  loss-semantics:
+    name: loss lag teardown lifecycle and failure proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install declared native build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+          clang --version
+          pkg-config --modversion libelf
+
+      - name: Install resolver and product-MSRV Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          cargo +1.87.0 --version
+          rustc +1.82.0 --version --verbose
+          cargo +1.82.0 --version
+
+      - name: Resolve Rust-1.82-compatible isolated lock
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f experiments/m8-ebpf/libbpf-observer/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml
+          grep -A2 -E '^name = "(getrandom|clap_lex|libbpf-rs|libbpf-cargo)"' \
+            experiments/m8-ebpf/libbpf-observer/Cargo.lock
+
+      - name: Format and build real observer and adversarial fixtures
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo +1.82.0 fmt \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            -- --check
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            --release --locked
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CHECK=experiments/m8-ebpf/libbpf-observer/target/release/contract-check
+          STORM=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_event_storm
+          TEARDOWN=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_teardown_race
+          test -x "$OBS"
+          test -x "$CHECK"
+          test -x "$STORM"
+          test -x "$TEARDOWN"
+          sha256sum "$OBS" "$CHECK" "$STORM" "$TEARDOWN"
+
+      - name: Prove pre-target collector failure is machine-readable and target-safe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CHECK=experiments/m8-ebpf/libbpf-observer/target/release/contract-check
+          REPORT="$RUNNER_TEMP/m8-4-collector-failure.json"
+          SENTINEL="$RUNNER_TEMP/m8-4-target-must-not-run"
+          rm -f "$REPORT" "$SENTINEL"
+
+          set +e
+          "$OBS" --report "$REPORT" -- /bin/sh -c "touch '$SENTINEL'" \
+            >"$RUNNER_TEMP/m8-4-unpriv.out" 2>"$RUNNER_TEMP/m8-4-unpriv.err"
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/m8-4-unpriv.err"
+          test "$rc" -ne 0
+          test -f "$REPORT"
+          test ! -e "$SENTINEL"
+
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          codes = {w['code'] for w in report['warnings']}
+          failure = report['collector_failure']
+          assert report['observation_complete'] is False
+          assert report['completeness'] == 'incomplete_collector', report
+          assert report['root_pid'] is None, report['root_pid']
+          assert failure is not None, report
+          assert failure['stage'] in {'open', 'load', 'attach', 'ring_buffer_register', 'ring_buffer_build'}, failure
+          assert failure['target_started'] is False, failure
+          assert failure['target_terminated'] is False, failure
+          assert 'collector_stage_failure' in codes, codes
+          assert report['events'] == [], report['events']
+          print(f"M8_4_MACHINE_READABLE_COLLECTOR_FAILURE_PASS stage={failure['stage']}")
+          PY
+          "$CHECK" "$REPORT"
+
+      - name: Prove post-start collector failure terminates the target process group
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CHECK=experiments/m8-ebpf/libbpf-observer/target/release/contract-check
+          REPORT="$RUNNER_TEMP/m8-4-post-start-failure.json"
+          STARTED="$RUNNER_TEMP/m8-4-post-started"
+          FINISHED="$RUNNER_TEMP/m8-4-post-finished"
+          LEAKED="$RUNNER_TEMP/m8-4-post-descendant-leaked"
+          rm -f "$REPORT" "$STARTED" "$FINISHED" "$LEAKED"
+
+          set +e
+          sudo "$OBS" --report "$REPORT" --inject-poll-error -- \
+            /bin/sh -c "touch '$STARTED'; (sleep 0.8; touch '$LEAKED') & sleep 2; touch '$FINISHED'" \
+            >"$RUNNER_TEMP/m8-4-post.out" 2>"$RUNNER_TEMP/m8-4-post.err"
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/m8-4-post.err"
+          test "$rc" -ne 0
+          test -f "$REPORT"
+          test -e "$STARTED"
+          sleep 1
+          test ! -e "$FINISHED"
+          test ! -e "$LEAKED"
+
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          codes = {w['code'] for w in report['warnings']}
+          failure = report['collector_failure']
+          assert report['observation_complete'] is False
+          assert report['completeness'] == 'incomplete_collector', report
+          assert isinstance(report['root_pid'], int), report['root_pid']
+          assert failure is not None, report
+          assert failure['stage'] == 'poll', failure
+          assert failure['target_started'] is True, failure
+          assert failure['target_terminated'] is True, failure
+          assert 'collector_stage_failure' in codes, codes
+          assert 'target_terminated_after_collector_failure' in codes, codes
+          print('M8_4_POST_START_FAILURE_CONTAINMENT_PASS')
+          PY
+          "$CHECK" "$REPORT"
+
+      - name: Prove event-budget truncation is explicit and fail-closed
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          STORM=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_event_storm
+          REPORT="$RUNNER_TEMP/m8-4-limit.json"
+
+          sudo "$OBS" --report "$REPORT" --event-limit 1 -- "$STORM" 1 64
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          codes = {w['code'] for w in report['warnings']}
+          assert report['observation_complete'] is False
+          assert report['completeness'] == 'incomplete_limit', report
+          assert report['dropped_events'] == 0, report['dropped_events']
+          assert report['lifecycle_drain_complete'] is True, report
+          assert 'event_limit_exceeded' in codes, codes
+          print('M8_4_EVENT_LIMIT_FAIL_CLOSED_PASS')
+          PY
+
+      - name: Prove real ring-buffer pressure becomes producer loss
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          STORM=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_event_storm
+          REPORT="$RUNNER_TEMP/m8-4-loss.json"
+
+          sudo "$OBS" --report "$REPORT" --event-limit 1000000 -- "$STORM" 32 100000
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          codes = {w['code'] for w in report['warnings']}
+          assert report['observation_complete'] is False
+          assert report['dropped_events'] > 0, report['dropped_events']
+          assert report['completeness'] == 'incomplete_loss', report['completeness']
+          assert 'producer_event_loss' in codes, codes
+          print(f"M8_4_REAL_RINGBUF_LOSS_PASS dropped={report['dropped_events']}")
+          PY
+
+      - name: Prove controlled consumer lag cannot become clean evidence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          STORM=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_event_storm
+          REPORT="$RUNNER_TEMP/m8-4-consumer-lag.json"
+
+          sudo "$OBS" --report "$REPORT" --event-limit 1000000 --consumer-lag-ms 150 -- \
+            "$STORM" 16 100000
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          codes = {w['code'] for w in report['warnings']}
+          assert report['consumer_lag_ms'] == 150, report
+          assert report['observation_complete'] is False
+          assert report['dropped_events'] > 0, report['dropped_events']
+          assert report['completeness'] == 'incomplete_loss', report['completeness']
+          assert 'consumer_lag_injected' in codes, codes
+          assert 'producer_event_loss' in codes, codes
+          print(f"M8_4_CONSUMER_LAG_FAIL_CLOSED_PASS dropped={report['dropped_events']}")
+          PY
+
+      - name: Prove post-root descendant activity is drained before report closure
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          TEARDOWN=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_teardown_race
+          REPORT="$RUNNER_TEMP/m8-4-teardown-complete.json"
+
+          sudo "$OBS" --report "$REPORT" --lifecycle-timeout-ms 2000 -- "$TEARDOWN" 250
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert report['observation_complete'] is False
+          assert report['dropped_events'] == 0, report['dropped_events']
+          assert report['lifecycle_drain_complete'] is True, report
+          assert report['completeness'] == 'incomplete_capability', report['completeness']
+          spawns = [e for e in report['events'] if e['event_type'] == 'process_spawn']
+          assert spawns, report['events']
+          child_ids = {e['child_pid'] for e in spawns}
+          late_opens = [e for e in report['events'] if e['event_type'] == 'successful_open_identity' and e['pid'] in child_ids]
+          assert late_opens, report['events']
+          print(f"M8_4_TEARDOWN_DRAIN_PASS descendants={len(child_ids)} late_opens={len(late_opens)}")
+          PY
+
+      - name: Prove lifecycle timeout is explicit and fail-closed
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          TEARDOWN=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_teardown_race
+          REPORT="$RUNNER_TEMP/m8-4-teardown-timeout.json"
+
+          sudo "$OBS" --report "$REPORT" --lifecycle-timeout-ms 40 -- "$TEARDOWN" 250
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          codes = {w['code'] for w in report['warnings']}
+          assert report['observation_complete'] is False
+          assert report['dropped_events'] == 0, report['dropped_events']
+          assert report['lifecycle_drain_complete'] is False, report
+          assert report['completeness'] == 'incomplete_lifecycle', report['completeness']
+          assert 'lifecycle_drain_timeout' in codes, codes
+          print('M8_4_LIFECYCLE_TIMEOUT_FAIL_CLOSED_PASS')
+          PY
+          sleep 0.4
+
+      - name: Prove decode failure is machine-readable and fail-closed
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CHECK=experiments/m8-ebpf/libbpf-observer/target/release/contract-check
+          REPORT="$RUNNER_TEMP/m8-4-decode.json"
+
+          sudo "$OBS" --report "$REPORT" --inject-decode-error -- /bin/true
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          codes = {w['code'] for w in report['warnings']}
+          assert report['observation_complete'] is False
+          assert report['dropped_events'] == 0, report['dropped_events']
+          assert report['decode_failure_injected'] is True, report
+          assert report['completeness'] == 'incomplete_decode', report['completeness']
+          assert report['collector_failure'] is None, report['collector_failure']
+          assert 'decode_failure_injected' in codes, codes
+          assert 'event_decode_error' in codes, codes
+          print('M8_4_MACHINE_READABLE_DECODE_FAILURE_PASS')
+          PY
+          "$CHECK" "$REPORT"
+
+      - name: Preserve no-PASS authority boundary
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - \
+            "$RUNNER_TEMP/m8-4-collector-failure.json" \
+            "$RUNNER_TEMP/m8-4-post-start-failure.json" \
+            "$RUNNER_TEMP/m8-4-limit.json" \
+            "$RUNNER_TEMP/m8-4-loss.json" \
+            "$RUNNER_TEMP/m8-4-consumer-lag.json" \
+            "$RUNNER_TEMP/m8-4-teardown-complete.json" \
+            "$RUNNER_TEMP/m8-4-teardown-timeout.json" \
+            "$RUNNER_TEMP/m8-4-decode.json" <<'PY'
+          import json, sys
+          for path in sys.argv[1:]:
+              report = json.load(open(path, encoding='utf-8'))
+              assert report['observation_complete'] is False
+              assert report['completeness'] != 'complete'
+          print('M8_4_NO_PASS_AUTHORITY_PRESERVED')
+          PY

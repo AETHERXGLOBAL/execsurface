@@ -6,6 +6,7 @@
 #define EVENT_EXEC 1
 #define EVENT_SPAWN 2
 #define EVENT_OPEN 3
+#define EVENT_EXIT 4
 
 #define SPAWN_FORK 1
 #define SPAWN_VFORK 2
@@ -71,6 +72,17 @@ int execsurface_m83c_exec(void *ctx)
     (void)ctx;
     pid_tgid = bpf_get_current_pid_tgid();
     return submit_event(EVENT_EXEC, (__u32)(pid_tgid >> 32), (__u32)pid_tgid, 0);
+}
+
+/* Internal lifecycle marker only. M8.4 does not expose ProcessExit as evidence. */
+SEC("tracepoint/sched/sched_process_exit")
+int execsurface_m84_exit(void *ctx)
+{
+    __u64 pid_tgid;
+    (void)ctx;
+    pid_tgid = bpf_get_current_pid_tgid();
+    /* Lower 32 bits are the task/TID identity returned by clone/fork. */
+    return submit_event(EVENT_EXIT, (__u32)pid_tgid, 0, 0);
 }
 
 static __always_inline int record_spawn_exit(struct syscall_exit_ctx *ctx, __u32 mechanism)
