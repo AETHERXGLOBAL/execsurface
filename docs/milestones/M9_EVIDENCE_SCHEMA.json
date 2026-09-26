@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AETHERXGLOBAL/execsurface/blob/main/docs/milestones/M9_EVIDENCE_SCHEMA.json",
+  "title": "ExecSurface M9 Evidence Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "timestamp_utc",
+    "independence_class",
+    "claim_status",
+    "project",
+    "execsurface",
+    "host",
+    "workflow",
+    "outcome",
+    "privacy",
+    "artifacts",
+    "failures_exclusions",
+    "reproduction"
+  ],
+  "properties": {
+    "schema_version": {"const": "m9-evidence-v1"},
+    "evidence_id": {"type": "string", "pattern": "^M9-[A-Za-z0-9._-]+$"},
+    "timestamp_utc": {"type": "string", "format": "date-time"},
+    "independence_class": {
+      "enum": [
+        "INDEPENDENT_USER",
+        "ZERO_CONTACT_EXTERNAL_REPRO",
+        "COLLABORATIVE_EXTERNAL",
+        "INTERNAL_FIXTURE"
+      ]
+    },
+    "claim_status": {
+      "enum": ["PROVED", "COMPUTATIONAL_EVIDENCE", "PARTIAL", "OPEN", "KILLED"]
+    },
+    "external_reference": {
+      "type": ["string", "null"],
+      "description": "Public or consented external reference only."
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "repository", "revision", "modified_by_aether_x"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "repository": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1},
+        "modified_by_aether_x": {"type": "boolean"}
+      }
+    },
+    "execsurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "source_sha", "install_path", "backend"],
+      "properties": {
+        "version": {"type": "string", "minLength": 1},
+        "source_sha": {"type": "string", "minLength": 7},
+        "install_path": {"type": "string", "minLength": 1},
+        "backend": {"const": "ptrace"}
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "kernel", "architecture", "cpu_description"],
+      "properties": {
+        "os": {"type": "string", "minLength": 1},
+        "kernel": {"type": "string", "minLength": 1},
+        "architecture": {"type": "string", "minLength": 1},
+        "cpu_description": {"type": "string", "minLength": 1},
+        "runner_image": {"type": ["string", "null"]}
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command", "baseline_attempted", "rerun_check_attempted", "drift_case_attempted"],
+      "properties": {
+        "command": {"type": "string", "minLength": 1},
+        "baseline_attempted": {"type": "boolean"},
+        "rerun_check_attempted": {"type": "boolean"},
+        "drift_case_attempted": {"type": "boolean"},
+        "notes": {"type": ["string", "null"]}
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "installation",
+        "doctor",
+        "baseline",
+        "rerun_check",
+        "drift_case",
+        "verdict",
+        "comparable",
+        "complete",
+        "operational_error"
+      ],
+      "properties": {
+        "installation": {"enum": ["PASS", "FAIL", "NOT_RUN"]},
+        "doctor": {"enum": ["PASS", "FAIL", "NOT_RUN"]},
+        "baseline": {"enum": ["PASS", "FAIL", "NOT_RUN"]},
+        "rerun_check": {"enum": ["PASS", "FAIL", "NOT_RUN"]},
+        "drift_case": {"enum": ["PASS", "FAIL", "NOT_RUN"]},
+        "verdict": {"type": ["string", "null"]},
+        "comparable": {"type": ["boolean", "null"]},
+        "complete": {"type": ["boolean", "null"]},
+        "operational_error": {"type": ["string", "null"]},
+        "false_positive_reported": {"type": "boolean", "default": false},
+        "suspected_false_negative": {"type": "boolean", "default": false},
+        "usability_friction": {"type": ["string", "null"]}
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metadata_only_confirmed", "prohibited_sensitive_payload_collected"],
+      "properties": {
+        "metadata_only_confirmed": {"type": "boolean"},
+        "prohibited_sensitive_payload_collected": {"const": false},
+        "notes": {"type": ["string", "null"]}
+      }
+    },
+    "performance": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "warmup_direct_ms",
+        "warmup_ptrace_ms",
+        "measured_direct_ms",
+        "measured_ptrace_ms",
+        "median_direct_ms",
+        "median_ptrace_ms",
+        "median_absolute_overhead_ms",
+        "slowdown_ratio",
+        "timeout_seconds",
+        "m65_trigger_crossed"
+      ],
+      "properties": {
+        "warmup_direct_ms": {"type": "array", "minItems": 3, "items": {"type": "number", "minimum": 0}},
+        "warmup_ptrace_ms": {"type": "array", "minItems": 3, "items": {"type": "number", "minimum": 0}},
+        "measured_direct_ms": {"type": "array", "minItems": 15, "items": {"type": "number", "minimum": 0}},
+        "measured_ptrace_ms": {"type": "array", "minItems": 15, "items": {"type": "number", "minimum": 0}},
+        "median_direct_ms": {"type": "number", "minimum": 0},
+        "median_ptrace_ms": {"type": "number", "minimum": 0},
+        "median_absolute_overhead_ms": {"type": "number"},
+        "slowdown_ratio": {"type": "number", "minimum": 0},
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "m65_trigger_crossed": {"type": "boolean"},
+        "excluded_samples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mode", "value_ms", "reason"],
+            "properties": {
+              "mode": {"enum": ["direct", "ptrace"]},
+              "value_ms": {"type": ["number", "null"]},
+              "reason": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "sha256", "location"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "location": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "failures_exclusions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "description", "retained"],
+        "properties": {
+          "kind": {"type": "string", "minLength": 1},
+          "description": {"type": "string", "minLength": 1},
+          "retained": {"const": true}
+        }
+      }
+    },
+    "reproduction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instructions", "expected_scope"],
+      "properties": {
+        "instructions": {"type": "string", "minLength": 1},
+        "expected_scope": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
