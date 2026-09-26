@@ -1,4 +1,4 @@
-# Rerun after rustfmt-only hardening probe cleanup and isolate the pinned fd proof outside the parent Cargo workspace.
+# Final rerun after isolating the pinned fd proof outside the parent Cargo workspace; acceptance criteria unchanged.
 name: M9-H1.10 promote proved ptrace lifecycle core
 
 on:
