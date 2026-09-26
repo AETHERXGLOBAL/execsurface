@@ -1,0 +1,151 @@
+name: M9-H1.3 syscall-info lifecycle diagnostic
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - scripts/m9_instrument_syscall_info_lifecycle.py
+      - .github/workflows/m9-h1-syscall-info-lifecycle-diagnostic.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose-syscall-info-race:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Checkout pinned unmodified casey/just
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: casey/just
+          ref: ${{ env.JUST_SHA }}
+          path: external/just
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install frozen toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+          test "$(git -C external/just rev-parse HEAD)" = "$JUST_SHA"
+          test -z "$(git -C external/just status --porcelain)"
+
+      - name: Apply bounded candidate plus lifecycle instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m9-h1-3-evidence
+          python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_apply_ptrace_exit_lifecycle.py
+          python3 scripts/m9_apply_ptrace_preregistration_ordering.py
+          python3 scripts/m9_instrument_syscall_info_lifecycle.py
+          cargo "+$RUST_TOOLCHAIN" fmt --all
+          git diff --check
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs \
+            > m9-h1-3-evidence/diagnostic.diff
+          cargo "+$RUST_TOOLCHAIN" test -p execsurface-observe \
+            2>&1 | tee m9-h1-3-evidence/observer-tests.log
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface \
+            2>&1 | tee m9-h1-3-evidence/build.log
+
+      - name: Prime pinned workload directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd external/just && cargo "+$RUST_TOOLCHAIN" test --all >/dev/null 2>&1)
+
+      - name: Capture syscall-info ESRCH lifecycle state
+        shell: bash
+        run: |
+          set -uo pipefail
+          : > m9-h1-3-evidence/summary.txt
+          found=0
+          for attempt in 1 2 3 4 5; do
+            set +e
+            target/debug/execsurface observe -- \
+              /bin/bash -lc \
+              "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
+              > "m9-h1-3-evidence/just-${attempt}.json" \
+              2> "m9-h1-3-evidence/just-${attempt}.stderr"
+            rc=$?
+            set -e
+            reconciled=$(grep -c 'M9_PREREGISTRATION_STOP_RECONCILED' \
+              "m9-h1-3-evidence/just-${attempt}.stderr" || true)
+            printf 'attempt=%s rc=%s prereg_reconciled=%s\n' \
+              "$attempt" "$rc" "$reconciled" >> m9-h1-3-evidence/summary.txt
+
+            if grep -q 'M9_GET_SYSCALL_INFO_ESRCH_STATE' \
+              "m9-h1-3-evidence/just-${attempt}.stderr"; then
+              found=1
+              grep -E 'M9_EXIT_GROUP_ARMED|M9_GET_SYSCALL_INFO_ESRCH_STATE|M9_RESTART_ESRCH|M9_EXEC_GROUP_COLLAPSE|ExecSurface: ERROR|observer protocol error' \
+                "m9-h1-3-evidence/just-${attempt}.stderr" \
+                | tail -n 160 >> m9-h1-3-evidence/summary.txt || true
+              break
+            fi
+
+            if [ "$rc" -ne 0 ]; then
+              grep -E 'M9_|ESRCH|ECHILD|ExecSurface: ERROR|observer (OS|protocol) error' \
+                "m9-h1-3-evidence/just-${attempt}.stderr" \
+                | tail -n 160 >> m9-h1-3-evidence/summary.txt || true
+              break
+            fi
+          done
+          printf 'syscall_info_esrch_localized=%s\n' "$found" >> m9-h1-3-evidence/summary.txt
+          cat m9-h1-3-evidence/summary.txt
+          test "$found" -eq 1
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'head_sha=%s\n' "$GITHUB_SHA"
+            printf 'just_sha=%s\n' "$JUST_SHA"
+            printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > m9-h1-3-evidence/environment.txt
+          find m9-h1-3-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-h1-3-evidence/SHA256SUMS
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-h1-3-syscall-info-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-h1-3-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve concise summary in GitHub
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s m9-h1-3-evidence/summary.txt
+          evidence_dir="docs/milestones/evidence/m9-h1-3/run-${GITHUB_RUN_ID}"
+          mkdir -p "$evidence_dir"
+          cp m9-h1-3-evidence/summary.txt "$evidence_dir/summary.txt"
+          cp m9-h1-3-evidence/environment.txt "$evidence_dir/environment.txt"
+          cp m9-h1-3-evidence/SHA256SUMS "$evidence_dir/SHA256SUMS"
+          git add "$evidence_dir"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "M9-H1.3: preserve syscall-info lifecycle diagnostic run ${GITHUB_RUN_ID}"
+          git pull --rebase origin hardening/m9-ptrace-esrch-just
+          git push origin HEAD:hardening/m9-ptrace-esrch-just
