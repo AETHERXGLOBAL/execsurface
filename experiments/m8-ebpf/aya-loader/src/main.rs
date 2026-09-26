@@ -13,6 +13,7 @@ use aya::{
 
 const EVENT_EXEC: u32 = 1;
 const EVENT_FORK: u32 = 2;
+const EVENT_FILE_OPEN: u32 = 3;
 const ARGV_SENTINEL: &str = "AX_M8_ARGV_SENTINEL_DO_NOT_PERSIST";
 const ENV_SENTINEL: &str = "AX_M8_ENV_SENTINEL_DO_NOT_PERSIST";
 const PRESSURE_EXECS: usize = 768;
@@ -22,7 +23,9 @@ struct EventStats {
     total: usize,
     exec: usize,
     fork: usize,
+    file_open: usize,
     fork_edges: Vec<(u32, u32)>,
+    file_opens: Vec<(u32, u32)>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -59,8 +62,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         .try_into()?;
     exec_program.load()?;
 
-    // M8.2 diagnostics gate: with privilege available, deliberately request a missing hook.
-    // The original kernel/library error is allowed to propagate; it must not become evidence.
     if std::env::var_os("AX_M8_INVALID_ATTACH").is_some() {
         let _ = exec_program.attach("syscalls", "execsurface_m8_missing_tracepoint")?;
         return Err("invalid tracepoint unexpectedly attached".into());
@@ -68,15 +69,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let _exec_link = exec_program.attach("syscalls", "sys_enter_execve")?;
 
-    // Use syscall-exit lineage rather than task_struct access. This keeps the feasibility
-    // program Apache-compatible and avoids depending on GPL-restricted kernel-struct reads.
-    attach_spawn_tracepoint(&mut ebpf, "execsurface_m8_clone_exit", "sys_exit_clone")?;
-    attach_spawn_tracepoint(&mut ebpf, "execsurface_m8_clone3_exit", "sys_exit_clone3")?;
-    attach_spawn_tracepoint(&mut ebpf, "execsurface_m8_fork_exit", "sys_exit_fork")?;
-    attach_spawn_tracepoint(&mut ebpf, "execsurface_m8_vfork_exit", "sys_exit_vfork")?;
+    attach_tracepoint(&mut ebpf, "execsurface_m8_clone_exit", "sys_exit_clone")?;
+    attach_tracepoint(&mut ebpf, "execsurface_m8_clone3_exit", "sys_exit_clone3")?;
+    attach_tracepoint(&mut ebpf, "execsurface_m8_fork_exit", "sys_exit_fork")?;
+    attach_tracepoint(&mut ebpf, "execsurface_m8_vfork_exit", "sys_exit_vfork")?;
+    attach_tracepoint(&mut ebpf, "execsurface_m8_openat_exit", "sys_exit_openat")?;
 
-    // Privacy sentinel: secrets are deliberately present in argv/environment of a controlled
-    // child, while the persisted event schema contains numeric process metadata only.
     let status = Command::new("/bin/true")
         .arg(ARGV_SENTINEL)
         .env("AX_M8_SECRET", ENV_SENTINEL)
@@ -91,9 +89,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("attached observer produced no readable exec metadata event".into());
     }
 
-    // Controlled lineage proof: the launched shell must create at least one child. A
-    // parent->child edge rooted at the PID returned by spawn is enough to show that userspace
-    // can recursively scope descendants without collecting process names or arguments.
     let mut root = Command::new("/bin/sh")
         .arg("-c")
         .arg("/bin/true & wait")
@@ -117,10 +112,29 @@ fn main() -> Result<(), Box<dyn Error>> {
         .into());
     }
 
-    let before_drops = total_drops(&dropped)?;
+    // E9 file-metadata proof: only successful-open fd metadata is persisted. The path and
+    // file contents are intentionally not read by the BPF program.
+    let mut file_child = Command::new("/bin/cat").arg("/dev/null").spawn()?;
+    let file_pid = file_child.id();
+    let file_status = file_child.wait()?;
+    if !file_status.success() {
+        return Err("controlled file-metadata child failed".into());
+    }
+    thread::sleep(Duration::from_millis(30));
+    let file_stats = drain_events(&mut events)?;
+    let rooted_file_opens = file_stats
+        .file_opens
+        .iter()
+        .filter(|(pid, _)| *pid == file_pid)
+        .count();
+    if rooted_file_opens == 0 {
+        return Err(format!(
+            "file metadata evidence did not contain a successful open rooted at launched pid {file_pid}"
+        )
+        .into());
+    }
 
-    // Deliberately stop consuming and generate more process events than the 4 KiB feasibility
-    // ring can retain. Required result: explicit producer-side loss evidence, not zero loss.
+    let before_drops = total_drops(&dropped)?;
     for _ in 0..PRESSURE_EXECS {
         let status = Command::new("/bin/true").status()?;
         if !status.success() {
@@ -142,24 +156,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("M8_AYA_ATTACH_PASS");
     println!(
         "M8_AYA_EVENT_TRANSPORT_PASS events={}",
-        privacy_stats.total + lineage_stats.total
+        privacy_stats.total + lineage_stats.total + file_stats.total
     );
     println!(
         "M8_AYA_LINEAGE_PASS root_pid={root_pid} rooted_edges={rooted_edges} fork_events={}",
         lineage_stats.fork
     );
     println!(
+        "M8_AYA_FILE_METADATA_PASS root_pid={file_pid} successful_opens={rooted_file_opens}"
+    );
+    println!(
         "M8_AYA_LOSS_ACCOUNTING_PASS dropped={} pressure_events={}",
         after_drops - before_drops,
         pressure_stats.total
     );
-    println!(
-        "M8_AYA_PRIVACY_SCHEMA_PASS event_bytes=16 fields=kind,pid,related_pid,reserved"
-    );
+    println!("M8_AYA_PRIVACY_SCHEMA_PASS event_bytes=16 fields=kind,pid,value,reserved");
     Ok(())
 }
 
-fn attach_spawn_tracepoint(
+fn attach_tracepoint(
     ebpf: &mut Ebpf,
     program_name: &str,
     tracepoint_name: &str,
@@ -182,23 +197,35 @@ fn drain_events(events: &mut RingBuf<MapData>) -> Result<EventStats, Box<dyn Err
     let mut stats = EventStats::default();
     while let Some(sample) = events.next() {
         if sample.len() != 16 {
-            return Err(format!("unexpected process event size: {}", sample.len()).into());
+            return Err(format!("unexpected metadata event size: {}", sample.len()).into());
         }
         let bytes: [u8; 16] = sample.as_ref().try_into()?;
         let kind = u32::from_ne_bytes(bytes[0..4].try_into()?);
         let pid = u32::from_ne_bytes(bytes[4..8].try_into()?);
-        let related_pid = u32::from_ne_bytes(bytes[8..12].try_into()?);
-        if pid == 0 || related_pid == 0 {
-            return Err("invalid zero process identity in process event".into());
+        let value = u32::from_ne_bytes(bytes[8..12].try_into()?);
+        if pid == 0 {
+            return Err("invalid zero process identity in metadata event".into());
         }
         stats.total += 1;
         match kind {
-            EVENT_EXEC => stats.exec += 1,
-            EVENT_FORK => {
-                stats.fork += 1;
-                stats.fork_edges.push((pid, related_pid));
+            EVENT_EXEC => {
+                if value == 0 {
+                    return Err("invalid zero exec identity".into());
+                }
+                stats.exec += 1;
             }
-            other => return Err(format!("unknown process event kind: {other}").into()),
+            EVENT_FORK => {
+                if value == 0 {
+                    return Err("invalid zero child identity".into());
+                }
+                stats.fork += 1;
+                stats.fork_edges.push((pid, value));
+            }
+            EVENT_FILE_OPEN => {
+                stats.file_open += 1;
+                stats.file_opens.push((pid, value));
+            }
+            other => return Err(format!("unknown metadata event kind: {other}").into()),
         }
     }
     Ok(stats)
