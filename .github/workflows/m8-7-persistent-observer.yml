@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   persistent-session:
-    name: epoch isolation and sequential-session feasibility
+    name: epoch isolation and adversarial descendant lifecycle
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -103,13 +103,13 @@ jobs:
           test -x "$FIX"
           sha256sum "$OBS" "$FIX"
 
-      - name: Prove two sequential epochs under one attachment lifetime
+      - name: Prove sequential epochs and 64-descendant post-root drain
         shell: bash
         run: |
           set -euxo pipefail
           OBS="$PWD/experiments/m8-ebpf/persistent-observer/target/release/execsurface-m8-persistent-observer"
           FIX="$RUNNER_TEMP/m8_7_session_fixture"
-          REPORT="$RUNNER_TEMP/m8-7a-persistent-session.json"
+          REPORT="$RUNNER_TEMP/m8-7-persistent-session.json"
 
           sudo "$OBS" --report "$REPORT" --fixture "$FIX"
           cat "$REPORT"
@@ -141,9 +141,10 @@ jobs:
               assert session['membership_map_empty'] is True, session
               assert session['pending_mechanism_map_empty'] is True, session
               assert session['event_limit_hit'] is False, session
-              assert session['spawn_count'] >= 1, session
-              assert session['exec_count'] >= 2, session
-              assert session['exit_count'] >= 2, session
+              assert session['spawn_count'] == 64, session
+              assert session['exec_count'] == 65, session
+              assert session['exit_count'] == 65, session
+              assert session['event_count'] == 194, session
 
           authority = report['authority']
           assert authority['ptrace_correctness_reference'] is True
@@ -152,30 +153,30 @@ jobs:
           assert authority['product_integration_authorized'] is False
 
           lifecycle = report['one_time_lifecycle']
-          print('M8_7A_PERSISTENT_EPOCH_ISOLATION_PASS')
-          print('M8_7A_SESSION_MS', [round(s['elapsed_ms'], 6) for s in sessions])
-          print('M8_7A_ONE_TIME_LIFECYCLE_MS', {k: round(v, 6) for k, v in lifecycle.items()})
+          print('M8_7B2_DESCENDANT_CHURN_PASS')
+          print('M8_7B2_SESSION_MS', [round(s['elapsed_ms'], 6) for s in sessions])
+          print('M8_7B2_ONE_TIME_LIFECYCLE_MS', {k: round(v, 6) for k, v in lifecycle.items()})
           PY
 
       - name: Preserve product authority boundary
         shell: bash
         run: |
           set -euxo pipefail
-          REPORT="$RUNNER_TEMP/m8-7a-persistent-session.json"
+          REPORT="$RUNNER_TEMP/m8-7-persistent-session.json"
           python3 - "$REPORT" <<'PY'
           import json, sys
           report = json.load(open(sys.argv[1], encoding='utf-8'))
           assert report['authority']['ebpf_pass_authorized'] is False
           assert report['authority']['product_integration_authorized'] is False
-          print('M8_7A_NO_PASS_AUTHORITY_PRESERVED')
+          print('M8_7_NO_PASS_AUTHORITY_PRESERVED')
           PY
 
-      - name: Upload raw M8.7a evidence
+      - name: Upload raw M8.7 evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: m8-7a-persistent-observer-${{ github.sha }}
+          name: m8-7-persistent-observer-${{ github.sha }}
           path: |
-            ${{ runner.temp }}/m8-7a-persistent-session.json
+            ${{ runner.temp }}/m8-7-persistent-session.json
             ${{ runner.temp }}/m8-7-sched_process_fork-format.txt
           if-no-files-found: error
           retention-days: 30
