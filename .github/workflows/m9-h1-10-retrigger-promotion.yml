@@ -1,0 +1,25 @@
+name: M9-H1.10 retrigger proved ptrace promotion
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - .github/workflows/m9-h1-10-retrigger-promotion.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch-promotion:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Dispatch comprehensive promotion gate at current branch head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run m9-h1-10-promote-proved-ptrace-core.yml \
+            --repo AETHERXGLOBAL/execsurface \
+            --ref hardening/m9-ptrace-esrch-just
