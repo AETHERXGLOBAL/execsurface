@@ -10,11 +10,13 @@ readme.workspace = true
 
 [features]
 default = []
-m8-parity-internal = []
+m8-parity-internal = ["dep:serde", "dep:serde_json"]
 
 [dependencies]
 execsurface-model = { path = "../execsurface-model", version = "=0.1.0-alpha.2" }
 libc.workspace = true
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json.workspace = true
