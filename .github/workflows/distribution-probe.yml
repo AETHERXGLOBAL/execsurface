@@ -57,24 +57,49 @@ jobs:
           grep -F "ExecSurface: REVIEW" <<<"$output"
 
   crates-io-feasibility:
-    name: crates.io packaging decision
+    name: crates.io registry-readiness decision
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Confirm current CLI package is intentionally not registry-ready
+      - name: Prove leaf packaging and exact internal registry versions
         run: |
           set -euo pipefail
-          set +e
-          cargo package -p execsurface --allow-dirty --no-verify >package.stdout 2>package.stderr
-          status=$?
-          set -e
-          cat package.stdout
-          cat package.stderr >&2
-          test "$status" -ne 0
-          grep -Eiq 'must have a version|does not specify a version|path.*dependenc' package.stderr
-          echo "crates.io: DEFERRED — workspace registry chain is not being distorted for M6.6"
+          cargo package -p execsurface-model --allow-dirty
+          python - <<'PY'
+          from pathlib import Path
+          import tomllib
+
+          version = "0.1.0-alpha.2"
+          publishable = {
+              "execsurface-model",
+              "execsurface-observe",
+              "execsurface-normalize",
+              "execsurface-baseline",
+              "execsurface-diff",
+              "execsurface-policy",
+              "execsurface-report",
+              "execsurface",
+          }
+          manifests = {}
+          for path in Path("crates").glob("*/Cargo.toml"):
+              data = tomllib.loads(path.read_text())
+              manifests[data["package"]["name"]] = (path, data)
+
+          assert publishable.issubset(manifests)
+          assert manifests["execsurface-bench"][1]["package"].get("publish") is False
+
+          for name in publishable:
+              path, data = manifests[name]
+              for section in ("dependencies", "dev-dependencies", "build-dependencies"):
+                  for dep_name, dep in data.get(section, {}).items():
+                      if dep_name.startswith("execsurface-") and isinstance(dep, dict) and "path" in dep:
+                          assert dep.get("version") == f"={version}", (
+                              f"{path}: {section}.{dep_name} must pin ={version}"
+                          )
+          print("crates.io: REGISTRY-READY — first publication still requires maintainer credentials")
+          PY
 
 
   release-bundle-dry-run:
