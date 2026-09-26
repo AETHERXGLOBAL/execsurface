@@ -96,11 +96,9 @@ fn run_observe(args: &[OsString]) -> Result<(), String> {
             println!("{json}");
             Ok(())
         }
-        ObserveBackend::ExperimentalLibbpf { collector } => run_experimental_libbpf_observe(
-            &collector,
-            &parsed.program,
-            &parsed.command_args,
-        ),
+        ObserveBackend::ExperimentalLibbpf { collector } => {
+            run_experimental_libbpf_observe(&collector, &parsed.program, &parsed.command_args)
+        }
     }
 }
 
@@ -186,7 +184,11 @@ fn create_experimental_report_dir() -> Result<PathBuf, String> {
 }
 
 fn validate_experimental_libbpf_report(report: &serde_json::Value) -> Result<(), String> {
-    if report.get("protocol_version").and_then(|value| value.as_u64()) != Some(1) {
+    if report
+        .get("protocol_version")
+        .and_then(|value| value.as_u64())
+        != Some(1)
+    {
         return Err("experimental libbpf report has unsupported protocol_version".to_owned());
     }
 
