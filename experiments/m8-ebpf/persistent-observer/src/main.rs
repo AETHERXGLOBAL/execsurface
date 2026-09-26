@@ -274,6 +274,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         last_routing = last_routing.saturating_add(report.routing_error_delta);
         if !report.clean_for_m8_7a {
             sessions.push(report);
+            let final_membership_map_empty = map_empty(&skel.maps.task_epoch);
+            let final_pending_mechanism_map_empty = map_empty(&skel.maps.pending_spawn_mechanism);
             return write_failure_report_and_exit(
                 options.report,
                 open_ms,
@@ -281,8 +283,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 attach_ms,
                 sessions,
                 &tracker,
-                &skel.maps.task_epoch,
-                &skel.maps.pending_spawn_mechanism,
+                final_membership_map_empty,
+                final_pending_mechanism_map_empty,
                 ring,
                 skel,
                 "persistent session failed M8.7a health gates",
@@ -488,21 +490,19 @@ fn run_session<M: MapCore + ?Sized>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn write_failure_report_and_exit<M: MapCore + ?Sized>(
+fn write_failure_report_and_exit(
     report_path: PathBuf,
     open_ms: f64,
     load_ms: f64,
     attach_ms: f64,
     sessions: Vec<SessionReport>,
     tracker: &Rc<RefCell<Tracker>>,
-    task_epoch: &M,
-    pending_spawn_mechanism: &M,
+    final_membership_map_empty: bool,
+    final_pending_mechanism_map_empty: bool,
     ring: RingBuffer<'_>,
     skel: PersistentSkel<'_>,
     message: &str,
 ) -> Result<(), Box<dyn Error>> {
-    let final_membership_map_empty = map_empty(task_epoch);
-    let final_pending_mechanism_map_empty = map_empty(pending_spawn_mechanism);
     let unexpected_without_session = tracker.borrow().unexpected_without_session;
     let decode_errors_total = tracker.borrow().decode_errors;
     let detach_started = Instant::now();
