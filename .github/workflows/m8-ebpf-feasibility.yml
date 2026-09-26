@@ -42,9 +42,9 @@ jobs:
           set -euxo pipefail
           for name in clone clone3 fork vfork; do
             format="/sys/kernel/tracing/events/syscalls/sys_exit_${name}/format"
-            test -r "$format"
-            cat "$format"
-            grep -Eq 'field:long ret;[[:space:]]+offset:16;[[:space:]]+size:8;' "$format"
+            captured="$RUNNER_TEMP/sys_exit_${name}.format"
+            sudo cat "$format" | tee "$captured"
+            grep -Eq 'field:long ret;[[:space:]]+offset:16;[[:space:]]+size:8;' "$captured"
           done
           echo 'M8_SYSCALL_EXIT_RET_OFFSET_PASS offset=16 size=8'
 
