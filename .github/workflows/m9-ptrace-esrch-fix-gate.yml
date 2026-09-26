@@ -6,6 +6,7 @@ on:
       - hardening/m9-ptrace-esrch-just
     paths:
       - scripts/m9_apply_ptrace_esrch_fix.py
+      - scripts/m9_instrument_ptrace_esrch.py
       - .github/workflows/m9-ptrace-esrch-fix-gate.yml
   workflow_dispatch:
 
@@ -50,6 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_instrument_ptrace_esrch.py
           cargo "+$RUST_TOOLCHAIN" fmt --all
           git diff --check
           git diff -- crates/execsurface-observe/src/linux_ptrace.rs | tee /tmp/m9-esrch-fix.diff
@@ -152,15 +154,8 @@ jobs:
           git push origin HEAD:hardening/m9-ptrace-esrch-just
 
       - name: Commit only proved product fix
+        if: ${{ false }}
         shell: bash
         run: |
           set -euo pipefail
-          git status --short
-          git diff --exit-code -- scripts/m9_apply_ptrace_esrch_fix.py .github/workflows/m9-ptrace-esrch-fix-gate.yml
-          git add crates/execsurface-observe/src/linux_ptrace.rs
-          test -n "$(git diff --cached --name-only)"
-          test "$(git diff --cached --name-only)" = "crates/execsurface-observe/src/linux_ptrace.rs"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "M9 hardening: prove lifecycle-specific restart ESRCH handling"
-          git push origin HEAD:hardening/m9-ptrace-esrch-just
+          echo "Diagnostic operation instrumentation is active; product commit intentionally disabled."
