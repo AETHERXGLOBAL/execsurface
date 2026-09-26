@@ -1,0 +1,208 @@
+name: M9.1 preregistered same-workload eBPF value screen
+
+on:
+  push:
+    branches:
+      - milestone/m9-1-post-hardening-external-workloads
+    paths:
+      - .github/workflows/m9-1-ebpf-value-screen.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  value-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: EBPF-V1-JUST
+            repository: casey/just
+            revision: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+            shell_script: cargo +1.90.0 test --all >/dev/null 2>&1
+          - id: EBPF-V1-FZF
+            repository: junegunn/fzf
+            revision: b1be3a8be1b833ce5b92fbbac11637643d60a046
+            shell_script: go test ./... >/dev/null 2>&1
+
+    steps:
+      - name: Checkout ExecSurface research source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout exact pinned external workload
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.revision }}
+          path: external/workload
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Stage external workload outside ExecSurface workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C external/workload rev-parse HEAD)" = '${{ matrix.revision }}'
+          test -z "$(git -C external/workload status --porcelain)"
+          work="$RUNNER_TEMP/m9-ebpf-${{ matrix.id }}"
+          rm -rf "$work"
+          cp -a external/workload "$work"
+          test "$(git -C "$work" rev-parse HEAD)" = '${{ matrix.revision }}'
+          test -z "$(git -C "$work" status --porcelain)"
+          echo "M9_EBPF_WORKDIR=$work" >> "$GITHUB_ENV"
+          mkdir -p "m9-ebpf-evidence/${{ matrix.id }}"
+
+      - name: Install native dependencies and verify BTF
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+          clang --version | tee "m9-ebpf-evidence/${{ matrix.id }}/clang-version.txt"
+          pkg-config --modversion libelf | tee "m9-ebpf-evidence/${{ matrix.id }}/libelf-version.txt"
+
+      - name: Install frozen Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          rustup toolchain install 1.90.0 --profile minimal
+          rustc +1.82.0 --version --verbose > "m9-ebpf-evidence/${{ matrix.id }}/rust-1.82.txt"
+          rustc +1.90.0 --version --verbose > "m9-ebpf-evidence/${{ matrix.id }}/rust-1.90.txt"
+
+      - name: Resolve and build exact research collector and ptrace CLI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 -m py_compile scripts/m9_1_ebpf_value_screen.py
+          manifest=experiments/m8-ebpf/libbpf-observer/Cargo.toml
+          rm -f "$(dirname "$manifest")/Cargo.lock"
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile --manifest-path "$manifest"
+          cargo +1.82.0 fmt --manifest-path "$manifest" -- --check
+          cargo +1.82.0 build --manifest-path "$manifest" --release --locked \
+            2>&1 | tee "m9-ebpf-evidence/${{ matrix.id }}/collector-build.log"
+          cargo +1.90.0 build --manifest-path crates/execsurface-cli/Cargo.toml --release --locked \
+            2>&1 | tee "m9-ebpf-evidence/${{ matrix.id }}/cli-build.log"
+
+          cli="$PWD/target/release/execsurface"
+          collector="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer"
+          test -x "$cli"
+          test -x "$collector"
+          echo "M9_EBPF_CLI=$cli" >> "$GITHUB_ENV"
+          echo "M9_EBPF_COLLECTOR=$collector" >> "$GITHUB_ENV"
+          sha256sum "$cli" "$collector" \
+            | tee "m9-ebpf-evidence/${{ matrix.id }}/binary-SHA256SUMS"
+
+      - name: Prime exact external workload before measurement
+        shell: bash
+        env:
+          WORKLOAD_SCRIPT: ${{ matrix.shell_script }}
+        run: |
+          set -euo pipefail
+          cd "$M9_EBPF_WORKDIR"
+          /bin/bash -lc "$WORKLOAD_SCRIPT"
+          test "$(git rev-parse HEAD)" = '${{ matrix.revision }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Execute frozen same-workload value screen under one root privilege context
+        shell: bash
+        env:
+          WORKLOAD_SCRIPT: ${{ matrix.shell_script }}
+        run: |
+          set -euo pipefail
+          evidence="$GITHUB_WORKSPACE/m9-ebpf-evidence/${{ matrix.id }}/value-screen.json"
+          runner_home="$HOME"
+          go_cache="$(go env GOCACHE 2>/dev/null || true)"
+          go_path="$(go env GOPATH 2>/dev/null || true)"
+          set +e
+          sudo env \
+            HOME="$runner_home" \
+            RUSTUP_HOME="$runner_home/.rustup" \
+            CARGO_HOME="$runner_home/.cargo" \
+            GOCACHE="$go_cache" \
+            GOPATH="$go_path" \
+            PATH="$PATH" \
+            RUNNER_NAME="${RUNNER_NAME:-}" \
+            RUNNER_OS="${RUNNER_OS:-}" \
+            RUNNER_ARCH="${RUNNER_ARCH:-}" \
+            python3 scripts/m9_1_ebpf_value_screen.py \
+              --cli "$M9_EBPF_CLI" \
+              --collector "$M9_EBPF_COLLECTOR" \
+              --workdir "$M9_EBPF_WORKDIR" \
+              --shell-script "$WORKLOAD_SCRIPT" \
+              --output "$evidence" \
+              --commit-sha "$GITHUB_SHA" \
+              --workload '${{ matrix.id }}' \
+              --warmups 3 \
+              --samples 15 \
+              --timeout 180 \
+              | tee "m9-ebpf-evidence/${{ matrix.id }}/harness.stdout"
+          rc=${PIPESTATUS[0]}
+          set -e
+          printf 'harness_rc=%s\n' "$rc" \
+            | tee "m9-ebpf-evidence/${{ matrix.id }}/harness-status.txt"
+          test -f "$evidence"
+          python3 -m json.tool "$evidence" >/dev/null
+          exit "$rc"
+
+      - name: Verify immutable authority boundary and value-screen semantics
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="m9-ebpf-evidence/${{ matrix.id }}/value-screen.json"
+          test -f "$evidence"
+          python3 - "$evidence" <<'PY'
+          import json, sys
+          d=json.load(open(sys.argv[1]))
+          a=d['authority']
+          assert a['ptrace_correctness_reference'] is True
+          for key in (
+              'full_surface_comparable','ebpf_learn_authorized','ebpf_check_authorized',
+              'ebpf_pass_authorized','backend_auto_select_authorized',
+              'baseline_interchange_authorized','public_integration_authorized',
+          ):
+              assert a[key] is False, (key,a[key])
+          assert d['protocol']['warmups_per_mode']==3
+          assert d['protocol']['measured_samples_per_mode']==15
+          status=d.get('status')
+          assert status in ('VALUE_SIGNAL_FOR_FURTHER_RESEARCH','NO_VALUE_SIGNAL','PARTIAL_NO_VALUE_CLAIM')
+          if status != 'PARTIAL_NO_VALUE_CLAIM':
+              for mode, rows in d['samples'].items():
+                  assert len(rows)==15, (mode,len(rows))
+                  assert all(r['clean'] is True for r in rows), mode
+              s=d['summary']
+              threshold=(s['median_ebpf_ms'] <= 0.80*s['median_ptrace_ms'] and s['ptrace_minus_ebpf_ms'] >= 250.0)
+              assert threshold is s['value_threshold_passed']
+              assert (status=='VALUE_SIGNAL_FOR_FURTHER_RESEARCH') is threshold
+          print('M9_EBPF_VALUE_SCREEN_AUTHORITY_PASS')
+          print('status='+status)
+          if 'summary' in d:
+              print(json.dumps(d['summary'],sort_keys=True))
+          PY
+          sha256sum "$evidence" > "m9-ebpf-evidence/${{ matrix.id }}/value-screen.sha256"
+          {
+            printf 'repository=%s\n' '${{ matrix.repository }}'
+            printf 'revision=%s\n' '${{ matrix.revision }}'
+            printf 'execsurface_source_sha=%s\n' "$GITHUB_SHA"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+            printf 'btf_readable=%s\n' "$(test -r /sys/kernel/btf/vmlinux && echo true || echo false)"
+            printf 'authority_public_integration=false\n'
+          } > "m9-ebpf-evidence/${{ matrix.id }}/environment.txt"
+
+      - name: Upload value-screen evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-1-ebpf-value-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-ebpf-evidence/${{ matrix.id }}
+          if-no-files-found: error
+          retention-days: 30
