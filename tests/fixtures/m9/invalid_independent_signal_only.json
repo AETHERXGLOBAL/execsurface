@@ -1,0 +1,72 @@
+{
+  "schema_version": "m9-evidence-v1",
+  "evidence_id": "M9-FIXTURE-INDEPENDENT-SIGNAL-ONLY",
+  "timestamp_utc": "2026-09-27T00:00:00Z",
+  "independence_class": "INDEPENDENT_USER",
+  "claim_status": "OPEN",
+  "external_reference": null,
+  "provenance": {
+    "initiated_by": "THIRD_PARTY",
+    "executed_by": "THIRD_PARTY",
+    "aether_x_material_involvement": false,
+    "third_party_attestation": "Fixture: an attributed external signal exists, but no qualifying workflow evidence was supplied."
+  },
+  "project": {
+    "name": "example-project",
+    "repository": "example/example-project",
+    "revision": "0123456789abcdef0123456789abcdef01234567",
+    "modified_by_aether_x": false
+  },
+  "execsurface": {
+    "version": "0.1.0-alpha.2",
+    "source_sha": "93158e044ff993037ce7da7a78e61fbb1b892d00",
+    "install_path": "unknown",
+    "backend": "ptrace"
+  },
+  "host": {
+    "os": "unknown fixture host",
+    "kernel": "unknown",
+    "architecture": "x86_64",
+    "cpu_description": "unknown fixture cpu",
+    "runner_image": null
+  },
+  "workflow": {
+    "command": "unknown",
+    "baseline_attempted": false,
+    "rerun_check_attempted": false,
+    "drift_case_attempted": false,
+    "notes": "Synthetic discovery-only negative sentinel."
+  },
+  "outcome": {
+    "installation": "NOT_RUN",
+    "doctor": "NOT_RUN",
+    "baseline": "NOT_RUN",
+    "rerun_check": "NOT_RUN",
+    "drift_case": "NOT_RUN",
+    "verdict": null,
+    "comparable": null,
+    "complete": null,
+    "operational_error": null,
+    "false_positive_reported": false,
+    "suspected_false_negative": false,
+    "usability_friction": null
+  },
+  "privacy": {
+    "metadata_only_confirmed": true,
+    "prohibited_sensitive_payload_collected": false,
+    "notes": "Synthetic privacy-safe fixture."
+  },
+  "performance": null,
+  "artifacts": [
+    {
+      "name": "signal-only.txt",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "location": "fixture://independent/signal-only"
+    }
+  ],
+  "failures_exclusions": [],
+  "reproduction": {
+    "instructions": "Run only as a validator negative fixture.",
+    "expected_scope": "Must remain DISCOVERY_ONLY and be rejected by M9.2."
+  }
+}

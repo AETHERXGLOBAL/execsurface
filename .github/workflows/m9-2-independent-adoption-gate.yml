@@ -1,0 +1,70 @@
+name: M9.2 Independent Adoption Gate
+
+on:
+  push:
+    branches:
+      - "milestone/m9-2-independent-adoption"
+    paths:
+      - "docs/milestones/M9_2_INDEPENDENT_ADOPTION_GATE.md"
+      - "scripts/m9_2_validate_independent_evidence.py"
+      - "scripts/m9_validate_evidence.py"
+      - "tests/fixtures/m9/**"
+      - ".github/workflows/m9-2-independent-adoption-gate.yml"
+  pull_request:
+    paths:
+      - "docs/milestones/M9_2_INDEPENDENT_ADOPTION_GATE.md"
+      - "scripts/m9_2_validate_independent_evidence.py"
+      - "scripts/m9_validate_evidence.py"
+      - "tests/fixtures/m9/**"
+      - ".github/workflows/m9-2-independent-adoption-gate.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  independent-adoption-gate:
+    name: M9.2 independence semantics
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Compile validators
+        run: |
+          set -euo pipefail
+          python -m py_compile scripts/m9_validate_evidence.py scripts/m9_2_validate_independent_evidence.py
+
+      - name: Accept qualifying independent-user sentinel
+        run: |
+          set -euo pipefail
+          python scripts/m9_2_validate_independent_evidence.py tests/fixtures/m9/valid_independent_user.json
+
+      - name: Reject canonical zero-contact evidence as adoption
+        run: |
+          set -euo pipefail
+          python scripts/m9_validate_evidence.py tests/fixtures/m9/valid_zero_contact.json
+          if python scripts/m9_2_validate_independent_evidence.py tests/fixtures/m9/valid_zero_contact.json; then
+            echo "M9_2_NEGATIVE_SENTINEL_FAILED: zero-contact evidence was accepted as independent adoption" >&2
+            exit 1
+          fi
+          echo "M9_2_ZERO_CONTACT_REJECTION_PASS"
+
+      - name: Reject discovery-only external signal
+        run: |
+          set -euo pipefail
+          python scripts/m9_validate_evidence.py tests/fixtures/m9/invalid_independent_signal_only.json
+          if python scripts/m9_2_validate_independent_evidence.py tests/fixtures/m9/invalid_independent_signal_only.json; then
+            echo "M9_2_NEGATIVE_SENTINEL_FAILED: signal-only evidence was accepted" >&2
+            exit 1
+          fi
+          echo "M9_2_SIGNAL_ONLY_REJECTION_PASS"
+
+      - name: Freeze sentinel
+        run: |
+          set -euo pipefail
+          grep -q 'FROZEN BEFORE M9.2 DISCOVERY RESULTS' docs/milestones/M9_2_INDEPENDENT_ADOPTION_GATE.md
+          grep -q 'stars, forks, watchers or traffic' docs/milestones/M9_2_INDEPENDENT_ADOPTION_GATE.md
+          grep -q 'AETHER X-authored PR' docs/milestones/M9_2_INDEPENDENT_ADOPTION_GATE.md
+          grep -q 'NO ACCEPTED INDEPENDENT EVIDENCE IN DECLARED SEARCH SCOPE' docs/milestones/M9_2_INDEPENDENT_ADOPTION_GATE.md
+          echo "M9_2_PROTOCOL_FREEZE_PASS"

@@ -1,0 +1,72 @@
+{
+  "schema_version": "m9-evidence-v1",
+  "evidence_id": "M9-FIXTURE-INDEPENDENT-VALID",
+  "timestamp_utc": "2026-09-27T00:00:00Z",
+  "independence_class": "INDEPENDENT_USER",
+  "claim_status": "COMPUTATIONAL_EVIDENCE",
+  "external_reference": "https://github.com/example/example-project/actions/runs/123456789",
+  "provenance": {
+    "initiated_by": "THIRD_PARTY",
+    "executed_by": "THIRD_PARTY",
+    "aether_x_material_involvement": false,
+    "third_party_attestation": "Fixture: external operator states they independently initiated and executed this workflow."
+  },
+  "project": {
+    "name": "example-project",
+    "repository": "example/example-project",
+    "revision": "0123456789abcdef0123456789abcdef01234567",
+    "modified_by_aether_x": false
+  },
+  "execsurface": {
+    "version": "0.1.0-alpha.2",
+    "source_sha": "93158e044ff993037ce7da7a78e61fbb1b892d00",
+    "install_path": "cargo install execsurface --locked",
+    "backend": "ptrace"
+  },
+  "host": {
+    "os": "Ubuntu 24.04",
+    "kernel": "6.8.0-example",
+    "architecture": "x86_64",
+    "cpu_description": "fixture cpu",
+    "runner_image": "fixture"
+  },
+  "workflow": {
+    "command": "example-test-command",
+    "baseline_attempted": true,
+    "rerun_check_attempted": true,
+    "drift_case_attempted": false,
+    "notes": "Synthetic validator fixture only; not real adoption evidence."
+  },
+  "outcome": {
+    "installation": "PASS",
+    "doctor": "PASS",
+    "baseline": "PASS",
+    "rerun_check": "PASS",
+    "drift_case": "NOT_RUN",
+    "verdict": "PASS",
+    "comparable": true,
+    "complete": true,
+    "operational_error": null,
+    "false_positive_reported": false,
+    "suspected_false_negative": false,
+    "usability_friction": null
+  },
+  "privacy": {
+    "metadata_only_confirmed": true,
+    "prohibited_sensitive_payload_collected": false,
+    "notes": "Synthetic privacy-safe fixture."
+  },
+  "performance": null,
+  "artifacts": [
+    {
+      "name": "fixture-evidence.json",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "location": "fixture://independent/valid"
+    }
+  ],
+  "failures_exclusions": [],
+  "reproduction": {
+    "instructions": "Run only as a validator fixture.",
+    "expected_scope": "M9.2 gate positive sentinel; not external product evidence."
+  }
+}
