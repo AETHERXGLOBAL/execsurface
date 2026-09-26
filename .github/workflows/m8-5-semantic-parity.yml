@@ -154,7 +154,7 @@ jobs:
           print('M8_5C_VFORK_PARITY_PASS')
           PY
 
-      - name: Prove nested-thread parent lineage parity
+      - name: Classify clone3 nested-thread semantics as unresolved
         shell: bash
         run: |
           set -euxo pipefail
@@ -171,14 +171,19 @@ jobs:
           "$HARNESS" "$REF" "$CAND" "$OUT"
           cat "$OUT"
 
-          python3 - "$OUT" <<'PY'
+          python3 - "$OUT" "$CAND" <<'PY'
           import json, sys
           report = json.load(open(sys.argv[1], encoding='utf-8'))
+          candidate = json.load(open(sys.argv[2], encoding='utf-8'))
           verdicts = {a['semantic_class']: a['verdict'] for a in report['assessments']}
-          assert verdicts['process_spawn_lineage'] == 'equivalent', verdicts
+          mechanisms = [e['mechanism'] for e in candidate['events'] if e.get('event_type') == 'process_spawn']
+          assert mechanisms and all(m == 'unknown' for m in mechanisms), mechanisms
+          assert verdicts['process_spawn_lineage'] == 'contradicted', verdicts
+          assert verdicts['process_exec_occurrence'] == 'equivalent', verdicts
+          assert report['candidate_completeness'] == 'incomplete_capability', report
           assert report['full_surface_comparable'] is False
           assert report['ebpf_pass_authorized'] is False
-          print('M8_5B_NESTED_THREAD_LINEAGE_PARITY_PASS')
+          print('M8_5C_CLONE3_UNRESOLVED_FAIL_CLOSED_PASS')
           PY
 
       - name: Prove same-count different semantics is contradicted
