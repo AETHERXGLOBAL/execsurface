@@ -1,0 +1,120 @@
+name: M8.4 Loss Semantics
+
+on:
+  push:
+    branches:
+      - "milestone/m8-4-loss-semantics"
+    paths:
+      - "experiments/m8-ebpf/libbpf-observer/**"
+      - "docs/milestones/M8_4_LOSS_SEMANTICS.md"
+      - ".github/workflows/m8-4-loss-semantics.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  loss-semantics:
+    name: real producer loss and truncation proof
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install declared native build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+          clang --version
+          pkg-config --modversion libelf
+
+      - name: Install product-MSRV Rust toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          rustc +1.82.0 --version --verbose
+          cargo +1.82.0 --version
+
+      - name: Resolve Rust-1.82-compatible isolated lock
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f experiments/m8-ebpf/libbpf-observer/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.82.0 generate-lockfile \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml
+
+      - name: Format and build real observer plus storm fixture
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cargo +1.82.0 fmt \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            -- --check
+          cargo +1.82.0 build \
+            --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml \
+            --release --locked
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          STORM=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_event_storm
+          test -x "$OBS"
+          test -x "$STORM"
+          sha256sum "$OBS" "$STORM"
+
+      - name: Prove event-budget truncation is explicit and fail-closed
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          STORM=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_event_storm
+          REPORT="$RUNNER_TEMP/m8-4-limit.json"
+
+          sudo "$OBS" --report "$REPORT" --event-limit 1 -- "$STORM" 1 64
+          cat "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          codes = {w['code'] for w in report['warnings']}
+          assert report['observation_complete'] is False
+          assert report['completeness'] == 'incomplete_limit', report
+          assert report['dropped_events'] == 0, report['dropped_events']
+          assert 'event_limit_exceeded' in codes, codes
+          print('M8_4_EVENT_LIMIT_FAIL_CLOSED_PASS')
+          PY
+
+      - name: Prove real ring-buffer pressure becomes producer loss
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          STORM=experiments/m8-ebpf/libbpf-observer/target/release/m8_4_event_storm
+          REPORT="$RUNNER_TEMP/m8-4-loss.json"
+
+          sudo "$OBS" --report "$REPORT" --event-limit 1000000 -- "$STORM" 32 100000
+          cat "$REPORT"
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          codes = {w['code'] for w in report['warnings']}
+          assert report['observation_complete'] is False
+          assert report['dropped_events'] > 0, report['dropped_events']
+          assert report['completeness'] == 'incomplete_loss', report['completeness']
+          assert 'producer_event_loss' in codes, codes
+          print(f"M8_4_REAL_RINGBUF_LOSS_PASS dropped={report['dropped_events']}")
+          PY
+
+      - name: Preserve no-PASS authority boundary
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - "$RUNNER_TEMP/m8-4-limit.json" "$RUNNER_TEMP/m8-4-loss.json" <<'PY'
+          import json, sys
+          for path in sys.argv[1:]:
+              report = json.load(open(path, encoding='utf-8'))
+              assert report['observation_complete'] is False
+              assert report['completeness'] != 'complete'
+          print('M8_4_NO_PASS_AUTHORITY_PRESERVED')
+          PY
