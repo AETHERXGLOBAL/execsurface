@@ -22,14 +22,14 @@ jobs:
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/execsurface-install"
-          cargo install             --git https://github.com/AETHERXGLOBAL/execsurface.git             --rev "$REV"             execsurface-cli             --locked             --root "$root"
+          cargo install             --git https://github.com/AETHERXGLOBAL/execsurface.git             --rev "$REV"             execsurface             --locked             --root "$root"
           echo "$root/bin" >> "$GITHUB_PATH"
 
       - name: Prove installed CLI identity and readiness
         run: |
           set -euo pipefail
           execsurface --version
-          test "$(execsurface --version)" = "execsurface 0.1.0-alpha.1"
+          test "$(execsurface --version)" = "execsurface 0.1.0-alpha.2"
           work="$RUNNER_TEMP/execsurface-consumer"
           mkdir -p "$work"
           cd "$work"
@@ -67,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           set +e
-          cargo package -p execsurface-cli --allow-dirty --no-verify >package.stdout 2>package.stderr
+          cargo package -p execsurface --allow-dirty --no-verify >package.stdout 2>package.stderr
           status=$?
           set -e
           cat package.stdout
@@ -90,16 +90,16 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           data = Path("action/release-tag.txt").read_bytes()
-          expected = b"v0.1.0-alpha.1\n"
+          expected = b"v0.1.0-alpha.2\n"
           assert data == expected, f"release-tag bytes mismatch: {data!r}"
           PY
           tag="$(cat action/release-tag.txt)"
-          test "$tag" = "v0.1.0-alpha.1"
+          test "$tag" = "v0.1.0-alpha.2"
           target="x86_64-unknown-linux-gnu"
           dir="dist/execsurface-${tag}-${target}"
           archive="execsurface-${tag}-${target}.tar.gz"
-          cargo build --locked --release -p execsurface-cli --bin execsurface
-          test "$(./target/release/execsurface --version)" = "execsurface 0.1.0-alpha.1"
+          cargo build --locked --release -p execsurface --bin execsurface
+          test "$(./target/release/execsurface --version)" = "execsurface 0.1.0-alpha.2"
           mkdir -p "$dir"
           cp target/release/execsurface "$dir/execsurface"
           cp LICENSE NOTICE "$dir/"
@@ -115,7 +115,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/release-consumer"
           tar -xzf "dist/$archive" -C "$RUNNER_TEMP/release-consumer"
           binary="$RUNNER_TEMP/release-consumer/execsurface-${tag}-${target}/execsurface"
-          test "$("$binary" --version)" = "execsurface 0.1.0-alpha.1"
+          test "$("$binary" --version)" = "execsurface 0.1.0-alpha.2"
           (
             cd "$RUNNER_TEMP/release-consumer"
             "$binary" doctor
