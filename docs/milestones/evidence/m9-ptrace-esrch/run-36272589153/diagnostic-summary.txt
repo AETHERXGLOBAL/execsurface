@@ -1,0 +1,8 @@
+run_id=36272589153
+head_sha=c210423e29a2690dc05fb0fa04f41fd4f44ac500
+just_sha=5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+rust_toolchain=1.90.0
+
+attempt=1 rc=2
+ExecSurface: ERROR
+execsurface: observer protocol error: PTRACE_SYSCALL returned ESRCH after an observed ptrace-stop for tid 16896, but exact-TID wait returned non-terminal status 0x6057f
