@@ -24,10 +24,10 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - name: Install public crates.io distribution
+      - name: Install exact public crates.io evaluation release
         run: |
           set -euo pipefail
-          cargo install execsurface --locked
+          cargo install execsurface --version "=0.1.0-alpha.2" --locked
           execsurface --version
           execsurface doctor
 
@@ -75,9 +75,15 @@ jobs:
       - name: Capture evaluator environment
         if: always()
         run: |
+          set -u
           work="$RUNNER_TEMP/execsurface-technical-evaluation"
+          mkdir -p "$work"
           cd "$work"
-          execsurface --version > technical-evaluation-environment.txt
+          if command -v execsurface >/dev/null 2>&1; then
+            execsurface --version > technical-evaluation-environment.txt
+          else
+            printf '%s\n' 'execsurface: NOT INSTALLED' > technical-evaluation-environment.txt
+          fi
           uname -a >> technical-evaluation-environment.txt
           sha256sum execsurface.lock.json pass-report.json drift-report.json >> technical-evaluation-environment.txt 2>/dev/null || true
 
