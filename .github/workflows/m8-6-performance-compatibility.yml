@@ -79,14 +79,16 @@ jobs:
             -o "$RUNNER_TEMP/m8_6_phase_fixture"
 
           OBS="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer"
+          PROBE="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/m8_6_attach_detach_probe"
           CLI="$PWD/target/release/execsurface"
           FIX="$RUNNER_TEMP/m8_6_perf_fixture"
           PHASE_FIX="$RUNNER_TEMP/m8_6_phase_fixture"
           test -x "$OBS"
+          test -x "$PROBE"
           test -x "$CLI"
           test -x "$FIX"
           test -x "$PHASE_FIX"
-          sha256sum "$OBS" "$CLI" "$FIX" "$PHASE_FIX"
+          sha256sum "$OBS" "$PROBE" "$CLI" "$FIX" "$PHASE_FIX"
 
       - name: Capture exact-host compatibility evidence
         shell: bash
@@ -158,18 +160,38 @@ jobs:
               --samples 7
           cat "$OUT"
 
+      - name: Isolate libbpf open load attach and detach cost
+        shell: bash
+        run: |
+          set -euxo pipefail
+          PROBE="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/m8_6_attach_detach_probe"
+          OUT="$RUNNER_TEMP/m8-6-attach-detach.json"
+          sudo "$PROBE" 7 > "$OUT"
+          python3 - "$OUT" <<'PY'
+          import json, statistics, sys
+          evidence = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert evidence['schema_version'] == 1
+          assert len(evidence['samples']) == 7
+          for field in ('open_ms', 'load_ms', 'attach_ms', 'detach_ms', 'total_ms'):
+              values = [row[field] for row in evidence['samples']]
+              print('M8_6_LIFECYCLE', field, 'median_ms=', round(statistics.median(values), 6), 'min_ms=', round(min(values), 6), 'max_ms=', round(max(values), 6))
+          PY
+          cat "$OUT"
+
       - name: Verify authority and compatibility boundaries
         shell: bash
         run: |
           set -euxo pipefail
-          python3 - "$RUNNER_TEMP/m8-6-benchmark.json" "$RUNNER_TEMP/m8-6-compatibility.json" "$RUNNER_TEMP/m8-6-phase-attribution.json" <<'PY'
+          python3 - "$RUNNER_TEMP/m8-6-benchmark.json" "$RUNNER_TEMP/m8-6-compatibility.json" "$RUNNER_TEMP/m8-6-phase-attribution.json" "$RUNNER_TEMP/m8-6-attach-detach.json" <<'PY'
           import json, sys
           bench = json.load(open(sys.argv[1], encoding='utf-8'))
           compat = json.load(open(sys.argv[2], encoding='utf-8'))
           phase = json.load(open(sys.argv[3], encoding='utf-8'))
+          lifecycle = json.load(open(sys.argv[4], encoding='utf-8'))
           assert bench['schema_version'] == 1
           assert compat['schema_version'] == 1
           assert phase['schema_version'] == 1
+          assert lifecycle['schema_version'] == 1
           boundary = compat['known_semantic_boundary']
           assert boundary['full_surface_comparable'] is False
           assert boundary['ebpf_pass_authorized'] is False
@@ -192,5 +214,6 @@ jobs:
             ${{ runner.temp }}/m8-6-benchmark.json
             ${{ runner.temp }}/m8-6-compatibility.json
             ${{ runner.temp }}/m8-6-phase-attribution.json
+            ${{ runner.temp }}/m8-6-attach-detach.json
           if-no-files-found: error
           retention-days: 30
