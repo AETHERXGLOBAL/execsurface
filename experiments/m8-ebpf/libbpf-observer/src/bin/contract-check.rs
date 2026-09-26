@@ -2,9 +2,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fs;
 
-use execsurface_observe::{
-    experimental_ebpf_backend_descriptor, ObservationCapability,
-};
+use execsurface_observe::{experimental_ebpf_backend_descriptor, ObservationCapability};
 use serde_json::Value;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -18,7 +16,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     expect_string(&report, "/backend/id", &descriptor.id)?;
     expect_string(&report, "/backend/platform", &descriptor.platform)?;
     expect_string(&report, "/backend/architecture", &descriptor.architecture)?;
-    expect_string(&report, "/backend/privacy_profile", &descriptor.privacy_profile)?;
+    expect_string(
+        &report,
+        "/backend/privacy_profile",
+        &descriptor.privacy_profile,
+    )?;
 
     let actual_supported = string_set(&report, "/backend/capabilities")?;
     let expected_supported = descriptor
@@ -51,7 +53,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .and_then(Value::as_bool)
         != Some(false)
     {
-        return Err("experimental eBPF report unexpectedly claims observation_complete=true".into());
+        return Err(
+            "experimental eBPF report unexpectedly claims observation_complete=true".into(),
+        );
     }
 
     let completeness = report
@@ -78,7 +82,10 @@ fn expect_string(report: &Value, pointer: &str, expected: &str) -> Result<(), Bo
         .and_then(Value::as_str)
         .ok_or_else(|| format!("collector report is missing string at {pointer}"))?;
     if actual != expected {
-        return Err(format!("contract drift at {pointer}: actual={actual:?} expected={expected:?}").into());
+        return Err(format!(
+            "contract drift at {pointer}: actual={actual:?} expected={expected:?}"
+        )
+        .into());
     }
     Ok(())
 }
@@ -104,7 +111,9 @@ fn serialized_capability(capability: ObservationCapability) -> &'static str {
     match capability {
         ObservationCapability::ProcessSpawnLineage => "process_spawn_lineage",
         ObservationCapability::ProcessExecOccurrence => "process_exec_occurrence",
-        ObservationCapability::ProcessExecPathIdentity => "unconditional_process_exec_path_identity",
+        ObservationCapability::ProcessExecPathIdentity => {
+            "unconditional_process_exec_path_identity"
+        }
         ObservationCapability::ProcessExit => "process_exit",
         ObservationCapability::PathAccessIntent => "path_access_intent",
         ObservationCapability::SuccessfulOpenFdIdentity => "successful_open_fd_identity",
