@@ -7,7 +7,8 @@ use std::mem::MaybeUninit;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use std::rc::Rc;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
 use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
@@ -28,6 +29,9 @@ const EVENT_OPEN: u32 = 3;
 const SPAWN_FORK: u32 = 1;
 const SPAWN_VFORK: u32 = 2;
 const SPAWN_CLONE: u32 = 3;
+const POLL_INTERVAL_MS: u64 = 10;
+const QUIESCENCE_GRACE_MS: u64 = 100;
+const QUIESCENCE_POLLS: usize = 4;
 
 #[derive(Debug, Clone, Copy)]
 struct MetadataEvent {
@@ -35,6 +39,15 @@ struct MetadataEvent {
     pid: u32,
     value: u32,
     reserved: u32,
+}
+
+#[derive(Debug)]
+struct CollectorOptions {
+    report_path: PathBuf,
+    event_limit: usize,
+    consumer_lag_ms: u64,
+    lifecycle_timeout_ms: u64,
+    target: Vec<OsString>,
 }
 
 #[derive(Debug, Serialize)]
@@ -46,6 +59,9 @@ struct CollectorReport {
     root_pid: u32,
     outcome: OutcomeReport,
     dropped_events: u64,
+    consumer_lag_ms: u64,
+    lifecycle_timeout_ms: u64,
+    lifecycle_drain_complete: bool,
     events: Vec<ReportEvent>,
     warnings: Vec<WarningReport>,
 }
@@ -256,10 +272,19 @@ impl Tracker {
             message: message.into(),
         });
     }
+
+    fn live_descendant_count(&self) -> usize {
+        self.known_pids
+            .iter()
+            .copied()
+            .filter(|pid| *pid != self.root_pid)
+            .filter(|pid| Path::new(&format!("/proc/{pid}")).exists())
+            .count()
+    }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let (report_path, event_limit, target) = parse_args()?;
+    let options = parse_args()?;
 
     let builder = ObserverSkelBuilder::default();
     let mut open_object = MaybeUninit::uninit();
@@ -267,7 +292,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut skel = open_skel.load()?;
     skel.attach()?;
 
-    let tracker = Rc::new(RefCell::new(Tracker::new(event_limit)));
+    let tracker = Rc::new(RefCell::new(Tracker::new(options.event_limit)));
     let callback_tracker = Rc::clone(&tracker);
     let mut ring_builder = RingBufferBuilder::new();
     ring_builder.add(&skel.maps.events, move |data| match decode_event(data) {
@@ -284,21 +309,71 @@ fn main() -> Result<(), Box<dyn Error>> {
     })?;
     let ring = ring_builder.build()?;
 
-    let mut command = Command::new(&target[0]);
-    command.args(&target[1..]);
+    let mut command = Command::new(&options.target[0]);
+    command.args(&options.target[1..]);
     let mut child = command.spawn()?;
     let root_pid = child.id();
     tracker.borrow_mut().set_root(root_pid);
 
+    if options.consumer_lag_ms > 0 {
+        tracker.borrow_mut().warning(
+            None,
+            "consumer_lag_injected",
+            format!(
+                "M8.4 controlled consumer lag of {} ms was injected before ring-buffer polling",
+                options.consumer_lag_ms
+            ),
+        );
+        thread::sleep(Duration::from_millis(options.consumer_lag_ms));
+    }
+
     let status = loop {
-        ring.poll(Duration::from_millis(10))?;
+        ring.poll(Duration::from_millis(POLL_INTERVAL_MS))?;
         if let Some(status) = child.try_wait()? {
             break status;
         }
     };
 
-    for _ in 0..8 {
-        ring.poll(Duration::from_millis(10))?;
+    let drain_started = Instant::now();
+    let drain_timeout = Duration::from_millis(options.lifecycle_timeout_ms);
+    let mut last_sequence = tracker.borrow().sequence;
+    let mut idle_polls = 0usize;
+    let mut lifecycle_drain_complete = false;
+
+    loop {
+        if drain_started.elapsed() >= drain_timeout {
+            let live_descendants = tracker.borrow().live_descendant_count();
+            tracker.borrow_mut().warning(
+                None,
+                "lifecycle_drain_timeout",
+                format!(
+                    "post-root-exit lifecycle drain timed out after {} ms with {} live known descendants",
+                    options.lifecycle_timeout_ms, live_descendants
+                ),
+            );
+            break;
+        }
+
+        ring.poll(Duration::from_millis(POLL_INTERVAL_MS))?;
+        let (sequence, live_descendants) = {
+            let state = tracker.borrow();
+            (state.sequence, state.live_descendant_count())
+        };
+
+        if sequence == last_sequence {
+            idle_polls = idle_polls.saturating_add(1);
+        } else {
+            idle_polls = 0;
+            last_sequence = sequence;
+        }
+
+        if live_descendants == 0
+            && drain_started.elapsed() >= Duration::from_millis(QUIESCENCE_GRACE_MS)
+            && idle_polls >= QUIESCENCE_POLLS
+        {
+            lifecycle_drain_complete = true;
+            break;
+        }
     }
 
     let dropped_events = total_drops(&skel.maps.dropped)?;
@@ -306,7 +381,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     state.warning(
         None,
         "experimental_backend_partial_capability",
-        "M8.3c libbpf evidence is intentionally incomplete relative to the ptrace reference and is not PASS-authorized",
+        "M8.4 libbpf evidence remains intentionally incomplete relative to the ptrace reference and is not PASS-authorized",
     );
 
     let completeness = if dropped_events > 0 {
@@ -316,6 +391,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             format!("libbpf producer drop counter reported {dropped_events} lost events"),
         );
         "incomplete_loss"
+    } else if !lifecycle_drain_complete {
+        "incomplete_lifecycle"
     } else if state.event_limit_hit {
         "incomplete_limit"
     } else {
@@ -338,26 +415,32 @@ fn main() -> Result<(), Box<dyn Error>> {
         root_pid,
         outcome: outcome_report(status),
         dropped_events,
+        consumer_lag_ms: options.consumer_lag_ms,
+        lifecycle_timeout_ms: options.lifecycle_timeout_ms,
+        lifecycle_drain_complete,
         events: std::mem::take(&mut state.events),
         warnings: std::mem::take(&mut state.warnings),
     };
     drop(state);
 
-    write_report(&report_path, &report)?;
+    write_report(&options.report_path, &report)?;
     eprintln!(
-        "M8_3C_LIBBPF_OBSERVATION_PASS root_pid={} completeness={} events={} dropped={}",
+        "M8_4_LIBBPF_OBSERVATION_PASS root_pid={} completeness={} events={} dropped={} lifecycle_drain_complete={}",
         report.root_pid,
         report.completeness,
         report.events.len(),
-        report.dropped_events
+        report.dropped_events,
+        report.lifecycle_drain_complete
     );
     Ok(())
 }
 
-fn parse_args() -> Result<(PathBuf, usize, Vec<OsString>), Box<dyn Error>> {
+fn parse_args() -> Result<CollectorOptions, Box<dyn Error>> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
-    let mut report = None;
+    let mut report_path = None;
     let mut event_limit = 100_000usize;
+    let mut consumer_lag_ms = 0_u64;
+    let mut lifecycle_timeout_ms = 2_000_u64;
     let mut index = 0usize;
 
     while index < args.len() {
@@ -366,11 +449,17 @@ fn parse_args() -> Result<(PathBuf, usize, Vec<OsString>), Box<dyn Error>> {
             if target.is_empty() {
                 return Err("missing target command after --".into());
             }
-            return Ok((report.ok_or("--report is required")?, event_limit, target));
+            return Ok(CollectorOptions {
+                report_path: report_path.ok_or("--report is required")?,
+                event_limit,
+                consumer_lag_ms,
+                lifecycle_timeout_ms,
+                target,
+            });
         }
         if args[index] == "--report" {
             let value = args.get(index + 1).ok_or("--report requires a path")?;
-            report = Some(PathBuf::from(value));
+            report_path = Some(PathBuf::from(value));
             index += 2;
             continue;
         }
@@ -388,6 +477,31 @@ fn parse_args() -> Result<(PathBuf, usize, Vec<OsString>), Box<dyn Error>> {
             index += 2;
             continue;
         }
+        if args[index] == "--consumer-lag-ms" {
+            let value = args
+                .get(index + 1)
+                .ok_or("--consumer-lag-ms requires a value")?;
+            consumer_lag_ms = value
+                .to_string_lossy()
+                .parse::<u64>()
+                .map_err(|_| "invalid --consumer-lag-ms")?;
+            index += 2;
+            continue;
+        }
+        if args[index] == "--lifecycle-timeout-ms" {
+            let value = args
+                .get(index + 1)
+                .ok_or("--lifecycle-timeout-ms requires a value")?;
+            lifecycle_timeout_ms = value
+                .to_string_lossy()
+                .parse::<u64>()
+                .map_err(|_| "invalid --lifecycle-timeout-ms")?;
+            if lifecycle_timeout_ms == 0 {
+                return Err("--lifecycle-timeout-ms must be greater than zero".into());
+            }
+            index += 2;
+            continue;
+        }
         return Err(format!("unknown observer option: {}", args[index].to_string_lossy()).into());
     }
 
@@ -397,7 +511,7 @@ fn parse_args() -> Result<(PathBuf, usize, Vec<OsString>), Box<dyn Error>> {
 fn backend_report() -> BackendReport {
     BackendReport {
         id: "linux-libbpf-metadata-experimental-v1".to_owned(),
-        implementation_version: "m8.3c-experimental-v1".to_owned(),
+        implementation_version: "m8.4-experimental-v1".to_owned(),
         platform: "linux".to_owned(),
         architecture: "x86_64".to_owned(),
         kernel_release: fs::read_to_string("/proc/sys/kernel/osrelease")
