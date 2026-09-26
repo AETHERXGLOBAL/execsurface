@@ -158,8 +158,9 @@ impl Tracker {
                     SPAWN_CLONE => "clone",
                     _ => "unknown",
                 };
+                let sequence = self.next_sequence();
                 self.record(ReportEvent::ProcessSpawn {
-                    sequence: self.next_sequence(),
+                    sequence,
                     parent_pid: event.pid,
                     child_pid,
                     mechanism: mechanism.to_owned(),
@@ -176,8 +177,9 @@ impl Tracker {
                         "post-exec occurrence was observed but /proc executable identity was unavailable",
                     );
                 }
+                let sequence = self.next_sequence();
                 self.record(ReportEvent::ProcessExecOccurrence {
-                    sequence: self.next_sequence(),
+                    sequence,
                     pid: event.pid,
                     path,
                 });
@@ -195,8 +197,9 @@ impl Tracker {
                         ),
                     );
                 }
+                let sequence = self.next_sequence();
                 self.record(ReportEvent::SuccessfulOpenIdentity {
-                    sequence: self.next_sequence(),
+                    sequence,
                     pid: event.pid,
                     fd: event.value,
                     path,
@@ -363,11 +366,7 @@ fn parse_args() -> Result<(PathBuf, usize, Vec<OsString>), Box<dyn Error>> {
             if target.is_empty() {
                 return Err("missing target command after --".into());
             }
-            return Ok((
-                report.ok_or("--report is required")?,
-                event_limit,
-                target,
-            ));
+            return Ok((report.ok_or("--report is required")?, event_limit, target));
         }
         if args[index] == "--report" {
             let value = args.get(index + 1).ok_or("--report requires a path")?;
@@ -376,7 +375,9 @@ fn parse_args() -> Result<(PathBuf, usize, Vec<OsString>), Box<dyn Error>> {
             continue;
         }
         if args[index] == "--event-limit" {
-            let value = args.get(index + 1).ok_or("--event-limit requires a value")?;
+            let value = args
+                .get(index + 1)
+                .ok_or("--event-limit requires a value")?;
             event_limit = value
                 .to_string_lossy()
                 .parse::<usize>()
