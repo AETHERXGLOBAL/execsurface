@@ -186,13 +186,13 @@ Delete the downloaded files and download the release again from the official rep
 Verify:
 
 ```bash
-sha256sum -c execsurface-v0.1.0-alpha.1-x86_64-unknown-linux-gnu.tar.gz.sha256
+sha256sum -c execsurface-v0.1.0-alpha.2-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
 Optionally verify GitHub build provenance:
 
 ```bash
-gh attestation verify execsurface-v0.1.0-alpha.1-x86_64-unknown-linux-gnu.tar.gz \
+gh attestation verify execsurface-v0.1.0-alpha.2-x86_64-unknown-linux-gnu.tar.gz \
   -R AETHERXGLOBAL/execsurface
 ```
 
