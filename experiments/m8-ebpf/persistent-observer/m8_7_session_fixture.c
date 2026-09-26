@@ -10,7 +10,7 @@
 #include <unistd.h>
 
 #define M8_7_CHURN_CHILDREN 64
-#define M8_7_LOSS_CHILDREN 3000
+#define M8_7_LOSS_CHILDREN 1024
 
 static volatile sig_atomic_t loss_flood_released = 0;
 
