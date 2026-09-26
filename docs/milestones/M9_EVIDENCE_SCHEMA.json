@@ -10,6 +10,7 @@
     "timestamp_utc",
     "independence_class",
     "claim_status",
+    "provenance",
     "project",
     "execsurface",
     "host",
@@ -38,6 +39,22 @@
     "external_reference": {
       "type": ["string", "null"],
       "description": "Public or consented external reference only."
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "initiated_by",
+        "executed_by",
+        "aether_x_material_involvement",
+        "third_party_attestation"
+      ],
+      "properties": {
+        "initiated_by": {"enum": ["THIRD_PARTY", "AETHER_X", "SHARED"]},
+        "executed_by": {"enum": ["THIRD_PARTY", "AETHER_X", "SHARED"]},
+        "aether_x_material_involvement": {"type": "boolean"},
+        "third_party_attestation": {"type": ["string", "null"]}
+      }
     },
     "project": {
       "type": "object",
@@ -140,10 +157,10 @@
         "m65_trigger_crossed"
       ],
       "properties": {
-        "warmup_direct_ms": {"type": "array", "minItems": 3, "items": {"type": "number", "minimum": 0}},
-        "warmup_ptrace_ms": {"type": "array", "minItems": 3, "items": {"type": "number", "minimum": 0}},
-        "measured_direct_ms": {"type": "array", "minItems": 15, "items": {"type": "number", "minimum": 0}},
-        "measured_ptrace_ms": {"type": "array", "minItems": 15, "items": {"type": "number", "minimum": 0}},
+        "warmup_direct_ms": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number", "minimum": 0}},
+        "warmup_ptrace_ms": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number", "minimum": 0}},
+        "measured_direct_ms": {"type": "array", "minItems": 15, "maxItems": 15, "items": {"type": "number", "minimum": 0}},
+        "measured_ptrace_ms": {"type": "array", "minItems": 15, "maxItems": 15, "items": {"type": "number", "minimum": 0}},
         "median_direct_ms": {"type": "number", "minimum": 0},
         "median_ptrace_ms": {"type": "number", "minimum": 0},
         "median_absolute_overhead_ms": {"type": "number"},
@@ -201,5 +218,53 @@
         "expected_scope": {"type": "string", "minLength": 1}
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"independence_class": {"const": "INDEPENDENT_USER"}}},
+      "then": {
+        "properties": {
+          "project": {"properties": {"modified_by_aether_x": {"const": false}}},
+          "provenance": {
+            "properties": {
+              "initiated_by": {"const": "THIRD_PARTY"},
+              "executed_by": {"const": "THIRD_PARTY"},
+              "aether_x_material_involvement": {"const": false},
+              "third_party_attestation": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"independence_class": {"const": "ZERO_CONTACT_EXTERNAL_REPRO"}}},
+      "then": {
+        "properties": {
+          "project": {"properties": {"modified_by_aether_x": {"const": false}}},
+          "provenance": {
+            "properties": {
+              "initiated_by": {"const": "AETHER_X"},
+              "executed_by": {"const": "AETHER_X"},
+              "aether_x_material_involvement": {"const": true},
+              "third_party_attestation": {"type": "null"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"independence_class": {"const": "INTERNAL_FIXTURE"}}},
+      "then": {
+        "properties": {
+          "provenance": {
+            "properties": {
+              "initiated_by": {"const": "AETHER_X"},
+              "executed_by": {"const": "AETHER_X"},
+              "aether_x_material_involvement": {"const": true}
+            }
+          }
+        }
+      }
+    }
+  ]
 }
