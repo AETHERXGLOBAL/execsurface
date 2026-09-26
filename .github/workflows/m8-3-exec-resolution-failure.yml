@@ -1,0 +1,94 @@
+name: M8.3 Exec Resolution Failure
+
+on:
+  push:
+    branches:
+      - "milestone/m8-3-libbpf-observer"
+    paths:
+      - "experiments/m8-ebpf/libbpf-observer/**"
+      - ".github/workflows/m8-3-exec-resolution-failure.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  forced-exec-resolution-failure:
+    name: fail closed on unresolved post-exec identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Audit reference host
+        shell: bash
+        run: |
+          set -euxo pipefail
+          uname -a
+          test -r /sys/kernel/btf/vmlinux
+          sudo test -r /sys/kernel/tracing/events/sched/sched_process_exec/format
+          echo 'M8_3C_FORCED_RESOLUTION_HOST_PASS'
+
+      - name: Install declared build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+
+      - name: Resolve and build real observer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          MANIFEST=experiments/m8-ebpf/libbpf-observer/Cargo.toml
+          rm -f experiments/m8-ebpf/libbpf-observer/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile --manifest-path "$MANIFEST"
+          cargo +1.82.0 fmt --manifest-path "$MANIFEST" -- --check
+          cargo +1.82.0 build --manifest-path "$MANIFEST" --release --locked --bins
+
+      - name: Build external readlink fault injector
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SRC=experiments/m8-ebpf/libbpf-observer/fixtures/fail_proc_exe_readlink.c
+          OUT="$RUNNER_TEMP/libfail-proc-exe-readlink.so"
+          cc -shared -fPIC -O2 -Wall -Wextra -Werror "$SRC" -o "$OUT" -ldl
+          test -s "$OUT"
+          file "$OUT"
+          sha256sum "$OUT"
+
+      - name: Prove unresolved post-exec identity fails closed without fabrication
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBS=experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer
+          CHECK=experiments/m8-ebpf/libbpf-observer/target/release/contract-check
+          REPORT="$RUNNER_TEMP/forced-resolution-report.json"
+          FAIL_LIB="$RUNNER_TEMP/libfail-proc-exe-readlink.so"
+
+          sudo env LD_PRELOAD="$FAIL_LIB" \
+            "$OBS" --report "$REPORT" --event-limit 10000 -- /bin/sleep 0.20 \
+            2>&1 | tee "$RUNNER_TEMP/forced-resolution.log"
+
+          python3 - "$REPORT" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1], encoding='utf-8'))
+          assert report['backend']['id'] == 'linux-libbpf-metadata-experimental-v1'
+          assert report['completeness'] == 'incomplete_capability'
+          assert report['observation_complete'] is False
+          assert report['outcome']['exit_code'] == 0
+          execs = [e for e in report['events'] if e['event_type'] == 'process_exec_occurrence']
+          assert execs, report['events']
+          root_execs = [e for e in execs if e['pid'] == report['root_pid']]
+          assert root_execs, execs
+          assert all(e.get('path') is None for e in root_execs), root_execs
+          codes = {w['code'] for w in report['warnings']}
+          assert 'exec_path_resolution_unavailable' in codes, report['warnings']
+          assert 'conditional_path_resolution' in codes, report['warnings']
+          print('M8_3C_FORCED_EXEC_RESOLUTION_FAIL_CLOSED_PASS')
+          PY
+
+          "$CHECK" "$REPORT"

@@ -1,0 +1,492 @@
+use std::cell::RefCell;
+use std::collections::BTreeSet;
+use std::error::Error;
+use std::ffi::OsString;
+use std::fs;
+use std::mem::MaybeUninit;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus};
+use std::rc::Rc;
+use std::time::Duration;
+
+use libbpf_rs::skel::{OpenSkel, Skel, SkelBuilder};
+use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
+use serde::Serialize;
+
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+
+mod observer {
+    include!(concat!(env!("OUT_DIR"), "/observer.skel.rs"));
+}
+
+use observer::*;
+
+const EVENT_EXEC: u32 = 1;
+const EVENT_SPAWN: u32 = 2;
+const EVENT_OPEN: u32 = 3;
+const SPAWN_FORK: u32 = 1;
+const SPAWN_VFORK: u32 = 2;
+const SPAWN_CLONE: u32 = 3;
+
+#[derive(Debug, Clone, Copy)]
+struct MetadataEvent {
+    kind: u32,
+    pid: u32,
+    value: u32,
+    reserved: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct CollectorReport {
+    protocol_version: u32,
+    backend: BackendReport,
+    completeness: String,
+    observation_complete: bool,
+    root_pid: u32,
+    outcome: OutcomeReport,
+    dropped_events: u64,
+    events: Vec<ReportEvent>,
+    warnings: Vec<WarningReport>,
+}
+
+#[derive(Debug, Serialize)]
+struct BackendReport {
+    id: String,
+    implementation_version: String,
+    platform: String,
+    architecture: String,
+    kernel_release: Option<String>,
+    kernel_btf_readable: bool,
+    privacy_profile: String,
+    capabilities: Vec<String>,
+    unsupported_capabilities: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct OutcomeReport {
+    exit_code: Option<i32>,
+    signal: Option<i32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "event_type", rename_all = "snake_case")]
+enum ReportEvent {
+    ProcessSpawn {
+        sequence: u64,
+        parent_pid: u32,
+        child_pid: u32,
+        mechanism: String,
+    },
+    ProcessExecOccurrence {
+        sequence: u64,
+        pid: u32,
+        path: Option<String>,
+    },
+    SuccessfulOpenIdentity {
+        sequence: u64,
+        pid: u32,
+        fd: u32,
+        path: Option<String>,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct WarningReport {
+    code: String,
+    pid: Option<u32>,
+    message: String,
+}
+
+struct Tracker {
+    root_pid: u32,
+    known_pids: BTreeSet<u32>,
+    pending: Vec<MetadataEvent>,
+    events: Vec<ReportEvent>,
+    warnings: Vec<WarningReport>,
+    sequence: u64,
+    event_limit: usize,
+    event_limit_hit: bool,
+    path_resolution_failed: bool,
+}
+
+impl Tracker {
+    fn new(event_limit: usize) -> Self {
+        Self {
+            root_pid: 0,
+            known_pids: BTreeSet::new(),
+            pending: Vec::new(),
+            events: Vec::new(),
+            warnings: Vec::new(),
+            sequence: 0,
+            event_limit,
+            event_limit_hit: false,
+            path_resolution_failed: false,
+        }
+    }
+
+    fn set_root(&mut self, pid: u32) {
+        self.root_pid = pid;
+        self.known_pids.insert(pid);
+        self.drain_pending_for(pid);
+    }
+
+    fn ingest(&mut self, event: MetadataEvent) {
+        if self.known_pids.contains(&event.pid) {
+            self.process_known(event);
+        } else {
+            self.pending.push(event);
+        }
+    }
+
+    fn process_known(&mut self, event: MetadataEvent) {
+        match event.kind {
+            EVENT_SPAWN => {
+                let child_pid = event.value;
+                if child_pid == 0 {
+                    self.warning(
+                        Some(event.pid),
+                        "invalid_spawn_identity",
+                        "spawn event contained zero child pid",
+                    );
+                    return;
+                }
+                self.known_pids.insert(child_pid);
+                let mechanism = match event.reserved {
+                    SPAWN_FORK => "fork",
+                    SPAWN_VFORK => "vfork",
+                    SPAWN_CLONE => "clone",
+                    _ => "unknown",
+                };
+                let sequence = self.next_sequence();
+                self.record(ReportEvent::ProcessSpawn {
+                    sequence,
+                    parent_pid: event.pid,
+                    child_pid,
+                    mechanism: mechanism.to_owned(),
+                });
+                self.drain_pending_for(child_pid);
+            }
+            EVENT_EXEC => {
+                let path = resolve_link(format!("/proc/{}/exe", event.pid));
+                if path.is_none() {
+                    self.path_resolution_failed = true;
+                    self.warning(
+                        Some(event.pid),
+                        "exec_path_resolution_unavailable",
+                        "post-exec occurrence was observed but /proc executable identity was unavailable",
+                    );
+                }
+                let sequence = self.next_sequence();
+                self.record(ReportEvent::ProcessExecOccurrence {
+                    sequence,
+                    pid: event.pid,
+                    path,
+                });
+            }
+            EVENT_OPEN => {
+                let path = resolve_link(format!("/proc/{}/fd/{}", event.pid, event.value));
+                if path.is_none() {
+                    self.path_resolution_failed = true;
+                    self.warning(
+                        Some(event.pid),
+                        "open_path_resolution_unavailable",
+                        format!(
+                            "successful open returned fd {}, but live /proc fd identity was unavailable",
+                            event.value
+                        ),
+                    );
+                }
+                let sequence = self.next_sequence();
+                self.record(ReportEvent::SuccessfulOpenIdentity {
+                    sequence,
+                    pid: event.pid,
+                    fd: event.value,
+                    path,
+                });
+            }
+            _ => self.warning(
+                Some(event.pid),
+                "unknown_event_kind",
+                format!("unknown libbpf metadata event kind {}", event.kind),
+            ),
+        }
+    }
+
+    fn drain_pending_for(&mut self, pid: u32) {
+        let mut retained = Vec::with_capacity(self.pending.len());
+        let pending = std::mem::take(&mut self.pending);
+        for event in pending {
+            if event.pid == pid {
+                self.process_known(event);
+            } else {
+                retained.push(event);
+            }
+        }
+        self.pending = retained;
+    }
+
+    fn next_sequence(&mut self) -> u64 {
+        self.sequence = self.sequence.saturating_add(1);
+        self.sequence
+    }
+
+    fn record(&mut self, event: ReportEvent) {
+        if self.events.len() >= self.event_limit {
+            if !self.event_limit_hit {
+                self.event_limit_hit = true;
+                self.warning(
+                    None,
+                    "event_limit_exceeded",
+                    format!(
+                        "experimental libbpf event budget {} exceeded; evidence is truncated",
+                        self.event_limit
+                    ),
+                );
+            }
+            return;
+        }
+        self.events.push(event);
+    }
+
+    fn warning(&mut self, pid: Option<u32>, code: &str, message: impl Into<String>) {
+        self.warnings.push(WarningReport {
+            code: code.to_owned(),
+            pid,
+            message: message.into(),
+        });
+    }
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let (report_path, event_limit, target) = parse_args()?;
+
+    let builder = ObserverSkelBuilder::default();
+    let mut open_object = MaybeUninit::uninit();
+    let open_skel = builder.open(&mut open_object)?;
+    let mut skel = open_skel.load()?;
+    skel.attach()?;
+
+    let tracker = Rc::new(RefCell::new(Tracker::new(event_limit)));
+    let callback_tracker = Rc::clone(&tracker);
+    let mut ring_builder = RingBufferBuilder::new();
+    ring_builder.add(&skel.maps.events, move |data| match decode_event(data) {
+        Ok(event) => {
+            callback_tracker.borrow_mut().ingest(event);
+            0
+        }
+        Err(message) => {
+            callback_tracker
+                .borrow_mut()
+                .warning(None, "event_decode_error", message);
+            -1
+        }
+    })?;
+    let ring = ring_builder.build()?;
+
+    let mut command = Command::new(&target[0]);
+    command.args(&target[1..]);
+    let mut child = command.spawn()?;
+    let root_pid = child.id();
+    tracker.borrow_mut().set_root(root_pid);
+
+    let status = loop {
+        ring.poll(Duration::from_millis(10))?;
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+    };
+
+    for _ in 0..8 {
+        ring.poll(Duration::from_millis(10))?;
+    }
+
+    let dropped_events = total_drops(&skel.maps.dropped)?;
+    let mut state = tracker.borrow_mut();
+    state.warning(
+        None,
+        "experimental_backend_partial_capability",
+        "M8.3c libbpf evidence is intentionally incomplete relative to the ptrace reference and is not PASS-authorized",
+    );
+
+    let completeness = if dropped_events > 0 {
+        state.warning(
+            None,
+            "producer_event_loss",
+            format!("libbpf producer drop counter reported {dropped_events} lost events"),
+        );
+        "incomplete_loss"
+    } else if state.event_limit_hit {
+        "incomplete_limit"
+    } else {
+        "incomplete_capability"
+    };
+
+    if state.path_resolution_failed {
+        state.warning(
+            None,
+            "conditional_path_resolution",
+            "one or more numeric events could not be promoted to path identity; no path was guessed",
+        );
+    }
+
+    let report = CollectorReport {
+        protocol_version: 1,
+        backend: backend_report(),
+        completeness: completeness.to_owned(),
+        observation_complete: false,
+        root_pid,
+        outcome: outcome_report(status),
+        dropped_events,
+        events: std::mem::take(&mut state.events),
+        warnings: std::mem::take(&mut state.warnings),
+    };
+    drop(state);
+
+    write_report(&report_path, &report)?;
+    eprintln!(
+        "M8_3C_LIBBPF_OBSERVATION_PASS root_pid={} completeness={} events={} dropped={}",
+        report.root_pid,
+        report.completeness,
+        report.events.len(),
+        report.dropped_events
+    );
+    Ok(())
+}
+
+fn parse_args() -> Result<(PathBuf, usize, Vec<OsString>), Box<dyn Error>> {
+    let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    let mut report = None;
+    let mut event_limit = 100_000usize;
+    let mut index = 0usize;
+
+    while index < args.len() {
+        if args[index] == "--" {
+            let target = args[index + 1..].to_vec();
+            if target.is_empty() {
+                return Err("missing target command after --".into());
+            }
+            return Ok((report.ok_or("--report is required")?, event_limit, target));
+        }
+        if args[index] == "--report" {
+            let value = args.get(index + 1).ok_or("--report requires a path")?;
+            report = Some(PathBuf::from(value));
+            index += 2;
+            continue;
+        }
+        if args[index] == "--event-limit" {
+            let value = args
+                .get(index + 1)
+                .ok_or("--event-limit requires a value")?;
+            event_limit = value
+                .to_string_lossy()
+                .parse::<usize>()
+                .map_err(|_| "invalid --event-limit")?;
+            if event_limit == 0 {
+                return Err("--event-limit must be greater than zero".into());
+            }
+            index += 2;
+            continue;
+        }
+        return Err(format!("unknown observer option: {}", args[index].to_string_lossy()).into());
+    }
+
+    Err("missing -- target command".into())
+}
+
+fn backend_report() -> BackendReport {
+    BackendReport {
+        id: "linux-libbpf-metadata-experimental-v1".to_owned(),
+        implementation_version: "m8.3c-experimental-v1".to_owned(),
+        platform: "linux".to_owned(),
+        architecture: "x86_64".to_owned(),
+        kernel_release: fs::read_to_string("/proc/sys/kernel/osrelease")
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty()),
+        kernel_btf_readable: Path::new("/sys/kernel/btf/vmlinux").is_file(),
+        privacy_profile: "metadata-only-v1".to_owned(),
+        capabilities: vec![
+            "process_spawn_lineage".to_owned(),
+            "process_exec_occurrence".to_owned(),
+            "successful_open_fd_identity".to_owned(),
+            "loss_truncation_visibility".to_owned(),
+        ],
+        unsupported_capabilities: vec![
+            "unconditional_process_exec_path_identity".to_owned(),
+            "process_exit".to_owned(),
+            "path_access_intent".to_owned(),
+            "unconditional_open_path_identity".to_owned(),
+            "fd_read_write_effect".to_owned(),
+            "fd_dup_close_lifecycle".to_owned(),
+            "fork_fd_inheritance".to_owned(),
+            "close_on_exec".to_owned(),
+            "rename_delete_effects".to_owned(),
+            "network_connect_destination".to_owned(),
+            "trace_time_relative_path".to_owned(),
+            "causal_executable_chain".to_owned(),
+        ],
+    }
+}
+
+fn outcome_report(status: ExitStatus) -> OutcomeReport {
+    OutcomeReport {
+        exit_code: status.code(),
+        #[cfg(unix)]
+        signal: status.signal(),
+        #[cfg(not(unix))]
+        signal: None,
+    }
+}
+
+fn resolve_link(path: String) -> Option<String> {
+    fs::read_link(path)
+        .ok()
+        .map(|value| value.to_string_lossy().into_owned())
+}
+
+fn write_report(path: &Path, report: &CollectorReport) -> Result<(), Box<dyn Error>> {
+    let mut bytes = serde_json::to_vec_pretty(report)?;
+    bytes.push(b'\n');
+    fs::write(path, bytes)?;
+    Ok(())
+}
+
+fn decode_event(data: &[u8]) -> Result<MetadataEvent, String> {
+    if data.len() != 16 {
+        return Err(format!("unexpected metadata event size: {}", data.len()));
+    }
+    let kind = u32::from_ne_bytes(data[0..4].try_into().map_err(|_| "kind")?);
+    let pid = u32::from_ne_bytes(data[4..8].try_into().map_err(|_| "pid")?);
+    let value = u32::from_ne_bytes(data[8..12].try_into().map_err(|_| "value")?);
+    let reserved = u32::from_ne_bytes(data[12..16].try_into().map_err(|_| "reserved")?);
+    if pid == 0 {
+        return Err("zero process identity".to_owned());
+    }
+    if !matches!(kind, EVENT_EXEC | EVENT_SPAWN | EVENT_OPEN) {
+        return Err(format!("unknown metadata event kind: {kind}"));
+    }
+    Ok(MetadataEvent {
+        kind,
+        pid,
+        value,
+        reserved,
+    })
+}
+
+fn total_drops<M: MapCore + ?Sized>(map: &M) -> Result<u64, Box<dyn Error>> {
+    let key = 0_u32.to_ne_bytes();
+    let values = map
+        .lookup_percpu(&key, MapFlags::ANY)?
+        .ok_or("missing libbpf dropped counter")?;
+
+    let mut total = 0_u64;
+    for value in values {
+        let bytes: [u8; 8] = value
+            .as_slice()
+            .try_into()
+            .map_err(|_| "unexpected libbpf dropped-counter value size")?;
+        total = total.saturating_add(u64::from_ne_bytes(bytes));
+    }
+    Ok(total)
+}
