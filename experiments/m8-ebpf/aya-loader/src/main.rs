@@ -1,19 +1,19 @@
+use std::error::Error;
+use std::io;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
 use aya::{programs::TracePoint, Ebpf};
 
-fn main() -> Result<()> {
+fn main() -> Result<(), Box<dyn Error>> {
     let object = std::env::args_os()
         .nth(1)
         .map(PathBuf::from)
-        .context("usage: execsurface-m8-aya-loader <ebpf-object>")?;
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "usage: execsurface-m8-aya-loader <ebpf-object>"))?;
 
-    let mut ebpf = Ebpf::load_file(&object)
-        .with_context(|| format!("failed to load {}", object.display()))?;
+    let mut ebpf = Ebpf::load_file(&object)?;
     let program: &mut TracePoint = ebpf
         .program_mut("execsurface_m8_exec")
-        .context("missing execsurface_m8_exec program")?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing execsurface_m8_exec program"))?
         .try_into()?;
     program.load()?;
     let _link = program.attach("syscalls", "sys_enter_execve")?;
