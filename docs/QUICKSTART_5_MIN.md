@@ -7,7 +7,7 @@ Support: **Linux x86_64 public alpha**.
 ## 1. Install
 
 ```bash
-VERSION=v0.1.0-alpha.1
+VERSION=v0.1.0-alpha.2
 TARGET=x86_64-unknown-linux-gnu
 ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
 

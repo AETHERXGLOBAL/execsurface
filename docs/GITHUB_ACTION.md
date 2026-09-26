@@ -13,7 +13,7 @@ AETHERXGLOBAL/execsurface@v0.1
 For maximum pinning, use the immutable version tag:
 
 ```text
-AETHERXGLOBAL/execsurface@v0.1.0-alpha.1
+AETHERXGLOBAL/execsurface@v0.1.0-alpha.2
 ```
 
 Do not use `@main` as the normal consumer path.

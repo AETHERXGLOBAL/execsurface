@@ -92,3 +92,11 @@ The stable public Action channel `AETHERXGLOBAL/execsurface@v0.1` also proved PA
 No upstream modification or maintainer contact occurred before the proof passed. This is compatibility evidence, **not third-party adoption**.
 
 Evidence: `docs/milestones/M7_EVIDENCE.md`.
+
+## M7.1 — Registry Distribution Parity
+
+**IN PROGRESS — PACKAGING GATE**
+
+Prepare the Rust workspace for first-class crates.io distribution while preserving all M6.5/M7 runtime semantics. Target user path after publication: `cargo install execsurface --locked`. Initial publication requires explicit crates.io maintainer authentication; no registry-availability claim is made before the public package is verified.
+
+Evidence will be recorded in `docs/milestones/M7_1_EVIDENCE.md`.

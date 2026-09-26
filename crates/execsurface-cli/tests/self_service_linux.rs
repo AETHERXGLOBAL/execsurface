@@ -28,7 +28,7 @@ fn version_reports_public_alpha_without_touching_schema_versions() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).trim(),
-        "execsurface 0.1.0-alpha.1"
+        "execsurface 0.1.0-alpha.2"
     );
 }
 
@@ -51,7 +51,7 @@ fn doctor_proves_supported_ci_readiness() {
     assert!(stdout.contains("[PASS] x86_64"));
     assert!(stdout.contains("[PASS] ptrace observer available"));
     assert!(stdout.contains("[PASS] workspace writable"));
-    assert!(stdout.contains("[PASS] ExecSurface 0.1.0-alpha.1"));
+    assert!(stdout.contains("[PASS] ExecSurface 0.1.0-alpha.2"));
     assert!(stdout.contains("Ready."));
     let _ = fs::remove_dir_all(dir);
 }

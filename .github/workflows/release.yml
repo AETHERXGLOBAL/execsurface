@@ -33,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
-          version="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="execsurface-cli"))')"
+          version="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="execsurface"))')"
           test "$tag" = "v$version"
           test "$tag" = "$(tr -d '[:space:]' < action/release-tag.txt)"
           git fetch origin main --depth=100
@@ -53,7 +53,7 @@ jobs:
       - name: Build release binary and smoke it
         run: |
           set -euo pipefail
-          cargo build --locked --release -p execsurface-cli --bin execsurface
+          cargo build --locked --release -p execsurface --bin execsurface
           test "$(./target/release/execsurface --version)" = "execsurface ${{ steps.identity.outputs.version }}"
           work="$RUNNER_TEMP/release-smoke"
           mkdir -p "$work"
@@ -180,7 +180,7 @@ jobs:
           cargo install \
             --git https://github.com/AETHERXGLOBAL/execsurface.git \
             --tag "$TAG" \
-            execsurface-cli --locked --root "$root"
+            execsurface --locked --root "$root"
           test "$("$root/bin/execsurface" --version)" = "execsurface $VERSION"
 
   immutable-action-consumer:
@@ -211,7 +211,7 @@ jobs:
 
       - name: Prove immutable Action tag
         id: immutable
-        uses: AETHERXGLOBAL/execsurface@v0.1.0-alpha.1
+        uses: AETHERXGLOBAL/execsurface@v0.1.0-alpha.2
         with:
           command: "true"
           baseline: immutable.lock.json
@@ -238,7 +238,7 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           set -euo pipefail
-          test "$TAG" = "v0.1.0-alpha.1"
+          test "$TAG" = "v0.1.0-alpha.2"
           release_sha="$(git rev-list -n1 "$TAG")"
           test "$release_sha" = "$GITHUB_SHA"
           git config user.name "github-actions[bot]"
