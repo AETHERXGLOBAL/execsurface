@@ -106,16 +106,18 @@ impl From<io::Error> for ObserveError {
 
 /// Typed observation capability vocabulary introduced by M8.3.
 ///
-/// This is deliberately more granular than a single "eBPF supported" bit. A
-/// backend must explicitly partition the whole vocabulary into supported and
-/// unsupported sets for its declared contract version.
+/// Occurrence and path-identity capabilities are deliberately separate. A
+/// backend that can prove that an exec/open happened must not thereby claim it
+/// established the path required by the existing ExecSurface raw model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ObservationCapability {
     ProcessSpawnLineage,
-    ProcessExec,
+    ProcessExecOccurrence,
+    ProcessExecPathIdentity,
     ProcessExit,
     PathAccessIntent,
     SuccessfulOpenFdIdentity,
+    OpenPathIdentity,
     FdReadWriteEffect,
     FdDupCloseLifecycle,
     ForkFdInheritance,
@@ -127,12 +129,14 @@ pub enum ObservationCapability {
     LossTruncationVisibility,
 }
 
-pub const ALL_OBSERVATION_CAPABILITIES: [ObservationCapability; 14] = [
+pub const ALL_OBSERVATION_CAPABILITIES: [ObservationCapability; 16] = [
     ObservationCapability::ProcessSpawnLineage,
-    ObservationCapability::ProcessExec,
+    ObservationCapability::ProcessExecOccurrence,
+    ObservationCapability::ProcessExecPathIdentity,
     ObservationCapability::ProcessExit,
     ObservationCapability::PathAccessIntent,
     ObservationCapability::SuccessfulOpenFdIdentity,
+    ObservationCapability::OpenPathIdentity,
     ObservationCapability::FdReadWriteEffect,
     ObservationCapability::FdDupCloseLifecycle,
     ObservationCapability::ForkFdInheritance,
@@ -229,9 +233,11 @@ fn ptrace_backend_descriptor() -> BackendDescriptor {
         privacy_profile: "metadata-only-v1".to_owned(),
         capabilities: vec![
             ObservationCapability::ProcessSpawnLineage,
-            ObservationCapability::ProcessExec,
+            ObservationCapability::ProcessExecOccurrence,
+            ObservationCapability::ProcessExecPathIdentity,
             ObservationCapability::PathAccessIntent,
             ObservationCapability::SuccessfulOpenFdIdentity,
+            ObservationCapability::OpenPathIdentity,
             ObservationCapability::FdReadWriteEffect,
             ObservationCapability::FdDupCloseLifecycle,
             ObservationCapability::ForkFdInheritance,
@@ -251,8 +257,8 @@ fn ptrace_backend_descriptor() -> BackendDescriptor {
 /// Descriptor for the selected M8.3 libbpf-rs path before product integration.
 ///
 /// The supported subset is intentionally limited to semantics actually proved
-/// by M8.2. Additional classes must move from unsupported to supported only
-/// after their own evidence gate.
+/// by M8.2. In particular, M8.2 proved exec occurrence and successful-open fd
+/// metadata, not the path identities required by the current raw model.
 pub fn experimental_ebpf_backend_descriptor() -> BackendDescriptor {
     BackendDescriptor {
         id: "linux-libbpf-metadata-experimental-v1".to_owned(),
@@ -263,13 +269,15 @@ pub fn experimental_ebpf_backend_descriptor() -> BackendDescriptor {
         privacy_profile: "metadata-only-v1".to_owned(),
         capabilities: vec![
             ObservationCapability::ProcessSpawnLineage,
-            ObservationCapability::ProcessExec,
+            ObservationCapability::ProcessExecOccurrence,
             ObservationCapability::SuccessfulOpenFdIdentity,
             ObservationCapability::LossTruncationVisibility,
         ],
         unsupported_capabilities: vec![
+            ObservationCapability::ProcessExecPathIdentity,
             ObservationCapability::ProcessExit,
             ObservationCapability::PathAccessIntent,
+            ObservationCapability::OpenPathIdentity,
             ObservationCapability::FdReadWriteEffect,
             ObservationCapability::FdDupCloseLifecycle,
             ObservationCapability::ForkFdInheritance,
@@ -421,6 +429,12 @@ mod api_tests {
         descriptor
             .validate_capability_partition()
             .expect("ptrace capability partition must be total and disjoint");
+        assert!(descriptor
+            .capabilities
+            .contains(&ObservationCapability::ProcessExecPathIdentity));
+        assert!(descriptor
+            .capabilities
+            .contains(&ObservationCapability::OpenPathIdentity));
     }
 
     #[test]
@@ -435,13 +449,19 @@ mod api_tests {
             .contains(&ObservationCapability::ProcessSpawnLineage));
         assert!(descriptor
             .capabilities
-            .contains(&ObservationCapability::ProcessExec));
+            .contains(&ObservationCapability::ProcessExecOccurrence));
         assert!(descriptor
             .capabilities
             .contains(&ObservationCapability::SuccessfulOpenFdIdentity));
         assert!(descriptor
             .capabilities
             .contains(&ObservationCapability::LossTruncationVisibility));
+        assert!(descriptor
+            .unsupported_capabilities
+            .contains(&ObservationCapability::ProcessExecPathIdentity));
+        assert!(descriptor
+            .unsupported_capabilities
+            .contains(&ObservationCapability::OpenPathIdentity));
         assert!(descriptor
             .unsupported_capabilities
             .contains(&ObservationCapability::NetworkConnectDestination));
