@@ -2,6 +2,7 @@
 #include <linux/bpf.h>
 #include <linux/types.h>
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_tracing.h>
 
 #define EVENT_EXEC 1
 #define EVENT_SPAWN 2
@@ -15,6 +16,13 @@
 #define AX_CSIGNAL 0x000000ffULL
 #define AX_SIGCHLD 17ULL
 #define AX_CLONE_VFORK 0x00004000ULL
+
+/* Minimal CO-RE shape. tp_btf arguments are trusted kernel pointers, so the
+ * prototype uses direct field access rather than GPL-only probe-read helpers. */
+struct task_struct {
+    int pid;
+    int tgid;
+} __attribute__((preserve_access_index));
 
 struct metadata_event {
     __u64 epoch;
@@ -34,16 +42,6 @@ struct syscall_enter_ctx {
     __s32 syscall_nr;
     __u32 alignment;
     __u64 args[6];
-};
-
-struct syscall_exit_ctx {
-    __u16 common_type;
-    __u8 common_flags;
-    __u8 common_preempt_count;
-    __s32 common_pid;
-    __s32 syscall_nr;
-    __u32 alignment;
-    __s64 ret;
 };
 
 struct {
@@ -132,6 +130,29 @@ static __always_inline __u32 classify_clone_mechanism(__u64 flags, __u64 exit_si
     return SPAWN_CLONE;
 }
 
+static __always_inline int remember_spawn_mechanism(__u32 mechanism)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 tid = (__u32)pid_tgid;
+
+    if (!lookup_epoch(tid))
+        return 0;
+
+    if (bpf_map_update_elem(&pending_spawn_mechanism, &tid, &mechanism, BPF_ANY))
+        bump_counter(&routing_errors);
+    return 0;
+}
+
+static __always_inline int clear_spawn_mechanism(void)
+{
+    __u32 tid = (__u32)bpf_get_current_pid_tgid();
+
+    if (!lookup_epoch(tid))
+        return 0;
+    bpf_map_delete_elem(&pending_spawn_mechanism, &tid);
+    return 0;
+}
+
 SEC("tracepoint/sched/sched_process_exec")
 int execsurface_m87_exec(void *ctx)
 {
@@ -164,82 +185,105 @@ int execsurface_m87_exit(void *ctx)
     return 0;
 }
 
-static __always_inline int record_spawn_exit(struct syscall_exit_ctx *ctx, __u32 mechanism)
+/* Task creation is the propagation boundary. Using syscall-exit to install the
+ * child epoch would be racy because the new task may run before the parent's
+ * syscall-return tracepoint. The tp_btf hook executes at sched_process_fork and
+ * installs membership before the child can contribute accepted session events. */
+SEC("tp_btf/sched_process_fork")
+int BPF_PROG(
+    execsurface_m87_task_created,
+    struct task_struct *parent,
+    struct task_struct *child)
 {
-    __s64 child_tid = ctx->ret;
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
-    __u32 parent_tid = (__u32)pid_tgid;
-    __u32 parent_tgid = (__u32)(pid_tgid >> 32);
+    __u32 parent_tid = (__u32)parent->pid;
+    __u32 parent_tgid = (__u32)parent->tgid;
+    __u32 child_tid = (__u32)child->pid;
     __u64 epoch = lookup_epoch(parent_tid);
-    __u32 child;
-    int rc;
+    __u32 mechanism = SPAWN_UNKNOWN;
+    __u32 *stored;
 
-    if (!epoch || child_tid <= 0 || child_tid > 0xffffffffLL)
+    if (!epoch || !child_tid)
         return 0;
 
-    child = (__u32)child_tid;
-    rc = bpf_map_update_elem(&task_epoch, &child, &epoch, BPF_ANY);
-    if (rc) {
+    stored = bpf_map_lookup_elem(&pending_spawn_mechanism, &parent_tid);
+    if (stored)
+        mechanism = *stored;
+
+    if (bpf_map_update_elem(&task_epoch, &child_tid, &epoch, BPF_ANY)) {
         bump_counter(&routing_errors);
         return 0;
     }
 
-    return submit_event(epoch, EVENT_SPAWN, parent_tid, parent_tgid, child, mechanism);
+    bpf_map_delete_elem(&pending_spawn_mechanism, &parent_tid);
+    return submit_event(
+        epoch,
+        EVENT_SPAWN,
+        parent_tid,
+        parent_tgid,
+        child_tid,
+        mechanism);
 }
 
-SEC("tracepoint/syscalls/sys_exit_fork")
-int execsurface_m87_fork_exit(struct syscall_exit_ctx *ctx)
+SEC("tracepoint/syscalls/sys_enter_fork")
+int execsurface_m87_fork_enter(void *ctx)
 {
-    return record_spawn_exit(ctx, SPAWN_FORK);
+    (void)ctx;
+    return remember_spawn_mechanism(SPAWN_FORK);
 }
 
-SEC("tracepoint/syscalls/sys_exit_vfork")
-int execsurface_m87_vfork_exit(struct syscall_exit_ctx *ctx)
+SEC("tracepoint/syscalls/sys_enter_vfork")
+int execsurface_m87_vfork_enter(void *ctx)
 {
-    return record_spawn_exit(ctx, SPAWN_VFORK);
+    (void)ctx;
+    return remember_spawn_mechanism(SPAWN_VFORK);
 }
 
 SEC("tracepoint/syscalls/sys_enter_clone")
 int execsurface_m87_clone_enter(struct syscall_enter_ctx *ctx)
 {
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
-    __u32 tid = (__u32)pid_tgid;
-    __u64 epoch = lookup_epoch(tid);
-    __u64 flags;
-    __u32 mechanism;
+    __u64 flags = ctx->args[0];
+    return remember_spawn_mechanism(
+        classify_clone_mechanism(flags, flags & AX_CSIGNAL));
+}
 
-    if (!epoch)
-        return 0;
+/* clone3's clone_args live in user memory. The Apache-2.0 prototype does not
+ * use the GPL-restricted helper rejected in M8.2/M8.5, so mechanism remains
+ * explicitly unknown instead of being invented. */
+SEC("tracepoint/syscalls/sys_enter_clone3")
+int execsurface_m87_clone3_enter(void *ctx)
+{
+    (void)ctx;
+    return remember_spawn_mechanism(SPAWN_UNKNOWN);
+}
 
-    flags = ctx->args[0];
-    mechanism = classify_clone_mechanism(flags, flags & AX_CSIGNAL);
-    if (bpf_map_update_elem(&pending_spawn_mechanism, &tid, &mechanism, BPF_ANY))
-        bump_counter(&routing_errors);
-    return 0;
+/* Cleanup pending classification when process creation fails or after the BTF
+ * fork hook already consumed it. Deleting a missing key is harmless. */
+SEC("tracepoint/syscalls/sys_exit_fork")
+int execsurface_m87_fork_exit(void *ctx)
+{
+    (void)ctx;
+    return clear_spawn_mechanism();
+}
+
+SEC("tracepoint/syscalls/sys_exit_vfork")
+int execsurface_m87_vfork_exit(void *ctx)
+{
+    (void)ctx;
+    return clear_spawn_mechanism();
 }
 
 SEC("tracepoint/syscalls/sys_exit_clone")
-int execsurface_m87_clone_exit(struct syscall_exit_ctx *ctx)
+int execsurface_m87_clone_exit(void *ctx)
 {
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
-    __u32 tid = (__u32)pid_tgid;
-    __u32 mechanism = SPAWN_UNKNOWN;
-    __u32 *stored;
-
-    if (!lookup_epoch(tid))
-        return 0;
-
-    stored = bpf_map_lookup_elem(&pending_spawn_mechanism, &tid);
-    if (stored)
-        mechanism = *stored;
-    bpf_map_delete_elem(&pending_spawn_mechanism, &tid);
-    return record_spawn_exit(ctx, mechanism);
+    (void)ctx;
+    return clear_spawn_mechanism();
 }
 
 SEC("tracepoint/syscalls/sys_exit_clone3")
-int execsurface_m87_clone3_exit(struct syscall_exit_ctx *ctx)
+int execsurface_m87_clone3_exit(void *ctx)
 {
-    return record_spawn_exit(ctx, SPAWN_UNKNOWN);
+    (void)ctx;
+    return clear_spawn_mechanism();
 }
 
 char LICENSE[] SEC("license") = "Apache-2.0";
