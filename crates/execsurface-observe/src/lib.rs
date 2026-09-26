@@ -1,7 +1,11 @@
 //! Linux metadata-only observation backend.
 //!
-//! On Linux x86_64 the implementation uses ptrace and reads only selected
-//! metadata pointers. It never dereferences argv or envp.
+//! On Linux x86_64 the reference implementation uses ptrace and reads only
+//! selected metadata pointers. It never dereferences argv or envp.
+//!
+//! M8 introduces an internal backend boundary before adding alternative
+//! collectors. The public observation semantics remain unchanged: ptrace is
+//! still the only enabled backend and the correctness reference.
 
 use std::ffi::{CString, OsStr, OsString};
 use std::fmt;
@@ -101,6 +105,47 @@ impl From<io::Error> for ObserveError {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod linux_ptrace;
 
+/// Internal collection boundary introduced by M8.
+///
+/// Collection mechanism is deliberately kept behind this contract so that a
+/// future eBPF backend can be evaluated without changing canonicalization,
+/// baseline, diff, policy, or verdict semantics. Backends are not assumed to
+/// be evidence-equivalent; comparability remains an explicit higher-level
+/// decision.
+trait ObservationBackend {
+    fn observe(
+        &self,
+        spec: &CommandSpec,
+        options: ObserveOptions,
+    ) -> Result<Observation, ObserveError>;
+}
+
+/// Native Linux ptrace remains the sole enabled backend and the correctness
+/// reference under the accepted M6.5 decision.
+struct PtraceBackend;
+
+impl ObservationBackend for PtraceBackend {
+    fn observe(
+        &self,
+        spec: &CommandSpec,
+        options: ObserveOptions,
+    ) -> Result<Observation, ObserveError> {
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            linux_ptrace::observe(spec, options)
+        }
+
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+        {
+            let _ = (spec, options);
+            Err(ObserveError::UnsupportedPlatform(
+                "current observer supports Linux x86_64 only",
+            ))
+        }
+    }
+}
+
+static PTRACE_BACKEND: PtraceBackend = PtraceBackend;
 static OBSERVE_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn observe_command(spec: &CommandSpec) -> Result<Observation, ObserveError> {
@@ -114,18 +159,10 @@ pub fn observe_command_with_options(
     let _session_guard = OBSERVE_LOCK.lock().map_err(|_| {
         ObserveError::Protocol("observer session serialization lock was poisoned".to_owned())
     })?;
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    {
-        linux_ptrace::observe(spec, options)
-    }
 
-    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-    {
-        let _ = (spec, options);
-        Err(ObserveError::UnsupportedPlatform(
-            "current observer supports Linux x86_64 only",
-        ))
-    }
+    // M8.1 intentionally preserves the existing behavior exactly: callers do
+    // not select a backend yet, and ptrace remains the only enabled path.
+    PTRACE_BACKEND.observe(spec, options)
 }
 
 #[cfg(test)]
