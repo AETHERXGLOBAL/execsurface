@@ -1,0 +1,124 @@
+name: M9-H1.6C ptrace lifecycle hang guard
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - .github/workflows/m9-h1-6c-ptrace-hang-guard.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove-no-observer-hang:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      SOURCE: crates/execsurface-observe/src/linux_ptrace.rs
+      PRODUCTION_SHA256: 3dc656358a3675a0d78135bb83046bc45c33dca2718c8bd8b68fa090e18eac8b
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+
+      - name: Reconstruct production-clean candidate exactly
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m9-h1-6c-evidence
+          python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_apply_ptrace_exit_lifecycle.py
+          python3 scripts/m9_apply_ptrace_preregistration_ordering.py
+          python3 scripts/m9_apply_get_syscall_info_exit_group_fix.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          python3 scripts/m9_finalize_ptrace_lifecycle_core.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          actual="$(sha256sum "$SOURCE" | awk '{print $1}')"
+          printf 'expected=%s\nactual=%s\n' "$PRODUCTION_SHA256" "$actual" \
+            | tee m9-h1-6c-evidence/source-hash.txt
+          test "$actual" = "$PRODUCTION_SHA256"
+
+      - name: Build observer and amplified exit-group fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test -p execsurface-observe \
+            2>&1 | tee m9-h1-6c-evidence/observer-tests.log
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface \
+            2>&1 | tee m9-h1-6c-evidence/build.log
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/exit_group_sched_getaffinity_race.c \
+            -o /tmp/m9-h1-6c-exit-group-race
+
+      - name: Run 120 bounded attempts with per-run timeout
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-6c-evidence/summary.txt
+          for attempt in $(seq 1 120); do
+            set +e
+            timeout --signal=TERM --kill-after=2s 10s \
+              target/debug/execsurface observe -- /tmp/m9-h1-6c-exit-group-race \
+              > "m9-h1-6c-evidence/attempt-${attempt}.json" \
+              2> "m9-h1-6c-evidence/attempt-${attempt}.stderr"
+            rc=$?
+            set -e
+            printf 'attempt=%s rc=%s\n' "$attempt" "$rc" \
+              >> m9-h1-6c-evidence/summary.txt
+            if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+              printf 'HANG_DETECTED attempt=%s rc=%s\n' "$attempt" "$rc" \
+                | tee -a m9-h1-6c-evidence/summary.txt
+              cat "m9-h1-6c-evidence/attempt-${attempt}.stderr" || true
+              exit 1
+            fi
+            if [ "$rc" -ne 0 ]; then
+              cat "m9-h1-6c-evidence/attempt-${attempt}.stderr" || true
+              exit 1
+            fi
+            python3 - "$attempt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          attempt = sys.argv[1]
+          data = json.loads(Path(f"m9-h1-6c-evidence/attempt-{attempt}.json").read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+          done
+          test "$(grep -c '^attempt=' m9-h1-6c-evidence/summary.txt)" -eq 120
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'head_sha=%s\n' "$GITHUB_SHA"
+            printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > m9-h1-6c-evidence/environment.txt
+          find m9-h1-6c-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-h1-6c-evidence/SHA256SUMS
+
+      - name: Upload hang-guard evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-h1-6c-hang-guard-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-h1-6c-evidence
+          if-no-files-found: error
+          retention-days: 30
