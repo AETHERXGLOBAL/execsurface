@@ -82,6 +82,7 @@ new_terminal_call = '''        if (libc::WIFEXITED(wait_status) || libc::WIFSIGN
 
 old_stop_header = '''        let stop_signal = libc::WSTOPSIG(wait_status);
         let event = ((wait_status as u32) >> 16) as libc::c_int;
+
         if tracees
 '''
 new_stop_header = '''        let stop_signal = libc::WSTOPSIG(wait_status);
