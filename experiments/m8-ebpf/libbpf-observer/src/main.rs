@@ -15,7 +15,7 @@ use libbpf_rs::{MapCore, MapFlags, RingBufferBuilder};
 use serde::Serialize;
 
 #[cfg(unix)]
-use std::os::unix::process::ExitStatusExt;
+use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 mod observer {
     include!(concat!(env!("OUT_DIR"), "/observer.skel.rs"));
@@ -359,6 +359,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut command = Command::new(&options.target[0]);
     command.args(&options.target[1..]);
+    #[cfg(unix)]
+    command.process_group(0);
     let mut child = match command.spawn() {
         Ok(value) => value,
         Err(error) => return fail_before_target(&options, "target_spawn", error.to_string()),
@@ -594,14 +596,34 @@ fn fail_after_target(
         match child.try_wait() {
             Ok(Some(status)) => outcome_report(&status),
             Ok(None) => {
-                match child.kill() {
-                    Ok(()) => target_terminated = true,
-                    Err(error) => {
+                #[cfg(unix)]
+                {
+                    let group = -(root_pid as i32);
+                    let rc = unsafe { libc::kill(group, libc::SIGKILL) };
+                    if rc == 0 {
+                        target_terminated = true;
+                    } else {
                         termination_warning = Some(format!(
-                            "failed to terminate target after collector failure: {error}"
+                            "failed to terminate target process group after collector failure: {}",
+                            std::io::Error::last_os_error()
                         ));
+                        if child.kill().is_ok() {
+                            target_terminated = true;
+                        }
                     }
                 }
+                #[cfg(not(unix))]
+                {
+                    match child.kill() {
+                        Ok(()) => target_terminated = true,
+                        Err(error) => {
+                            termination_warning = Some(format!(
+                                "failed to terminate target after collector failure: {error}"
+                            ));
+                        }
+                    }
+                }
+
                 match child.wait() {
                     Ok(status) => outcome_report(&status),
                     Err(error) => {
@@ -637,7 +659,7 @@ fn fail_after_target(
         state.warning(
             Some(root_pid),
             "target_terminated_after_collector_failure",
-            "target was terminated and reaped after post-start collector failure",
+            "target process group was terminated and root was reaped after post-start collector failure",
         );
     }
     if let Some(warning) = termination_warning {
