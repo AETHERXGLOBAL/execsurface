@@ -16,8 +16,11 @@
 /* Linux x86_64 process-creation classification inputs. ExecSurface currently
  * declares this experimental backend Linux x86_64 only. PTRACE classifies a
  * clone with SIGCHLD as FORK, CLONE_VFORK as VFORK, and other clone exits as
- * CLONE. Capture creation metadata at syscall entry so the emitted evidence
- * describes that semantic mechanism instead of merely echoing the syscall name. */
+ * CLONE. Capture classic clone metadata at syscall entry so the emitted
+ * evidence describes that semantic mechanism instead of merely echoing the
+ * syscall name. clone3 remains conservatively classified as CLONE here: this
+ * Apache-2.0 BPF program must not use GPL-restricted user-memory helpers just
+ * to recover clone_args metadata. */
 #define AX_CSIGNAL 0x000000ffULL
 #define AX_SIGCHLD 17ULL
 #define AX_CLONE_VFORK 0x00004000ULL
@@ -47,15 +50,6 @@ struct syscall_exit_ctx {
     __s32 syscall_nr;
     __u32 alignment;
     __s64 ret;
-};
-
-/* Prefix of UAPI struct clone_args through exit_signal. */
-struct clone_args_prefix {
-    __u64 flags;
-    __u64 pidfd;
-    __u64 child_tid;
-    __u64 parent_tid;
-    __u64 exit_signal;
 };
 
 struct {
@@ -187,23 +181,10 @@ int execsurface_m83c_clone_exit(struct syscall_exit_ctx *ctx)
     return record_spawn_exit(ctx, take_spawn_mechanism());
 }
 
-SEC("tracepoint/syscalls/sys_enter_clone3")
-int execsurface_m85_clone3_enter(struct syscall_enter_ctx *ctx)
-{
-    struct clone_args_prefix args = {};
-    __u32 mechanism = SPAWN_UNKNOWN;
-    const void *user_args = (const void *)(unsigned long)ctx->args[0];
-
-    if (user_args && bpf_probe_read_user(&args, sizeof(args), user_args) == 0)
-        mechanism = classify_clone_mechanism(args.flags, args.exit_signal);
-    remember_spawn_mechanism(mechanism);
-    return 0;
-}
-
 SEC("tracepoint/syscalls/sys_exit_clone3")
 int execsurface_m83c_clone3_exit(struct syscall_exit_ctx *ctx)
 {
-    return record_spawn_exit(ctx, take_spawn_mechanism());
+    return record_spawn_exit(ctx, SPAWN_CLONE);
 }
 
 SEC("tracepoint/syscalls/sys_exit_openat")
