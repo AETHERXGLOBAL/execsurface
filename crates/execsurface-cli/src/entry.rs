@@ -49,7 +49,9 @@ fn maybe_run_explicit_observe(args: &[OsString]) -> Result<Option<()>, String> {
     match parsed.backend.as_str() {
         "ptrace" => {
             if parsed.collector.is_some() {
-                return Err("--collector is only valid with --backend experimental-libbpf".to_owned());
+                return Err(
+                    "--collector is only valid with --backend experimental-libbpf".to_owned(),
+                );
             }
             run_explicit_ptrace(parsed.target)?;
         }
@@ -165,8 +167,9 @@ fn run_experimental_libbpf(collector: &Path, target: &[OsString]) -> Result<(), 
             "experimental libbpf collector completed without a readable report: {error}; no ptrace fallback attempted"
         )
     })?;
-    let report: Value = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("experimental libbpf collector report is invalid JSON: {error}"))?;
+    let report: Value = serde_json::from_slice(&bytes).map_err(|error| {
+        format!("experimental libbpf collector report is invalid JSON: {error}")
+    })?;
     validate_experimental_report(&report)?;
 
     let json = serde_json::to_string_pretty(&report)
@@ -246,7 +249,11 @@ fn validate_experimental_report(report: &Value) -> Result<(), String> {
     expect_string(report, "/backend/id", &descriptor.id)?;
     expect_string(report, "/backend/platform", &descriptor.platform)?;
     expect_string(report, "/backend/architecture", &descriptor.architecture)?;
-    expect_string(report, "/backend/privacy_profile", &descriptor.privacy_profile)?;
+    expect_string(
+        report,
+        "/backend/privacy_profile",
+        &descriptor.privacy_profile,
+    )?;
 
     let actual_supported = string_set(report, "/backend/capabilities")?;
     let expected_supported = descriptor
