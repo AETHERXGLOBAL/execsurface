@@ -2,7 +2,6 @@
 #include <linux/bpf.h>
 #include <linux/types.h>
 #include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
 
 #define EVENT_EXEC 1
 #define EVENT_SPAWN 2
@@ -16,13 +15,6 @@
 #define AX_CSIGNAL 0x000000ffULL
 #define AX_SIGCHLD 17ULL
 #define AX_CLONE_VFORK 0x00004000ULL
-
-/* Minimal CO-RE shape. tp_btf arguments are trusted kernel pointers, so the
- * prototype uses direct field access rather than GPL-only probe-read helpers. */
-struct task_struct {
-    int pid;
-    int tgid;
-} __attribute__((preserve_access_index));
 
 struct metadata_event {
     __u64 epoch;
@@ -42,6 +34,22 @@ struct syscall_enter_ctx {
     __s32 syscall_nr;
     __u32 alignment;
     __u64 args[6];
+};
+
+/*
+ * sched_process_fork uses two __string fields. In the raw tracepoint record
+ * those are represented as 32-bit __data_loc values. CI audits the live
+ * tracepoint format before this layout counts as M8.7 evidence.
+ */
+struct sched_process_fork_ctx {
+    __u16 common_type;
+    __u8 common_flags;
+    __u8 common_preempt_count;
+    __s32 common_pid;
+    __u32 parent_comm_loc;
+    __s32 parent_pid;
+    __u32 child_comm_loc;
+    __s32 child_pid;
 };
 
 struct {
@@ -185,24 +193,38 @@ int execsurface_m87_exit(void *ctx)
     return 0;
 }
 
-/* Task creation is the propagation boundary. Using syscall-exit to install the
- * child epoch would be racy because the new task may run before the parent's
- * syscall-return tracepoint. The tp_btf hook executes at sched_process_fork and
- * installs membership before the child can contribute accepted session events. */
-SEC("tp_btf/sched_process_fork")
-int BPF_PROG(
-    execsurface_m87_task_created,
-    struct task_struct *parent,
-    struct task_struct *child)
+/*
+ * Task creation remains the propagation boundary. sched_process_fork is
+ * emitted from the parent's fork path before the new task is made runnable,
+ * so membership is installed before the child can contribute accepted
+ * session events. The ordinary tracepoint payload avoids direct task_struct
+ * access and therefore preserves the Apache-2.0 BPF license boundary.
+ */
+SEC("tracepoint/sched/sched_process_fork")
+int execsurface_m87_task_created(struct sched_process_fork_ctx *ctx)
 {
-    __u32 parent_tid = (__u32)parent->pid;
-    __u32 parent_tgid = (__u32)parent->tgid;
-    __u32 child_tid = (__u32)child->pid;
-    __u64 epoch = lookup_epoch(parent_tid);
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    __u32 current_tid = (__u32)pid_tgid;
+    __u32 parent_tgid = (__u32)(pid_tgid >> 32);
+    __u32 parent_tid;
+    __u32 child_tid;
+    __u64 epoch;
     __u32 mechanism = SPAWN_UNKNOWN;
     __u32 *stored;
 
-    if (!epoch || !child_tid)
+    if (ctx->parent_pid <= 0 || ctx->child_pid <= 0)
+        return 0;
+
+    parent_tid = (__u32)ctx->parent_pid;
+    child_tid = (__u32)ctx->child_pid;
+
+    if (parent_tid != current_tid) {
+        bump_counter(&routing_errors);
+        return 0;
+    }
+
+    epoch = lookup_epoch(parent_tid);
+    if (!epoch)
         return 0;
 
     stored = bpf_map_lookup_elem(&pending_spawn_mechanism, &parent_tid);
@@ -256,8 +278,8 @@ int execsurface_m87_clone3_enter(void *ctx)
     return remember_spawn_mechanism(SPAWN_UNKNOWN);
 }
 
-/* Cleanup pending classification when process creation fails or after the BTF
- * fork hook already consumed it. Deleting a missing key is harmless. */
+/* Cleanup pending classification when process creation fails or after the fork
+ * tracepoint already consumed it. Deleting a missing key is harmless. */
 SEC("tracepoint/syscalls/sys_exit_fork")
 int execsurface_m87_fork_exit(void *ctx)
 {
