@@ -1,7 +1,7 @@
 # M8.5 — ptrace/eBPF Semantic Parity & Cross-Backend Comparability
 
 Date: 2026-09-26
-Status: **M8.5a UNDER EXECUTION — CONTRACT FROZEN / HARNESS NEXT**
+Status: **M8.5a CLOSED / ACCEPTED — M8.5b NEXT**
 Tracking: #42
 Parent: `docs/milestones/M8_EBPF_ARCHITECTURE.md`
 Reference backend: `linux-ptrace-metadata-v2`
@@ -113,20 +113,57 @@ M8.4 already proved eBPF loss/truncation visibility and fail-closed behavior. M8
 
 A controlled same-workload candidate run with a low event limit must yield `blocked_incomplete` rather than any positive parity verdict.
 
-## First differential harness gate — M8.5a
+## M8.5a — first differential harness — CLOSED / ACCEPTED
 
-The first harness must:
+The isolated harness now runs one deterministic fixture independently under ptrace and eBPF, verifies backend identities, maps runtime identities to structural roles separately, and emits machine-readable per-class verdicts.
 
-1. run one deterministic fixture independently under ptrace and eBPF;
-2. verify backend identities;
-3. map runtime identities to structural roles separately in each run;
-4. compare `ProcessSpawnLineage` and `ProcessExecOccurrence` only;
-5. emit `SuccessfulOpenFdIdentity=representation_difference` rather than fabricate a projection;
-6. emit all unsupported classes as `non_comparable`;
-7. report `full_surface_comparable=false`;
-8. preserve eBPF PASS authority as false;
-9. reject a deliberately altered same-count/different-semantics candidate as `contradicted`;
-10. reject a same-workload incomplete candidate as `blocked_incomplete`.
+### Preserved counterexample: syscall name != spawn semantics
+
+The first semantic run did **not** pass. The same fixture produced:
+
+- ptrace: `root|fork|root/fork#1`;
+- eBPF: `root|clone|root/clone#1`.
+
+The cause was real: glibc implemented `fork()` through the Linux `clone` syscall. The original eBPF collector labeled the event by syscall name, while ptrace classified the process-creation event according to Linux clone flags / exit-signal semantics.
+
+The acceptance contract was not weakened. The eBPF collector was corrected to capture `clone_flags` at `sys_enter_clone` and classify the successful exit using Linux/ptrace-aligned semantics:
+
+- `CLONE_VFORK` -> `vfork`;
+- `CSIGNAL == SIGCHLD` -> `fork`;
+- otherwise -> `clone`.
+
+This counterexample is retained because it proves why raw syscall-name equality is not sufficient semantic evidence.
+
+### Accepted evidence
+
+At commit `2a1bf761207ca24cab5a87595a9cacd66ac8c340`:
+
+- normal repository CI: **PASS** — workflow run `36252039674`;
+- M8.5 semantic differential: **PASS** — workflow run `36252039675`;
+- clean deterministic fixture:
+  - `ProcessSpawnLineage = equivalent`;
+  - `ProcessExecOccurrence = equivalent`;
+  - `SuccessfulOpenFdIdentity = representation_difference`;
+  - unsupported classes = `non_comparable`;
+  - `full_surface_comparable = false`;
+  - `ebpf_pass_authorized = false`;
+- deliberately mutated same-count/different-mechanism candidate: `ProcessSpawnLineage = contradicted`;
+- same-workload candidate with forced evidence truncation: all selected shared classes = `blocked_incomplete`.
+
+Earlier evidence is preserved rather than rewritten:
+
+- workflow run `36251621000`: setup-only rustfmt failure before semantic execution;
+- workflow run `36251855360`: first executable semantic counterexample exposing `fork` vs syscall-name `clone` classification drift.
+
+### M8.5a conclusion
+
+**PROVED, narrow scope only:** for the deterministic single-threaded fork -> child exec fixture, the current eBPF candidate is semantically equivalent to ptrace for `ProcessSpawnLineage` and `ProcessExecOccurrence` after clone semantic classification was corrected.
+
+This does **not** prove generic clone/thread lineage parity and does **not** authorize eBPF PASS.
+
+## M8.5b — NEXT
+
+Adversarially test clone/thread lineage, including nested thread creation where a non-root task creates another task. The test must challenge parent identity, ordering assumptions, and syscall-vs-semantic mechanism classification. Any mismatch must remain `contradicted` until the collector semantics themselves are corrected.
 
 ## Non-negotiable boundaries
 
