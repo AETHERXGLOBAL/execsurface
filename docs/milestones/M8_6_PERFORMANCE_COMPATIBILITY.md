@@ -1,140 +1,82 @@
 # M8.6 — Performance / Compatibility Gate
 
 Date: 2026-09-26
-Status: **OPEN — M8.6a–M8.6b EVIDENCE RECORDED / M8.6c PHASE ATTRIBUTION NEXT**
+Status: **CLOSED / ACCEPTED — EXACT-HOST MEASUREMENT ONLY**
 Tracking: #44
 Parent: `docs/milestones/M8_EBPF_ARCHITECTURE.md`
+Red-team: `M8_6_RED_TEAM_REVIEW.md`
+Post-target root cause: `M8_6D_POST_TARGET_LATENCY.md`
 
 ## Objective
 
-Measure the current experimental libbpf observer against direct execution and the ptrace correctness reference, and define the exact Linux/kernel/BTF/privilege compatibility boundary supported by evidence.
+Measure the current experimental libbpf observer against direct execution and the ptrace correctness reference, identify the dominant performance costs, and record the exact Linux/kernel/BTF/privilege compatibility boundary supported by evidence.
 
-This gate measures the implementation that exists. It does not authorize semantic shortcuts to improve a benchmark.
+M8.6 is a measurement gate. It does not authorize semantic shortcuts or eBPF PASS authority.
 
 ## Fixed governance roles
 
-- **Innovation Scientist / Architect:** search for useful scaling and architecture signals without changing evidence semantics to win a benchmark.
-- **Deviation Prevention / Scientific Integrity:** reject incomparable workloads, cherry-picked samples, hidden warm/cold mixing, loss-contaminated measurements, and unsupported platform generalization.
-- **Independent Performance / Compatibility Red Team:** attempt to falsify methodology, statistical summaries, host claims, privilege assumptions, and any claimed performance advantage.
+- **Innovation Scientist / Architect:** identify useful scaling and architecture signals without weakening evidence semantics.
+- **Deviation Prevention / Scientific Integrity:** reject incomparable workloads, cherry-picked samples, hidden warm/cold mixing, loss-contaminated timing, or unsupported platform generalization.
+- **Independent Performance / Compatibility Red Team:** attempt to falsify methodology, attribution, host claims, privilege assumptions, and performance interpretation.
 
-## Dynamic specialists
+## Authority boundary — unchanged
 
-- Linux scheduler / process-performance specialist;
-- eBPF / libbpf / ring-buffer specialist;
-- Rust systems benchmarking specialist;
-- BTF / CO-RE / kernel compatibility specialist;
-- statistics / reproducibility specialist;
-- CI / packaging / privilege-boundary engineer.
+- ptrace remains the correctness reference;
+- eBPF remains experimental observation-only;
+- `full_surface_comparable=false`;
+- `ebpf_pass_authorized=false`;
+- cross-backend baseline interchangeability remains unauthorized;
+- M8.4 loss/lifecycle semantics and M8.5 parity semantics remain authoritative.
 
-## Non-negotiable authority
+## Frozen measurement protocol
 
-- ptrace remains the correctness reference.
-- eBPF remains experimental observation-only.
-- `full_surface_comparable = false` remains unchanged.
-- `ebpf_pass_authorized = false` remains unchanged.
-- cross-backend learned-baseline interchangeability remains unauthorized.
-- M8.6 performance evidence must not alter M8.4 loss semantics or M8.5 parity semantics.
+The primary quantity is **end-to-end command observation latency** for one ExecSurface invocation, including observer setup, target execution, evidence drain, and process/report finalization.
 
-## Measurement target
+Three modes use the same native fixture under the same timed root privilege context:
 
-The primary quantity is **end-to-end command observation latency** for one ExecSurface invocation, including observer startup/attachment, target execution, evidence drain, and report serialization where applicable.
-
-This is deliberately not labeled pure tracing cost.
-
-Three modes are measured for the same compiled target binary:
-
-1. `direct` — execute target with no ExecSurface observer;
+1. `direct` — target only;
 2. `ptrace` — `execsurface observe -- TARGET ...`;
-3. `libbpf` — `execsurface observe --backend experimental-libbpf --collector COLLECTOR -- TARGET ...`.
+3. `libbpf` — experimental libbpf observation path.
 
-Because the experimental libbpf collector currently attaches/detaches per invocation, M8.6 must not claim a persistent-session steady-state cost that the product does not implement.
+Workloads:
 
-## Workload matrix
+- P1 short process/exec;
+- P2 deterministic process tree;
+- P3 128 successful open/read/close iterations;
+- P4 1500 successful open/read/close iterations.
 
-All performance fixtures are native, deterministic, local-only workloads. No network is required.
+For each workload/mode:
 
-### P1 — short process / exec
+- 2 untimed warmups;
+- 11 timed samples;
+- rotating mode order;
+- no outlier deletion;
+- raw samples retained;
+- median, min, max, MAD and nearest-rank p90 derived deterministically.
 
-Four fork + exec `/bin/true` operations with clean waits.
+A libbpf sample is eligible only with no hard incomplete state, no collector failure, `dropped_events=0`, and complete lifecycle drain. `incomplete_capability` remains expected and visible because the backend is intentionally partial.
 
-### P2 — process tree
+## M8.6b — first executable benchmark
 
-A deterministic binary process tree of depth 2, with leaf execs and clean waits.
+Evidence commit: `978fbd2b20fc08cb41b1c1f0b0c63a5364b0ab71`
 
-### P3 — successful file opens
-
-128 `open/read/close` iterations against `/dev/zero`.
-
-### P4 — controlled high event rate
-
-1500 `open/read/close` iterations against `/dev/zero`.
-
-If P4 loses events on a measured host, that sample is recorded as incomplete and excluded from clean overhead summaries. The first accepted run did not cross the known loss/truncation gate.
-
-## Sample protocol
-
-For each workload and mode:
-
-- **2 untimed warm-up invocations**;
-- **11 timed samples**;
-- rotating mode order across repetitions;
-- monotonic `perf_counter_ns` around the complete child invocation;
-- every raw sample retained;
-- no outlier removal;
-- median, min, max, MAD, and nearest-rank p90 derived deterministically.
-
-The timed benchmark harness runs as root and launches all three modes under the same EUID so privilege context is not a confounder in the timing comparison. Privilege availability is measured separately by the compatibility probe.
-
-One hosted-runner result is evidence for that runner only. It is not a universal Linux performance result.
-
-## Clean-sample health gate
-
-A libbpf sample is eligible only when there is no hard incomplete state, no collector failure, `dropped_events == 0`, and lifecycle drain is complete.
-
-`incomplete_capability` remains expected because the experimental backend deliberately supports a strict semantic subset. It remains visible in evidence and never becomes PASS authority.
-
-Ptrace timing is eligible only when the reference observation reports `complete=true`.
-
-## M8.6b — first executable measurement — RECORDED
-
-### Evidence identity
-
-Commit: `978fbd2b20fc08cb41b1c1f0b0c63a5364b0ab71`
-
-Workflow evidence:
-
-- normal repository CI: **PASS** — run `36257784461`;
-- M8.6 Performance Compatibility: **PASS** — run `36257784487`;
-- raw evidence artifact ID: `10910658203`;
+- CI: **PASS** — run `36257784461`;
+- M8.6 workflow: **PASS** — run `36257784487`;
+- artifact ID: `10910658203`;
 - artifact ZIP SHA-256: `024fbd714b3b0e2c452abe086ad181ff6da5bcb61178c2bb82205602b2221bf6`.
 
-Measured runner:
+Exact measured host:
 
 - Ubuntu 24.04.5 LTS;
-- GitHub-hosted runner image `20260920.314.1`;
-- Azure region `westcentralus`;
+- GitHub runner image `20260920.314.1`;
 - kernel `6.17.0-1022-azure`;
-- architecture `x86_64`.
+- x86_64;
+- readable `/sys/kernel/btf/vmlinux`;
+- required current tracepoints present;
+- privileged eBPF load/attach succeeds;
+- unprivileged load is denied with EPERM before target start on this host/policy.
 
-### Exact-host compatibility evidence
-
-- kernel BTF readable: **YES**;
-- `/sys/kernel/btf/vmlinux` SHA-256: `95782433dc426daf8ebeb0acc1b04aed8f87168f67c1266f4d267aba7c22a8bf`;
-- all currently required sched/syscall tracepoints were present on this host;
-- privileged collector load/attach/transport: **PASS**;
-- privileged probe: `incomplete_capability`, `dropped_events=0`, lifecycle drain complete;
-- unprivileged collector load: **DENIED / EPERM** before target start, recorded as `incomplete_collector`;
-- the unprivileged denial is compatibility evidence for this exact host/policy only, not a universal Linux privilege claim.
-
-### Binary identities
-
-- collector SHA-256: `fc6cf11458c0daeb9e5210336afec33740e533b72dce0a69646869177b5ff495`;
-- ExecSurface CLI SHA-256: `a25945eb4f0fbf0bd15e8110f99a94e6146c9e0bb75c1a01e4c37a2d75a3c81a`;
-- performance fixture SHA-256: `0192204d25787c82c0205248e3d69ca3792af675dfe3520bc62722ce7315e998`.
-
-## M8.6b measured end-to-end results
-
-These numbers are **MEASURED on the single exact runner above**. They include current per-invocation libbpf load/attach, target execution, post-target drain, and report handling. They are not pure kernel tracing overhead.
+### End-to-end results from the first accepted run
 
 | Workload | Direct median ms | ptrace median ms | libbpf median ms | ptrace/direct | libbpf/direct | libbpf/ptrace |
 |---|---:|---:|---:|---:|---:|---:|
@@ -143,99 +85,105 @@ These numbers are **MEASURED on the single exact runner above**. They include cu
 | file_open | 1.339436 | 22.556213 | 604.767881 | 16.840083 | 451.509352 | 26.811588 |
 | high_event_rate | 6.810072 | 269.134424 | 619.185921 | 39.520056 | 90.922081 | 2.300657 |
 
-Dispersion remained narrow enough for all 11 samples per mode/workload to remain eligible under the frozen protocol. Examples:
+**KILLED on this tested host:** the claim that the current per-invocation libbpf product path is already faster end-to-end than ptrace for these workloads.
 
-- short_exec libbpf MAD `11.073613 ms`, p90 `621.520854 ms`;
-- process_tree libbpf MAD `3.349683 ms`, p90 `616.327965 ms`;
-- file_open libbpf MAD `10.358342 ms`, p90 `619.287508 ms`;
-- high_event_rate libbpf MAD `9.898776 ms`, p90 `629.430842 ms`.
+This is not a claim that eBPF itself is intrinsically slower.
 
-## M8.6b interpretation
+## M8.6c — phase attribution
 
-### KILLED — naive current-path speed claim
+Evidence commit: `d6d48356074390d9777d5878fa68fe92c26c266d`
 
-**KILLED on this tested host:** the proposition that the current per-invocation experimental libbpf path is already faster end-to-end than the ptrace reference for these workloads.
+- CI: **PASS** — run `36258238597`;
+- M8.6 workflow: **PASS** — run `36258238632`;
+- phase evidence used one shared monotonic-clock protocol with seven clean samples per mode.
 
-It was slower on every tested workload, substantially so for short-lived workloads.
+Median phase timing:
 
-This result must not be hidden, averaged away, or replaced by a different benchmark protocol after seeing the numbers.
+| Mode | Pre-target ms | Target runtime ms | Post-target ms | Total ms |
+|---|---:|---:|---:|---:|
+| direct | 0.543662 | 1.907784 | 0.184495 | 2.653630 |
+| ptrace | 2.504252 | 8.691757 | 0.580087 | 12.099102 |
+| libbpf | 3.034996 | 1.947832 | **593.580342** | 598.906652 |
 
-### OPEN — source of the fixed floor
+The measurement localized the dominant current libbpf regression to post-target lifecycle/finalization rather than target execution.
 
-The libbpf medians cluster around roughly `605–619 ms` while direct and ptrace cost scale much more visibly with workload size. That is strong evidence of a fixed per-invocation cost in the current architecture, but M8.6b does **not** yet identify whether the dominant source is:
+## M8.6d — isolated lifecycle root-cause probe
 
-- BPF object load/verifier/attach;
-- process startup around the collector;
-- target-time polling;
-- post-root lifecycle/quiescence drain;
-- report finalization;
-- or a combination.
+Evidence commit: `12b35dcdd294c5d971b9e61f6e856e1b44685624`
 
-The source remains **OPEN** until M8.6c phase attribution measures it.
+- CI: **PASS** — run `36258725637`;
+- M8.6 workflow: **PASS** — run `36258725625`;
+- raw artifact ID: `10911163713`;
+- artifact ZIP SHA-256: `f1d60a740ce7a61df2c818ba916b00fd972281c7d9b3f509834d80029fb75150`.
 
-### MEASURED scaling signal, not a speedup claim
+The same run repeated phase attribution and measured a libbpf post-target median of `598.991069 ms`.
 
-As event volume rises, the measured `libbpf/ptrace` ratio falls sharply—from ~85.8 on the small process-tree workload to ~2.30 on the 1500-open workload. This is a useful architecture signal but is not evidence of a crossover and is not evidence that eBPF is intrinsically slower or faster than ptrace.
+The exact observer skeleton was then measured independently over seven open/load/attach/detach cycles:
 
-The current benchmark measures the product path as implemented today: per-invocation attach/detach plus fail-closed drain semantics.
+| Lifecycle phase | Median ms | Min ms | Max ms |
+|---|---:|---:|---:|
+| open | 0.122599 | 0.102962 | 0.134100 |
+| load | 0.995327 | 0.830520 | 1.029451 |
+| attach | 0.699074 | 0.659811 | 0.720674 |
+| detach | **490.150901** | 454.182798 | 508.054501 |
+| total lifecycle probe | 497.001462 | 461.006108 | 514.966226 |
 
-## Innovation direction after M8.6b
+The detach median is approximately 81.8% of the independently measured post-target median on that run. Because they are separate sample sets, this ratio is an attribution signal, not an exact additive decomposition.
 
-A persistent or preloaded eBPF observation service could potentially amortize the fixed setup/attachment cost, but that is **not yet an approved design**. Before implementation it must pass a separate architecture review covering:
+### M8.6d conclusions
 
-- authority and privilege lifetime;
-- target scoping / event attribution;
-- cross-session contamination;
-- BPF map/ring-buffer reset semantics;
-- loss accounting per session;
-- lifecycle completion and quiescence semantics;
-- process namespace/cgroup/container boundaries;
-- daemon crash/restart behavior;
-- privacy and metadata retention;
-- compatibility with current no-PASS authority.
+**KILLED:** BPF open/load/attach explains the ~600 ms floor.
 
-M8.6c first measures phase attribution. Architecture changes follow evidence rather than precede it.
+**KILLED as primary optimization:** shorten lifecycle timeout/quiescence to chase the benchmark. It does not address the dominant measured cost and risks M8.4 semantics.
 
-## Output format
+**MEASURED:** per-invocation skeleton/link teardown is the dominant isolated lifecycle cost on this exact host.
 
-Machine-readable benchmark evidence includes repository SHA, host identity, toolchain/BTF metadata, binary hashes, every raw timed sample with observer health, derived summaries, and computed ratios.
+**SUPPORTED NEXT HYPOTHESIS:** persistent attachment can potentially amortize the measured teardown cost. This is not yet an approved product architecture.
 
-The JSON artifact is the evidence source of truth; this document records the reviewed interpretation.
+See `M8_6D_POST_TARGET_LATENCY.md` for the mandatory persistent-session safety/evidence gates.
 
-## Compatibility matrix policy
+## Compatibility matrix
 
-M8.6 records one row per actually tested environment. Untested platforms remain `OPEN`.
+| Environment | Arch | Kernel | BTF | Current attachment points | Privileged collector | Unprivileged collector | Claim status |
+|---|---|---|---|---|---|---|---|
+| GitHub Ubuntu 24.04.5 image `20260920.314.1` | x86_64 | `6.17.0-1022-azure` | readable | present for current experimental program | PASS for load/attach/transport | EPERM before target start | **COMPATIBILITY_EVIDENCE — exact host only** |
+| Other Linux kernels/distros/policies | OPEN | OPEN | OPEN | OPEN | OPEN | OPEN | **UNTESTED** |
+| non-x86_64 | OPEN | OPEN | OPEN | OPEN | OPEN | OPEN | **UNTESTED** |
 
-The first matrix row covers only the exact Ubuntu 24.04 / kernel `6.17.0-1022-azure` GitHub-hosted environment above. Broader Linux compatibility remains open.
+No broader Linux support claim is authorized by this matrix.
 
-## Claim taxonomy
+## Red-team closure
 
-Use only:
+`M8_6_RED_TEAM_REVIEW.md` independently attacked:
 
-- **MEASURED** — directly produced by recorded benchmark execution;
-- **COMPUTED** — deterministic statistic derived from recorded samples;
-- **COMPATIBILITY_EVIDENCE** — observed behavior on an exact environment;
-- **OPEN** — not yet established;
-- **KILLED** — a tested methodology or assumption was falsified.
+- benchmark theater/cherry-picking;
+- privilege asymmetry;
+- conflating current architecture cost with intrinsic eBPF cost;
+- incorrect attribution to load/attach;
+- timeout-shortening as a benchmark shortcut;
+- leaking links/resources to avoid detach;
+- universal Linux compatibility claims;
+- eBPF PASS promotion;
+- treating persistent attachment as already approved.
 
-## M8.6a conclusion
+Verdict: **ACCEPT M8.6 for narrow measured performance and exact-host compatibility evidence only.**
 
-**CLOSED / ACCEPTED:** the measurement protocol was committed before result interpretation.
+## Final M8.6 decision
 
-## M8.6b conclusion
+**CLOSED / ACCEPTED.**
 
-**EVIDENCE RECORDED / NOT YET FINAL M8.6 CLOSURE.**
+Established:
 
-The first same-host benchmark and compatibility row are valid under the frozen protocol, and the current per-invocation libbpf speed advantage hypothesis is killed for the tested workloads/host.
+1. The current per-invocation libbpf path is slower end-to-end than ptrace on all four measured workloads on the tested host.
+2. The dominant regression is post-target, not target runtime.
+3. Per-invocation detach is the dominant isolated lifecycle cost measured on the tested host.
+4. The current host supports the experimental collector only under the recorded privileged conditions.
+5. Persistent attachment is justified as the next performance architecture hypothesis, but requires its own session-isolation, privilege, loss, lifecycle and crash/restart proof.
 
-M8.6 remains open because phase attribution, broader compatibility evidence, and independent Red Team closure are still required.
+Not established:
 
-## M8.6c next
-
-Measure the fixed libbpf floor by separating, using shared monotonic-clock markers where possible:
-
-1. pre-target collector/setup time;
-2. actual target runtime;
-3. post-target drain/finalization time.
-
-Do this without weakening or bypassing M8.4/M8.5 semantics.
+- universal eBPF performance;
+- universal Linux compatibility;
+- production readiness;
+- full semantic equivalence;
+- eBPF PASS authority.
