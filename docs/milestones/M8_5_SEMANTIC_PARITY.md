@@ -1,7 +1,7 @@
 # M8.5 — ptrace/eBPF Semantic Parity & Cross-Backend Comparability
 
 Date: 2026-09-26
-Status: **M8.5a CLOSED / ACCEPTED — M8.5b NEXT**
+Status: **M8.5a–M8.5b CLOSED / ACCEPTED — M8.5c NEXT**
 Tracking: #42
 Parent: `docs/milestones/M8_EBPF_ARCHITECTURE.md`
 Reference backend: `linux-ptrace-metadata-v2`
@@ -40,7 +40,7 @@ Separate ptrace and eBPF runs have different runtime process identifiers and sch
 - raw event sequence equality is forbidden as a parity criterion;
 - process lineage is projected into structural roles such as `root`, `root/fork#1`, `root/fork#1/clone#1`;
 - occurrence indexes are local to one parent and spawn mechanism and are used only in deterministic fixtures where that ordering is part of the workload contract;
-- later adversarial fixtures must challenge any ordering assumption before it is generalized.
+- adversarial fixtures must challenge any ordering and parent-identity assumption before it is generalized.
 
 ## Health gate
 
@@ -77,25 +77,17 @@ Every other declared class is initially `non_comparable` unless a later M8.5 sub
 
 ### ProcessSpawnLineage
 
-For deterministic single-threaded fork fixtures, project each backend to a structural edge:
+Project each backend into structural parent/child edges:
 
 `parent_role + spawn_mechanism -> child_role`
 
 Numeric process identities are discarded after establishing the edge inside each individual run.
-
-Initial acceptance workload:
-
-`root fixture -> fork -> child exec helper`
-
-A later clone/thread counterexample is mandatory before any claim extends fork parity to generic clone/thread semantics.
 
 ### ProcessExecOccurrence
 
 Compare exec occurrence by structural process role, not path string and not numeric PID/TID.
 
 This is deliberately narrower than `ProcessExecPathIdentity`.
-
-A path-string mismatch cannot contradict occurrence parity because the candidate does not yet claim unconditional `ProcessExecPathIdentity`.
 
 ### SuccessfulOpenFdIdentity — representation gap at entry
 
@@ -111,11 +103,9 @@ Therefore direct raw-event equality would compare different propositions. Initia
 
 M8.4 already proved eBPF loss/truncation visibility and fail-closed behavior. M8.5 treats this as a health prerequisite rather than assuming event-count equality proves transport parity.
 
-A controlled same-workload candidate run with a low event limit must yield `blocked_incomplete` rather than any positive parity verdict.
-
 ## M8.5a — first differential harness — CLOSED / ACCEPTED
 
-The isolated harness now runs one deterministic fixture independently under ptrace and eBPF, verifies backend identities, maps runtime identities to structural roles separately, and emits machine-readable per-class verdicts.
+The isolated harness runs one deterministic fixture independently under ptrace and eBPF, verifies backend identities, maps runtime identities to structural roles separately, and emits machine-readable per-class verdicts.
 
 ### Preserved counterexample: syscall name != spawn semantics
 
@@ -126,15 +116,15 @@ The first semantic run did **not** pass. The same fixture produced:
 
 The cause was real: glibc implemented `fork()` through the Linux `clone` syscall. The original eBPF collector labeled the event by syscall name, while ptrace classified the process-creation event according to Linux clone flags / exit-signal semantics.
 
-The acceptance contract was not weakened. The eBPF collector was corrected to capture `clone_flags` at `sys_enter_clone` and classify the successful exit using Linux/ptrace-aligned semantics:
+The acceptance contract was not weakened. The eBPF collector was corrected to capture classic `clone` flags at syscall entry and classify the successful exit using Linux/ptrace-aligned semantics:
 
 - `CLONE_VFORK` -> `vfork`;
 - `CSIGNAL == SIGCHLD` -> `fork`;
 - otherwise -> `clone`.
 
-This counterexample is retained because it proves why raw syscall-name equality is not sufficient semantic evidence.
+`clone3` remains conservatively classified as `clone` because the attempted user-memory read path required a GPL-restricted BPF helper and ExecSurface retains its Apache-2.0 boundary.
 
-### Accepted evidence
+### Accepted M8.5a evidence
 
 At commit `2a1bf761207ca24cab5a87595a9cacd66ac8c340`:
 
@@ -148,7 +138,7 @@ At commit `2a1bf761207ca24cab5a87595a9cacd66ac8c340`:
   - `full_surface_comparable = false`;
   - `ebpf_pass_authorized = false`;
 - deliberately mutated same-count/different-mechanism candidate: `ProcessSpawnLineage = contradicted`;
-- same-workload candidate with forced evidence truncation: all selected shared classes = `blocked_incomplete`.
+- same-workload candidate with forced evidence truncation: selected shared classes = `blocked_incomplete`.
 
 Earlier evidence is preserved rather than rewritten:
 
@@ -159,11 +149,54 @@ Earlier evidence is preserved rather than rewritten:
 
 **PROVED, narrow scope only:** for the deterministic single-threaded fork -> child exec fixture, the current eBPF candidate is semantically equivalent to ptrace for `ProcessSpawnLineage` and `ProcessExecOccurrence` after clone semantic classification was corrected.
 
-This does **not** prove generic clone/thread lineage parity and does **not** authorize eBPF PASS.
+## M8.5b — nested-thread lineage — CLOSED / ACCEPTED
 
-## M8.5b — NEXT
+M8.5b added a deterministic adversarial fixture:
 
-Adversarially test clone/thread lineage, including nested thread creation where a non-root task creates another task. The test must challenge parent identity, ordering assumptions, and syscall-vs-semantic mechanism classification. Any mismatch must remain `contradicted` until the collector semantics themselves are corrected.
+`root -> thread A -> thread B`
+
+The first executable nested-thread run produced a real contradiction:
+
+- ptrace: `root|clone|root/clone#1`, then `root/clone#1|clone|root/clone#1/clone#1`;
+- eBPF: `root|clone|root/clone#1`, then `root|clone|root/clone#2`.
+
+The cause was semantic, not a harness defect: `record_spawn_exit()` used the upper 32 bits of `bpf_get_current_pid_tgid()` — TGID/process identity — as the parent. That flattens a clone created by a non-leader thread back to the process leader. Ptrace raw spawn evidence is task/TID scoped.
+
+The collector was corrected to use the lower 32 bits — current TID — for spawn parent identity. For a process leader TID==PID, so the original fork fixture remains unchanged; for nested threads the true task parent is retained.
+
+### Accepted M8.5b evidence
+
+At commit `24afe8ce75cdd4d121460939a0b25b0f2b647791`:
+
+- normal repository CI: **PASS** — workflow run `36252591556`;
+- M8.5 semantic differential: **PASS** — workflow run `36252591634`;
+- clean fork/exec fixture remains `ProcessSpawnLineage = equivalent` and `ProcessExecOccurrence = equivalent`;
+- nested-thread fixture now yields `ProcessSpawnLineage = equivalent`;
+- same-count/different-semantics mutation remains `contradicted`;
+- incomplete candidate remains `blocked_incomplete`;
+- `full_surface_comparable = false` and `ebpf_pass_authorized = false` remain unchanged.
+
+Preserved negative evidence:
+
+- workflow run `36252411516` proved the nested-thread parent-attribution counterexample before the TID correction;
+- an intervening clone3 implementation attempt was rejected by the kernel verifier because it used `bpf_probe_read_user`, a GPL-restricted helper for this non-GPL-compatible Apache-2.0 BPF program. The project license boundary was retained rather than weakened to pass the gate.
+
+### M8.5b conclusion
+
+**PROVED for the controlled fork and nested classic-clone lineage witnesses:** eBPF now preserves task-scoped parent lineage compatible with the ptrace reference for those fixtures.
+
+This does **not** generalize to all clone3 semantics or all concurrent process graphs.
+
+## M8.5c — NEXT
+
+Resolve the `SuccessfulOpenFdIdentity` representation gap without unnecessary public schema churn.
+
+Preferred order:
+
+1. determine whether ptrace raw evidence can support a parity-only successful-open projection from already-observed facts without changing public Observation v2;
+2. prove that failed open attempts cannot be promoted into successful-open facts;
+3. compare successful-open identities on deterministic positive and negative fixtures;
+4. evolve a public evidence schema only if an internal backend-independent projection cannot establish the same proposition defensibly.
 
 ## Non-negotiable boundaries
 
