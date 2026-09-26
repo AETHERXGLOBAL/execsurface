@@ -1,0 +1,84 @@
+name: Ptrace Lifecycle Regression
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - crates/execsurface-observe/src/linux_ptrace.rs
+      - tests/fixtures/m9/exit_group_sched_getaffinity_bounded_race.c
+      - .github/workflows/ptrace-lifecycle-regression.yml
+  push:
+    branches:
+      - main
+    paths:
+      - crates/execsurface-observe/src/linux_ptrace.rs
+      - tests/fixtures/m9/exit_group_sched_getaffinity_bounded_race.c
+      - .github/workflows/ptrace-lifecycle-regression.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-exit-group-lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustc "+$RUST_TOOLCHAIN" --version --verbose
+
+      - name: Build ExecSurface and bounded lifecycle fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/exit_group_sched_getaffinity_bounded_race.c \
+            -o /tmp/execsurface-ptrace-lifecycle-regression
+
+      - name: Run bounded lifecycle regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 32); do
+            out="/tmp/ptrace-lifecycle-${attempt}.json"
+            err="/tmp/ptrace-lifecycle-${attempt}.stderr"
+            set +e
+            timeout --signal=TERM --kill-after=2s 10s \
+              target/debug/execsurface observe -- \
+              /tmp/execsurface-ptrace-lifecycle-regression \
+              >"$out" 2>"$err"
+            rc=$?
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              cat "$err" || true
+              exit "$rc"
+            fi
+            python3 - "$out" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            if grep -Eq 'ExecSurface: ERROR|observer protocol error|observer OS error' "$err"; then
+              cat "$err"
+              exit 1
+            fi
+          done
