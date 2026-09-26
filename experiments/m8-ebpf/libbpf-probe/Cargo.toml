@@ -6,6 +6,14 @@ rust-version = "1.82"
 build = "build.rs"
 publish = false
 
+[features]
+default = []
+# Packaging-only feasibility mode. This vendors libbpf, libelf and zlib through
+# libbpf-rs/libbpf-sys so we can measure whether the final userspace binary can
+# avoid requiring those shared libraries at runtime. It does not affect the
+# ExecSurface workspace or the normal ptrace installation path.
+vendored-runtime = ["libbpf-rs/vendored"]
+
 [dependencies]
 libbpf-rs = "=0.27.0"
 
