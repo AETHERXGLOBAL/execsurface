@@ -31,6 +31,39 @@ jobs:
           clang --version
           pkg-config --modversion libelf
 
+      - name: Audit live sched_process_fork tracepoint ABI
+        shell: bash
+        run: |
+          set -euxo pipefail
+          FORMAT="/sys/kernel/tracing/events/sched/sched_process_fork/format"
+          if ! sudo test -r "$FORMAT"; then
+            sudo mkdir -p /sys/kernel/tracing
+            sudo mount -t tracefs nodev /sys/kernel/tracing || true
+          fi
+          if ! sudo test -r "$FORMAT"; then
+            FORMAT="/sys/kernel/debug/tracing/events/sched/sched_process_fork/format"
+          fi
+          sudo test -r "$FORMAT"
+          sudo cat "$FORMAT" | tee "$RUNNER_TEMP/m8-7-sched_process_fork-format.txt"
+
+          python3 - "$RUNNER_TEMP/m8-7-sched_process_fork-format.txt" <<'PY'
+          import re, sys
+          text = open(sys.argv[1], encoding='utf-8').read()
+          fields = {}
+          for line in text.splitlines():
+              match = re.search(r'field:(.*?);\s*offset:(\d+);\s*size:(\d+);', line)
+              if not match:
+                  continue
+              declaration, offset, size = match.groups()
+              name = declaration.strip().split()[-1]
+              fields[name] = (int(offset), int(size), declaration.strip())
+          assert 'parent_pid' in fields, fields
+          assert 'child_pid' in fields, fields
+          assert fields['parent_pid'][:2] == (12, 4), fields['parent_pid']
+          assert fields['child_pid'][:2] == (20, 4), fields['child_pid']
+          print('M8_7A_SCHED_PROCESS_FORK_ABI_PASS', fields['parent_pid'], fields['child_pid'])
+          PY
+
       - name: Install resolver and product-MSRV Rust toolchains
         shell: bash
         run: |
@@ -141,6 +174,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: m8-7a-persistent-observer-${{ github.sha }}
-          path: ${{ runner.temp }}/m8-7a-persistent-session.json
+          path: |
+            ${{ runner.temp }}/m8-7a-persistent-session.json
+            ${{ runner.temp }}/m8-7-sched_process_fork-format.txt
           if-no-files-found: error
           retention-days: 30
