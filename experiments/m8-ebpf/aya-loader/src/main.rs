@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 use aya::{
-    maps::{ring_buf::RingBuf, PerCpuArray},
+    maps::{ring_buf::RingBuf, MapData, PerCpuArray},
     programs::TracePoint,
     Ebpf,
 };
@@ -98,7 +98,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn drain_events(events: &mut RingBuf<_>) -> Result<usize, Box<dyn Error>> {
+fn drain_events(events: &mut RingBuf<MapData>) -> Result<usize, Box<dyn Error>> {
     let mut seen = 0usize;
     while let Some(sample) = events.next() {
         if sample.len() != 8 {
@@ -115,7 +115,7 @@ fn drain_events(events: &mut RingBuf<_>) -> Result<usize, Box<dyn Error>> {
     Ok(seen)
 }
 
-fn total_drops(dropped: &PerCpuArray<impl std::borrow::Borrow<aya::maps::MapData>, u64>) -> Result<u64, Box<dyn Error>> {
+fn total_drops(dropped: &PerCpuArray<MapData, u64>) -> Result<u64, Box<dyn Error>> {
     let values = dropped.get(&0, 0)?;
     Ok(values.iter().copied().sum())
 }
