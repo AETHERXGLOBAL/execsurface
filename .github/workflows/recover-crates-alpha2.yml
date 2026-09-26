@@ -38,9 +38,14 @@ jobs:
 
       - name: Respect crates.io new-crate rate-limit window
         run: |
-          # The previous attempt was explicitly rate-limited until 00:54:03 UTC.
-          # Wait beyond that server-provided retry boundary before resuming.
-          sleep 120
+          set -euo pipefail
+          # crates.io explicitly asked this publication chain not to retry
+          # another new crate before 2026-09-26 01:04:03 UTC.
+          target="$(date -u -d '2026-09-26 01:04:10 UTC' +%s)"
+          now="$(date -u +%s)"
+          if [ "$now" -lt "$target" ]; then
+            sleep "$((target - now))"
+          fi
 
       - name: Resume crates.io publication safely
         run: |
