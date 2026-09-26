@@ -1,0 +1,8 @@
+run_id=36272732756
+head_sha=91066518e4349d7e6d95af1a88f99df0bbcacb12
+just_sha=5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+rust_toolchain=1.90.0
+
+attempt=1 rc=2
+ExecSurface: ERROR
+execsurface: observer protocol error: PTRACE_EVENT_EXIT arrived for untracked tid 17262
