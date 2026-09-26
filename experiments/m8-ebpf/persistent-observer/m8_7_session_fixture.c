@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <errno.h>
 #include <limits.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,8 +10,45 @@
 
 #define M8_7_CHURN_CHILDREN 64
 
+static int run_crash_hold(void)
+{
+    const char *marker_path = getenv("M8_7_CRASH_MARKER");
+    if (marker_path == NULL || marker_path[0] == '\0') {
+        fprintf(stderr, "M8_7_CRASH_MARKER is required in crash-hold mode\n");
+        return 30;
+    }
+
+    FILE *marker = fopen(marker_path, "w");
+    if (marker == NULL) {
+        perror("fopen crash marker");
+        return 31;
+    }
+
+    if (fprintf(marker, "%ld %ld\n", (long)getpid(), (long)getpgrp()) < 0) {
+        fclose(marker);
+        return 32;
+    }
+    if (fflush(marker) != 0) {
+        fclose(marker);
+        return 33;
+    }
+    if (fsync(fileno(marker)) != 0) {
+        fclose(marker);
+        return 34;
+    }
+    if (fclose(marker) != 0)
+        return 35;
+
+    for (;;)
+        pause();
+}
+
 static int run_tree(void)
 {
+    const char *mode = getenv("M8_7_MODE");
+    if (mode != NULL && strcmp(mode, "crash-hold") == 0)
+        return run_crash_hold();
+
     pid_t root = getpid();
 
     for (int child_index = 0; child_index < M8_7_CHURN_CHILDREN; ++child_index) {
