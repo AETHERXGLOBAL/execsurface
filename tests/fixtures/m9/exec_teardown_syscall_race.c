@@ -23,7 +23,7 @@ struct worker_args {
 };
 
 static void *syscall_worker(void *opaque) {
-    struct worker_args *args = (struct worker_args *)opaque;
+    (void)opaque;
     atomic_fetch_add_explicit(&ready_workers, 1, memory_order_release);
 
     while (!atomic_load_explicit(&release_exec, memory_order_acquire)) {
