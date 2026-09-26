@@ -81,6 +81,7 @@ static int run_loss_flood(void)
 {
     const char *ready_path = getenv("M8_7_CRASH_MARKER");
     const char *done_path = getenv("M8_7_DONE_MARKER");
+    const char *auto_release = getenv("M8_7_LOSS_AUTO_RELEASE");
     if (ready_path == NULL || ready_path[0] == '\0' || done_path == NULL || done_path[0] == '\0') {
         fprintf(stderr, "M8_7_CRASH_MARKER and M8_7_DONE_MARKER are required in loss-flood mode\n");
         return 39;
@@ -98,6 +99,9 @@ static int run_loss_flood(void)
     int marker_rc = write_pid_marker(ready_path);
     if (marker_rc != 0)
         return marker_rc;
+
+    if (auto_release != NULL && strcmp(auto_release, "1") == 0)
+        loss_flood_released = 1;
 
     while (!loss_flood_released)
         pause();
