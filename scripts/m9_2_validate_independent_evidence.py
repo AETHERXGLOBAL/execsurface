@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Validate the frozen M9.2 independent-adoption acceptance gate."""
+"""Validate whether one M9.2 record is admissible as independent evidence.
+
+This validator answers only the provenance/intake question. It deliberately
+accepts independently produced failures because negative external evidence is
+first-class. It does NOT decide whether a record is countable toward the
+positive M9.2 adoption close gate.
+
+Use `scripts/m9_validate_independent_adoption.py --countable` for one
+successful countable adoption record and `--close-gate` for the aggregate
+positive-close requirements.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +28,7 @@ def validate_independent_record(record: dict) -> None:
 
     require(
         record["independence_class"] == "INDEPENDENT_USER",
-        "M9.2 accepted evidence must be INDEPENDENT_USER",
+        "M9.2 admissible independent evidence must be INDEPENDENT_USER",
     )
 
     provenance = record["provenance"]
@@ -46,8 +56,8 @@ def validate_independent_record(record: dict) -> None:
     )
 
     # A successful command alone is not adoption evidence. Require an actual
-    # install/baseline/rerun attempt; PASS is not required because failures are
-    # first-class evidence.
+    # install/baseline/rerun attempt. PASS is intentionally not required here,
+    # because independently produced failures must remain admissible evidence.
     require(outcome["installation"] != "NOT_RUN", "M9.2 requires an installation attempt")
     require(workflow["baseline_attempted"] is True, "M9.2 requires baseline creation to be attempted")
     require(outcome["baseline"] != "NOT_RUN", "M9.2 baseline outcome cannot be NOT_RUN")
@@ -70,7 +80,7 @@ def main() -> int:
         return 1
 
     print(
-        "M9_2_INDEPENDENT_EVIDENCE_VALID "
+        "M9_2_INDEPENDENT_EVIDENCE_ADMISSIBLE "
         f"id={record['evidence_id']} sha256={hashlib.sha256(raw).hexdigest()}"
     )
     return 0
