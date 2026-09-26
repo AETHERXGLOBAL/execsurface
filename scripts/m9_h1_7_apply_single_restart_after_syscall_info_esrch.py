@@ -22,10 +22,6 @@ old_recovery = '''                    let state = tracees.get_mut(&tid).ok_or_el
                         ))
                     })?;
                     state.syscall_info_esrch_after_exit_group = true;
-                    eprintln!(
-                        "M9_GET_SYSCALL_INFO_EXIT_GROUP_DEATH_DEFERRED tid={tid} tgid={}",
-                        state.tgid
-                    );
                     /*
                      * The kernel has already refused a ptrace read while the
                      * same thread group is in an explicitly observed
