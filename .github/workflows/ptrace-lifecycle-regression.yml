@@ -113,17 +113,18 @@ jobs:
           test "$(git -C external/fd rev-parse HEAD)" = "$FD_SHA"
           test -z "$(git -C external/fd status --porcelain)"
 
-      - name: Build current ExecSurface and pinned fd
+      - name: Build current ExecSurface and isolated pinned fd
         shell: bash
         run: |
           set -euo pipefail
           cargo "+$RUST_TOOLCHAIN" build -p execsurface
-          (cd external/fd && cargo "+$RUST_TOOLCHAIN" build --locked --release --all-features)
-          external/fd/target/release/fd --version
-          mkdir -p external/fd/m7-fixture/sub /tmp/execsurface-m7-source
-          printf 'alpha\n' > external/fd/m7-fixture/alpha.txt
-          printf 'beta\n' > external/fd/m7-fixture/sub/beta.txt
-          test -z "$(git -C external/fd status --porcelain --untracked-files=no)"
+          rm -rf /tmp/m7-fd
+          cp -a external/fd /tmp/m7-fd
+          (cd /tmp/m7-fd && cargo "+$RUST_TOOLCHAIN" build --locked --release --all-features)
+          /tmp/m7-fd/target/release/fd --version
+          mkdir -p /tmp/m7-fd/m7-fixture/sub /tmp/execsurface-m7-source
+          printf 'alpha\n' > /tmp/m7-fd/m7-fixture/alpha.txt
+          printf 'beta\n' > /tmp/m7-fd/m7-fixture/sub/beta.txt
 
       - name: Learn and prove repeated no-drift compatibility
         shell: bash
@@ -132,7 +133,7 @@ jobs:
           target/debug/execsurface learn \
             --output /tmp/execsurface-m7-source/fd.lock.json \
             -- /bin/bash -lc \
-            'cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
+            'cd /tmp/m7-fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
 
           for n in 1 2; do
             target/debug/execsurface check \
@@ -140,7 +141,7 @@ jobs:
               --json-output "/tmp/execsurface-m7-source/fd-pass-${n}.json" \
               --markdown-output "/tmp/execsurface-m7-source/fd-pass-${n}.md" \
               -- /bin/bash -lc \
-              'cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
+              'cd /tmp/m7-fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
           done
 
           python3 - <<'PY'
@@ -161,7 +162,7 @@ jobs:
             --json-output /tmp/execsurface-m7-source/fd-controlled.json \
             --markdown-output /tmp/execsurface-m7-source/fd-controlled.md \
             -- /bin/bash -lc \
-            'cd external/fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null; /usr/bin/sha256sum m7-fixture/alpha.txt >/dev/null'
+            'cd /tmp/m7-fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null; /usr/bin/sha256sum m7-fixture/alpha.txt >/dev/null'
           status=$?
           set -e
           test "$status" -eq 10
