@@ -1,0 +1,225 @@
+name: M9-H1.6 finalize proven ptrace lifecycle fix
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - scripts/m9_strip_ptrace_diagnostic_output.py
+      - .github/workflows/m9-h1-6-finalize-ptrace-lifecycle.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  finalize-proven-fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Checkout pinned unmodified casey just
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: casey/just
+          ref: ${{ env.JUST_SHA }}
+          path: external/just
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+          rustc "+$RUST_TOOLCHAIN" --version --verbose
+          test "$(git -C external/just rev-parse HEAD)" = "$JUST_SHA"
+          test -z "$(git -C external/just status --porcelain)"
+
+      - name: Build lifecycle fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m9-h1-6-evidence
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/exit_group_sched_getaffinity_race.c \
+            -o /tmp/m9-h1-exit-group-race
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/thread_lifecycle_repro.c \
+            -o /tmp/m9-h1-thread-lifecycle-repro
+          sha256sum \
+            tests/fixtures/m9/exit_group_sched_getaffinity_race.c \
+            tests/fixtures/m9/thread_lifecycle_repro.c \
+            /tmp/m9-h1-exit-group-race \
+            /tmp/m9-h1-thread-lifecycle-repro \
+            > m9-h1-6-evidence/fixture-SHA256SUMS
+
+      - name: Materialize proven candidate and strip diagnostic output only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_apply_ptrace_exit_lifecycle.py
+          python3 scripts/m9_apply_ptrace_preregistration_ordering.py
+          python3 scripts/m9_apply_get_syscall_info_exit_group_fix.py
+          cp crates/execsurface-observe/src/linux_ptrace.rs /tmp/linux_ptrace.proven.rs
+          python3 scripts/m9_strip_ptrace_diagnostic_output.py
+          cargo "+$RUST_TOOLCHAIN" fmt --all
+          git diff --check
+          diff -u /tmp/linux_ptrace.proven.rs \
+            crates/execsurface-observe/src/linux_ptrace.rs \
+            > m9-h1-6-evidence/diagnostic-cleanup.diff || true
+          test -s m9-h1-6-evidence/diagnostic-cleanup.diff
+          if grep -q 'eprintln!' crates/execsurface-observe/src/linux_ptrace.rs; then
+            echo 'unexpected eprintln! in finalized ptrace source' >&2
+            exit 1
+          fi
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs \
+            > m9-h1-6-evidence/product-fix.diff
+          cp crates/execsurface-observe/src/linux_ptrace.rs \
+            m9-h1-6-evidence/linux_ptrace.final.rs
+          test -s m9-h1-6-evidence/product-fix.diff
+
+      - name: Run unchanged observer regression suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test -p execsurface-observe \
+            2>&1 | tee m9-h1-6-evidence/observer-tests.log
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface \
+            2>&1 | tee m9-h1-6-evidence/build.log
+
+      - name: Stress finalized exit-group lifecycle 120 times
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-6-evidence/exit-group-summary.txt
+          for attempt in $(seq 1 120); do
+            target/debug/execsurface observe -- /tmp/m9-h1-exit-group-race \
+              > "m9-h1-6-evidence/exit-group-${attempt}.json" \
+              2> "m9-h1-6-evidence/exit-group-${attempt}.stderr"
+            python3 - "$attempt" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          attempt = sys.argv[1]
+          path = Path(f"m9-h1-6-evidence/exit-group-{attempt}.json")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          assert data.get("complete") is True, (path, data.get("warnings"))
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, (path, outcome)
+          assert outcome.get("signal") is None, (path, outcome)
+          PY
+            test ! -s "m9-h1-6-evidence/exit-group-${attempt}.stderr"
+            printf 'attempt=%s complete=true exit=0 stderr_empty=true\n' \
+              "$attempt" >> m9-h1-6-evidence/exit-group-summary.txt
+          done
+
+      - name: Re-prove pre-registration lifecycle fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-6-evidence/prereg-summary.txt
+          for attempt in $(seq 1 12); do
+            target/debug/execsurface observe -- \
+              /tmp/m9-h1-thread-lifecycle-repro 12 16 4 \
+              > "m9-h1-6-evidence/prereg-${attempt}.stdout" \
+              2> "m9-h1-6-evidence/prereg-${attempt}.stderr"
+            python3 - "$attempt" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          attempt = sys.argv[1]
+          raw = Path(f"m9-h1-6-evidence/prereg-{attempt}.stdout").read_text(encoding="utf-8")
+          marker = raw.find("\n{")
+          assert marker >= 0, raw[:300]
+          data = json.loads(raw[marker + 1:])
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            test ! -s "m9-h1-6-evidence/prereg-${attempt}.stderr"
+            printf 'attempt=%s complete=true exit=0 stderr_empty=true\n' \
+              "$attempt" >> m9-h1-6-evidence/prereg-summary.txt
+          done
+
+      - name: Prime pinned external workload directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd external/just && cargo "+$RUST_TOOLCHAIN" test --all >/dev/null 2>&1)
+
+      - name: Prove pinned casey just five consecutive times
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-6-evidence/just-summary.txt
+          for attempt in 1 2 3 4 5; do
+            target/debug/execsurface observe -- \
+              /bin/bash -lc \
+              "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
+              > "m9-h1-6-evidence/just-${attempt}.json" \
+              2> "m9-h1-6-evidence/just-${attempt}.stderr"
+            python3 - "$attempt" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          attempt = sys.argv[1]
+          path = Path(f"m9-h1-6-evidence/just-{attempt}.json")
+          data = json.loads(path.read_text(encoding="utf-8"))
+          assert data.get("complete") is True, (path, data.get("warnings"))
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, (path, outcome)
+          assert outcome.get("signal") is None, (path, outcome)
+          PY
+            test ! -s "m9-h1-6-evidence/just-${attempt}.stderr"
+            printf 'attempt=%s complete=true exit=0 stderr_empty=true\n' \
+              "$attempt" >> m9-h1-6-evidence/just-summary.txt
+          done
+
+      - name: Seal evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'input_head_sha=%s\n' "$GITHUB_SHA"
+            printf 'just_sha=%s\n' "$JUST_SHA"
+            printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+            printf 'final_source_sha256=%s\n' "$(sha256sum crates/execsurface-observe/src/linux_ptrace.rs | cut -d' ' -f1)"
+          } > m9-h1-6-evidence/environment.txt
+          find m9-h1-6-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-h1-6-evidence/SHA256SUMS
+
+      - name: Commit only the proved product source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/execsurface-observe/src/linux_ptrace.rs
+          git diff --cached --check
+          git commit -m "fix(observer): harden ptrace thread lifecycle races"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          printf 'product_commit=%s\n' "$(git rev-parse HEAD)" \
+            >> m9-h1-6-evidence/environment.txt
+
+      - name: Upload finalization evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-h1-6-finalization-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-h1-6-evidence
+          if-no-files-found: error
+          retention-days: 30
