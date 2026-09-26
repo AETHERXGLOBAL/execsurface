@@ -131,7 +131,11 @@ fn parse_args() -> Result<HarnessArgs, Box<dyn Error>> {
             let value = args.next().ok_or("--open-path requires a path value")?;
             open_path = Some(value.to_string_lossy().into_owned());
         } else {
-            return Err(format!("unexpected parity-harness argument: {}", arg.to_string_lossy()).into());
+            return Err(format!(
+                "unexpected parity-harness argument: {}",
+                arg.to_string_lossy()
+            )
+            .into());
         }
     }
 
@@ -291,22 +295,22 @@ fn successful_open_assessment(
 
     let reference_witnesses = &reference.successful_open_witnesses;
     let candidate_witnesses = &candidate.successful_open_witnesses;
-    let verdict = if reference_witnesses == candidate_witnesses && !reference_witnesses.is_empty()
-    {
-        ParityVerdict::Equivalent
-    } else if reference_witnesses.is_empty() && candidate_witnesses.is_empty() {
-        ParityVerdict::NonComparable
-    } else if !reference_witnesses.is_empty()
-        && reference_witnesses.is_subset(candidate_witnesses)
-    {
-        ParityVerdict::ReferenceSubset
-    } else if !candidate_witnesses.is_empty()
-        && candidate_witnesses.is_subset(reference_witnesses)
-    {
-        ParityVerdict::CandidateSubset
-    } else {
-        ParityVerdict::Contradicted
-    };
+    let verdict =
+        if reference_witnesses == candidate_witnesses && !reference_witnesses.is_empty() {
+            ParityVerdict::Equivalent
+        } else if reference_witnesses.is_empty() && candidate_witnesses.is_empty() {
+            ParityVerdict::NonComparable
+        } else if !reference_witnesses.is_empty()
+            && reference_witnesses.is_subset(candidate_witnesses)
+        {
+            ParityVerdict::ReferenceSubset
+        } else if !candidate_witnesses.is_empty()
+            && candidate_witnesses.is_subset(reference_witnesses)
+        {
+            ParityVerdict::CandidateSubset
+        } else {
+            ParityVerdict::Contradicted
+        };
 
     Assessment {
         semantic_class,
