@@ -202,6 +202,19 @@ jobs:
           cat "$RUNNER_TEMP/libbpf-unprivileged.log"
           test "$rc" -ne 0
           echo "M8_LIBBPF_UNPRIVILEGED_DENIAL_PASS exit=$rc"
+      - name: Prove invalid attach remains an explicit diagnostic
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN=experiments/m8-ebpf/libbpf-probe/target/release/execsurface-m8-libbpf-probe
+          set +e
+          sudo env AX_M8_INVALID_ATTACH=1 "$BIN" >"$RUNNER_TEMP/libbpf-invalid-attach.log" 2>&1
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/libbpf-invalid-attach.log"
+          test "$rc" -ne 0
+          test -s "$RUNNER_TEMP/libbpf-invalid-attach.log"
+          echo "M8_LIBBPF_INVALID_ATTACH_DIAGNOSTIC_PASS exit=$rc"
       - name: Prove transport lineage loss accounting and persisted-output privacy
         shell: bash
         run: |
