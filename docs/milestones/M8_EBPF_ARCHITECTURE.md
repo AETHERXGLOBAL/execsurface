@@ -1,8 +1,8 @@
 # M8 — Pluggable Observation Backends & eBPF Evidence Architecture
 
 Date: 2026-09-26
-Status: **OPEN — M8.0–M8.7 CLOSED / M8.8 CONTROLLED PUBLIC-ALPHA INTEGRATION NEXT**
-Tracking: #34, #37, #40, #42, #44, #46
+Status: **CLOSED — M8.0–M8.8 COMPLETE / PUBLIC eBPF EXPOSURE DEFERRED**
+Tracking: #34, #37, #40, #42, #44, #46, #49
 
 Evidence index:
 
@@ -17,51 +17,51 @@ Evidence index:
 - M8.7 persistent architecture: `docs/milestones/M8_7_PERSISTENT_OBSERVER.md`
 - M8.7 performance: `docs/milestones/M8_7C_PERFORMANCE_PROTOCOL.md`
 - M8.7 Red Team: `docs/milestones/M8_7_RED_TEAM_REVIEW.md`
+- M8.8 product decision: `docs/milestones/M8_8_PUBLIC_INTEGRATION_DECISION.md`
 
-## Objective
+## Objective and final result
 
-Add an eBPF observation path without weakening the semantics, privacy boundary, fail-closed behavior, or evidence quality already established by the native Linux ptrace reference backend.
+M8 evaluated an eBPF observation path without weakening the semantics, privacy boundary, fail-closed behavior, installation path, or evidence quality established by the native Linux ptrace reference backend.
 
-M8 is additive. It is not a rewrite.
+M8 was additive, not a rewrite.
 
-> A faster collection mechanism may change collection cost, but it may not silently change what ExecSurface means by observed, complete, comparable, or PASS.
+> A different collection mechanism may change collection cost, but it may not silently change what ExecSurface means by observed, complete, comparable, or PASS.
 
-## Authority that remains in force
+The research program succeeded in building and adversarially evaluating the eBPF path. The product decision is to **defer public eBPF exposure** until a real external workload or capability requirement provides a justified user-value trigger.
 
-M6.5 remains authoritative except where a later M8 gate explicitly proved a narrower statement:
+## Authority at M8 closure
 
-- native Linux ptrace remains the correctness reference backend;
-- existing canonicalization, baseline, diff, policy, verdict, and report semantics remain authoritative;
-- an eBPF backend is not evidence-equivalent merely because it emits similar event names;
-- incomplete, lost, stale, truncated, ambiguous, or unsupported evidence cannot silently produce PASS;
+- native Linux ptrace remains the correctness reference and default public backend;
+- existing canonicalization, baseline, diff, policy, verdict, report and public installation semantics remain authoritative;
+- eBPF is not evidence-equivalent merely because it emits similar event names;
+- incomplete, lost, stale, truncated, ambiguous or unsupported evidence cannot silently produce PASS;
 - ptrace-learned and eBPF-learned evidence are not automatically interchangeable;
 - eBPF `learn` / `check` authority is not authorized;
 - eBPF PASS authority is not authorized;
-- automatic backend selection is not authorized.
+- automatic backend selection is not authorized;
+- production persistent eBPF service/daemon deployment is not authorized;
+- public eBPF exposure is deferred under M8.8.
 
-M8.5 proved bounded semantic parity only for explicitly controlled propositions. It did not prove full-surface equivalence.
+M8.5 proved only bounded semantic parity for explicitly controlled propositions. It did not prove full-surface equivalence.
 
 ## Team model
 
 ### Fixed — Innovation Scientist / Architect
 
-- seek the strongest backend architecture that remains semantically explicit;
 - separate collection mechanism from evidence meaning;
-- pursue performance improvements only when evidence quality is preserved;
-- keep future expansion possible without turning ExecSurface into EDR, antivirus, sandboxing, or generic telemetry.
+- seek performance improvements only when evidence quality is preserved;
+- keep future expansion possible without converting ExecSurface into generic telemetry, EDR, antivirus or sandboxing.
 
 ### Fixed — Deviation Prevention / Scientific Integrity
 
 - preserve the product objective: accepted execution surface → later execution → deterministic drift evidence;
-- reject unsupported completeness, performance, portability, security, or novelty claims;
-- require negative evidence and killed designs to remain recorded;
+- reject unsupported completeness, performance, portability, security or novelty claims;
+- retain negative evidence and killed designs;
 - block any change that makes backend uncertainty indistinguishable from no drift.
 
-### Dynamic specialists
+Dynamic specialists were selected per gate across Linux/eBPF, Rust systems, semantics, BTF/kernel compatibility, performance, security/privacy, CI/release and independent review.
 
-Linux/eBPF, Rust systems, observation semantics, BTF/kernel compatibility, performance measurement, security/privacy, CI/release, and independent cross-backend review are selected per gate.
-
-## Stable architecture boundary
+## Stable backend boundary
 
 ```text
 Command / target
@@ -71,7 +71,7 @@ Observation Session
 Backend selection
    /        \
 ptrace      eBPF
- REF      candidate
+ REF      research
    \        /
 Raw typed backend evidence + health
       |
@@ -86,65 +86,48 @@ Policy / Verdict
 Report
 ```
 
-The backend boundary ends before canonical semantic interpretation. A backend supplies typed raw observations plus explicit capability and collection-health metadata. It does not decide policy or verdict.
+A backend supplies typed raw observations plus explicit capability and collection-health metadata. It does not decide policy or verdict.
 
 ## Completeness and fail-closed model
 
-The eBPF work retains explicit non-complete states such as:
+The eBPF work retained explicit non-complete states covering loss, limits, unsupported capability, lifecycle, decode and collector failure.
 
-- complete for a declared capability subset;
-- incomplete loss;
-- incomplete limit;
-- incomplete capability;
-- incomplete lifecycle;
-- incomplete decode;
-- collector/error failure.
+M8.4 proved controlled fail-closed handling for producer loss, truncation, consumer lag, lifecycle timeout, decode/setup failures, post-start collector failure and containment. M8.7 extended that discipline across persistent sessions with routing-state ambiguity, crash/restart, stale epochs, launch/barrier failure and per-session accounting.
 
-M8.4 proved controlled fail-closed handling for real producer loss, truncation, consumer lag, lifecycle timeout, decode/setup failures, post-start collector failure, and containment. M8.7 extended that discipline across persistent sessions, including routing-state ambiguity, crash/restart, stale epochs, launch/barrier failure, and per-session accounting.
-
-A condition that can lose selected evidence without detection is a **KILLED** design for PASS-capable use.
+A condition that can lose selected evidence without detection remains a **KILLED** design for PASS-capable use.
 
 ## Capability and comparability model
 
-Backend capability remains explicit and versioned. Relevant classes include process lifecycle, pathname intent, successful-open identity, fd-attributed effects, fd lifecycle/inheritance, rename/delete, network connect destination, relative-path semantics, causal executable chains, and loss visibility.
+Backend capability remains explicit and versioned. An eBPF backend may support a strict subset; unsupported capability must be explicit.
 
-An eBPF backend may support a strict subset. Unsupported capability must be explicit.
-
-Cross-backend states remain conceptually:
+Cross-backend states remain:
 
 - same-backend comparable;
 - explicitly cross-backend parity-proven for a bounded proposition;
 - cross-backend non-comparable.
 
-M8.5 proved bounded class-local parity for controlled process-lineage, exec-occurrence, and focused positive successful-open propositions. That does not authorize full baseline interchangeability.
+M8.5 proved bounded class-local parity for controlled process-lineage, exec-occurrence and focused positive successful-open propositions. That does not authorize full baseline interchangeability.
 
 ## Privacy boundary
 
-The metadata-only boundary is retained. The eBPF path does not authorize persistence of:
-
-- file contents;
-- environment values;
-- stdin contents;
-- network payloads;
-- secret material;
-- unrestricted argv values.
+The metadata-only boundary is retained. eBPF does not authorize persistence of file contents, environment values, stdin contents, network payloads, secrets or unrestricted argv values.
 
 Persistent observation must not become generic ambient host telemetry.
 
 ## Implementation choice
 
-M8.2 compared Aya and libbpf/libbpf-rs using executable feasibility evidence. libbpf-rs/libbpf was selected for the experimental path because it aligned well with Linux BPF/CO-RE while remaining buildable with the project's Rust 1.82 product line under the recorded dependency-resolution procedure. Aya remains preserved as a viable alternative, not declared technically invalid.
+M8.2 compared Aya and libbpf/libbpf-rs with executable feasibility evidence. libbpf-rs/libbpf was selected for the experimental path while Aya remained a preserved viable alternative.
 
-Stable kernel tracepoints are preferred where they establish the needed semantics. Dynamic/internal kernel hooks require separate justification and compatibility evidence.
+Stable kernel tracepoints are preferred when they establish the needed semantics. Dynamic/internal kernel hooks require separate evidence.
 
 ## Persistent attachment result
 
-M8.6 showed that per-invocation libbpf teardown dominated measured lifecycle cost on the tested host. M8.7 therefore tested a persistent attachment architecture rather than shortening evidence timers.
+M8.6 showed that per-invocation libbpf teardown dominated measured lifecycle cost on the tested host. M8.7 therefore evaluated persistent attachment rather than weakening timing or cleanup semantics.
 
-M8.7 selected and proved, for a bounded controlled prototype:
+M8.7 proved, for the bounded controlled prototype:
 
 - one open/load/attach lifetime across sequential sessions;
-- single active session;
+- one active session at a time;
 - non-zero monotonic session epoch;
 - kernel `TID → epoch` membership;
 - root-registration bootstrap barrier;
@@ -152,40 +135,38 @@ M8.7 selected and proved, for a bounded controlled prototype:
 - epoch-tagged accepted events;
 - per-session drop/routing/decode/limit accounting;
 - descendant drain after root exit;
-- deterministic map/session cleanup;
+- deterministic state cleanup;
 - crash/restart invalidation;
 - explicit rejection of stale/cross-session events;
 - one final detach at collector shutdown.
 
 ### Negative designs retained
 
-- **KILLED:** syscall-exit-only membership propagation, due child scheduling race.
-- **KILLED under Apache-2.0:** direct `task_struct` access through the attempted `tp_btf` path, because the tested verifier required GPL-compatible program licensing.
-- **KILLED:** blocking root barrier inside Rust `pre_exec`, because it deadlocked with `Command::spawn()` exec synchronization.
+- **KILLED:** syscall-exit-only membership propagation due child scheduling race.
+- **KILLED under Apache-2.0:** direct `task_struct` access through the attempted `tp_btf` path because the tested verifier required GPL-compatible program licensing.
+- **KILLED:** blocking root barrier inside Rust `pre_exec` because it deadlocked with `Command::spawn()` exec synchronization.
 - per-invocation libbpf as a low-overhead fast path is **not supported by the measured-host evidence**.
 
 ## M8.7 adversarial closure
 
-M8.7 closed with executable fail-closed evidence for:
+Executable fail-closed evidence covered:
 
-- two sequential isolated epochs under one attachment;
-- 64 descendants surviving root exit;
+- sequential isolated epochs under one attachment;
+- descendants surviving root exit and 64-descendant churn;
 - concurrent-session rejection;
-- malformed and unknown event state;
+- malformed/unknown event state;
 - launch and barrier failure;
 - real kernel routing-state failure;
 - real producer ring-buffer loss;
 - live event-budget truncation;
-- collector crash and restart;
-- a real stale epoch delivered through kernel → ring buffer → userspace.
-
-For the BPF code head used by the final regression review, all seven triggered M8.7/general workflows were successful: CI, Persistent Observer, Routing Failure, Crash Restart, Producer Loss, Event Budget, and Persistent Performance.
+- collector crash/restart;
+- live stale epoch delivered through kernel → ring buffer → userspace.
 
 Independent Red Team decision:
 
 **ACCEPT — BOUNDED PERSISTENT-SESSION ARCHITECTURE FEASIBLE.**
 
-This is architecture acceptance, not product approval.
+That is architecture acceptance, not public-product approval.
 
 ## M8.7 exact-host performance result
 
@@ -199,60 +180,69 @@ The performance protocol was frozen before measurement. On the tested Ubuntu 24.
 | persistent two-session amortized | 505.770932 ms |
 | persistent internal session | 113.918489 ms |
 
-The conservative two-session persistent result was about 16.7% lower than per-invocation libbpf on that exact host/workload, but remained about 50.5× the ptrace median. The internal session latency is not claimed to be pure eBPF overhead; conservative lifecycle/quiescence rules contribute to it.
+The persistent two-session result was about 16.7% lower than per-invocation libbpf on that exact host/workload, but remained about 50.5x the ptrace median. A roughly 113.9 ms internal session latency floor remained.
 
-Therefore M8.7 establishes that persistent attachment changes the cost structure in the intended direction. It does **not** establish that eBPF is faster than ptrace, universal Linux performance, or production readiness.
+Therefore persistent attachment improved the libbpf architecture, but current evidence does not establish a performance reason to expose or select eBPF over ptrace.
 
 ## Privilege boundary
 
-Ptrace remains the ordinary rootless-friendly reference for launched commands. eBPF may require capabilities or privilege depending on host policy.
+Ptrace remains the ordinary launched-command reference. eBPF may require capabilities or privilege depending on host policy.
 
-ExecSurface must not:
+ExecSurface must not silently elevate privilege, weaken security controls, hide why eBPF is unavailable, install an unreviewed privileged helper/service, or turn the feasibility collector into a remote control plane.
 
-- silently elevate privilege;
-- weaken kernel/security controls automatically;
-- hide why eBPF is unavailable;
-- install an unreviewed privileged helper/service;
-- convert a feasibility collector into a remote control plane.
+Production privilege separation remains a separate future gate.
 
-A persistent privileged service has a longer-lived attack surface. Production privilege separation remains an explicit future productization gate.
+## M8.8 — public integration decision
 
-## Gate sequence
+**CLOSED / DEFER — KEEP eBPF RESEARCH-ONLY FOR NOW.**
+
+M6.5 declared before M8 that production eBPF becomes justified only when an external workload reproduces either:
+
+1. ptrace median slowdown > `2x` with direct median >= `100 ms`; or
+2. ptrace median absolute observer overhead > `500 ms`.
+
+No accepted external-workload evidence currently meets that trigger.
+
+Additionally:
+
+- current exact-host eBPF end-to-end performance is worse than ptrace;
+- semantic coverage remains narrower;
+- `learn`, `check`, PASS and baseline interchangeability remain unauthorized;
+- persistent privilege/service lifecycle remains an open product boundary;
+- the default `cargo install execsurface --locked` path is already simple and should not absorb BPF/native dependency burden without a proved user benefit.
+
+Therefore a public developer preview is deferred rather than shipped solely because the backend is technically feasible.
+
+### Reopen rule
+
+Reconsider public eBPF integration only when either:
+
+- a real external workload crosses the predeclared M6.5 ptrace cost trigger and eBPF proves a meaningful clean end-to-end improvement on the same workload; or
+- a concrete external user workflow requires a capability that eBPF can uniquely provide under explicit completeness/privacy semantics.
+
+All privilege, packaging, diagnostics, lifecycle, privacy and authority gates must still pass before exposure.
+
+## Final gate sequence
 
 1. **M8.0 — CLOSED / ACCEPTED:** architecture contract.
-2. **M8.1 — CLOSED / ACCEPTED:** non-breaking observer abstraction; ptrace retained.
-3. **M8.2 — CLOSED / ACCEPTED:** eBPF feasibility and libbpf-rs/libbpf selection.
-4. **M8.3 — CLOSED / ACCEPTED:** isolated metadata-only libbpf observer and observation-only CLI bridge.
+2. **M8.1 — CLOSED / ACCEPTED:** non-breaking backend abstraction; ptrace retained.
+3. **M8.2 — CLOSED / ACCEPTED:** feasibility and libbpf-rs/libbpf selection.
+4. **M8.3 — CLOSED / ACCEPTED:** isolated metadata-only observer and observation-only bridge.
 5. **M8.4 — CLOSED / PROVED:** fail-closed loss/lifecycle gate.
-6. **M8.5 — CLOSED / ACCEPTED:** bounded semantic parity and independent Red Team closure.
-7. **M8.6 — CLOSED / ACCEPTED:** exact-host performance/compatibility evidence; per-invocation detach identified as dominant measured lifecycle cost.
-8. **M8.7 — CLOSED / ACCEPTED:** bounded persistent-session architecture feasibility, adversarial isolation/failure evidence, exact-host performance measurement, and independent Red Team closure.
-9. **M8.8 — NEXT:** controlled public-alpha integration decision.
+6. **M8.5 — CLOSED / ACCEPTED:** bounded semantic parity and Red Team closure.
+7. **M8.6 — CLOSED / ACCEPTED:** performance/compatibility evidence and teardown attribution.
+8. **M8.7 — CLOSED / ACCEPTED:** bounded persistent-session feasibility, adversarial evidence, performance measurement and Red Team closure.
+9. **M8.8 — CLOSED / DEFER:** public eBPF exposure deferred pending real user-value evidence.
 
-## M8.8 boundary
+## Final status
 
-M8.8 may evaluate an explicit opt-in public-alpha surface, but it must not assume production daemon readiness merely because M8.7 proved architecture feasibility.
-
-Before any public integration decision it must address, at minimum:
-
-- explicit backend selection and no silent fallback;
-- incomplete-state CLI/schema surfacing;
-- privilege and service lifecycle boundaries;
-- packaging/install isolation so the stable ptrace path is not degraded;
-- compatibility diagnostics;
-- technical-evaluation documentation;
-- release/rollback evidence;
-- continued ptrace reference authority;
-- continued prohibition on eBPF PASS unless a separate gate proves and authorizes it.
-
-## Current status
-
-- M8 objective: **OPEN — M8.8 CONTROLLED PUBLIC-ALPHA INTEGRATION NEXT**
-- M8.0–M8.7: **CLOSED** under their recorded bounded claims
-- M8.7 persistent architecture: **ACCEPTED — FEASIBLE, NOT PRODUCTION APPROVED**
-- M8.8 public-alpha integration decision: **NEXT / NOT STARTED**
+- M8 research program: **CLOSED / ACCEPTED**
+- public eBPF integration: **DEFERRED**
+- eBPF research asset: **RETAINED**
+- ptrace correctness reference/default public backend: **RETAINED**
 - eBPF full-surface comparability: **FALSE**
 - eBPF PASS authority: **NOT AUTHORIZED**
 - automatic cross-backend baseline interchangeability: **NOT AUTHORIZED**
 - automatic backend selection: **NOT AUTHORIZED**
-- ptrace correctness reference: **RETAINED**
+
+The next strategic evidence should come from independent adoption and real external workloads, not from adding more speculative eBPF surface.
