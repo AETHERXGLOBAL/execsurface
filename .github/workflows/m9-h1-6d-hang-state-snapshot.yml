@@ -1,0 +1,160 @@
+name: M9-H1.6D ptrace hang state snapshot
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - .github/workflows/m9-h1-6d-hang-state-snapshot.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture-first-hang:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      SOURCE: crates/execsurface-observe/src/linux_ptrace.rs
+      PRODUCTION_SHA256: 3dc656358a3675a0d78135bb83046bc45c33dca2718c8bd8b68fa090e18eac8b
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+
+      - name: Reconstruct exact production-clean candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m9-h1-6d-evidence
+          python3 scripts/m9_apply_ptrace_esrch_fix.py
+          python3 scripts/m9_apply_ptrace_exit_lifecycle.py
+          python3 scripts/m9_apply_ptrace_preregistration_ordering.py
+          python3 scripts/m9_apply_get_syscall_info_exit_group_fix.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          python3 scripts/m9_finalize_ptrace_lifecycle_core.py
+          rustfmt "+$RUST_TOOLCHAIN" --edition 2021 "$SOURCE"
+          actual="$(sha256sum "$SOURCE" | awk '{print $1}')"
+          printf 'expected=%s\nactual=%s\n' "$PRODUCTION_SHA256" "$actual" \
+            | tee m9-h1-6d-evidence/source-hash.txt
+          test "$actual" = "$PRODUCTION_SHA256"
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/exit_group_sched_getaffinity_race.c \
+            -o /tmp/m9-h1-6d-exit-group-race
+
+      - name: Capture kernel-visible state on first hang
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-6d-evidence/summary.txt
+          for attempt in $(seq 1 120); do
+            stdout="m9-h1-6d-evidence/attempt-${attempt}.json"
+            stderr="m9-h1-6d-evidence/attempt-${attempt}.stderr"
+            setsid target/debug/execsurface observe -- /tmp/m9-h1-6d-exit-group-race \
+              >"$stdout" 2>"$stderr" &
+            observer_pid=$!
+
+            finished=0
+            for tick in $(seq 1 80); do
+              if ! kill -0 "$observer_pid" 2>/dev/null; then
+                finished=1
+                break
+              fi
+              sleep 0.1
+            done
+
+            if [ "$finished" -eq 0 ] && kill -0 "$observer_pid" 2>/dev/null; then
+              snapshot="m9-h1-6d-evidence/hang-${attempt}-snapshot.txt"
+              {
+                printf 'HANG_SNAPSHOT attempt=%s observer_pid=%s\n' "$attempt" "$observer_pid"
+                printf 'kernel=%s\n' "$(uname -srmo)"
+                printf '\n=== session task table ===\n'
+                ps -eLo pid,ppid,sid,lwp,tgid,nlwp,stat,wchan:32,comm,args \
+                  | awk -v sid="$observer_pid" 'NR==1 || $3==sid'
+                printf '\n=== pstree ===\n'
+                pstree -pal "$observer_pid" || true
+                printf '\n=== per-task proc state ===\n'
+                tids=$(ps -eLo sid,lwp --no-headers \
+                  | awk -v sid="$observer_pid" '$1==sid {print $2}' \
+                  | sort -n -u)
+                for tid in $tids; do
+                  printf '\n--- tid=%s ---\n' "$tid"
+                  if [ -r "/proc/$tid/status" ]; then
+                    grep -E '^(Name|State|Tgid|Pid|PPid|TracerPid|Threads):' "/proc/$tid/status" || true
+                  else
+                    echo 'status=unavailable'
+                  fi
+                  printf 'wchan='
+                  cat "/proc/$tid/wchan" 2>/dev/null || true
+                  printf '\nsyscall='
+                  cat "/proc/$tid/syscall" 2>/dev/null || true
+                  printf '\n'
+                done
+                printf '\n=== observer fd/task counts ===\n'
+                find "/proc/$observer_pid/task" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null || true
+              } >"$snapshot"
+
+              printf 'attempt=%s HANG observer_pid=%s\n' "$attempt" "$observer_pid" \
+                | tee -a m9-h1-6d-evidence/summary.txt
+              kill -TERM -- "-$observer_pid" 2>/dev/null || true
+              sleep 1
+              kill -KILL -- "-$observer_pid" 2>/dev/null || true
+              wait "$observer_pid" 2>/dev/null || true
+              cat "$snapshot"
+              exit 1
+            fi
+
+            set +e
+            wait "$observer_pid"
+            rc=$?
+            set -e
+            printf 'attempt=%s rc=%s\n' "$attempt" "$rc" \
+              >> m9-h1-6d-evidence/summary.txt
+            test "$rc" -eq 0
+            python3 - "$stdout" <<'PY'
+          import json, sys
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          data = json.loads(path.read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+          done
+          echo 'NO_HANG_OBSERVED_IN_120_ATTEMPTS' | tee -a m9-h1-6d-evidence/summary.txt
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'head_sha=%s\n' "$GITHUB_SHA"
+            printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > m9-h1-6d-evidence/environment.txt
+          find m9-h1-6d-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-h1-6d-evidence/SHA256SUMS
+
+      - name: Upload hang snapshot evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-h1-6d-hang-snapshot-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-h1-6d-evidence
+          if-no-files-found: error
+          retention-days: 30
