@@ -14,7 +14,7 @@ permissions:
 jobs:
   productize-exact-proven-candidate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     env:
       RUST_TOOLCHAIN: 1.90.0
       JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
@@ -60,7 +60,6 @@ jobs:
           actual="$(sha256sum crates/execsurface-observe/src/linux_ptrace.rs | awk '{print $1}')"
           printf 'expected=%s\nactual=%s\n' "$PROVEN_CANDIDATE_SHA256" "$actual"
           test "$actual" = "$PROVEN_CANDIDATE_SHA256"
-          git diff --exit-code -- scripts || true
 
       - name: Run unchanged observer regression suite
         shell: bash
@@ -86,7 +85,7 @@ jobs:
           set -euo pipefail
           exercised=0
           for attempt in $(seq 1 40); do
-            target/debug/execsurface observe -- /tmp/m9-h1-6-exit-group-race \
+            timeout 15s target/debug/execsurface observe -- /tmp/m9-h1-6-exit-group-race \
               > "/tmp/h16-exit-${attempt}.json" \
               2> "/tmp/h16-exit-${attempt}.stderr"
             python3 - "$attempt" <<'PY'
@@ -111,7 +110,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4 5 6; do
-            target/debug/execsurface observe -- /tmp/m9-h1-6-thread-lifecycle 12 16 4 \
+            timeout 20s target/debug/execsurface observe -- /tmp/m9-h1-6-thread-lifecycle 12 16 4 \
               > "/tmp/h16-prereg-${attempt}.stdout" \
               2> "/tmp/h16-prereg-${attempt}.stderr"
             python3 - "$attempt" <<'PY'
@@ -134,7 +133,7 @@ jobs:
           set -euo pipefail
           (cd external/just && cargo "+$RUST_TOOLCHAIN" test --all >/dev/null 2>&1)
           for attempt in 1 2 3; do
-            target/debug/execsurface observe -- \
+            timeout 90s target/debug/execsurface observe -- \
               /bin/bash -lc \
               "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
               > "/tmp/h16-just-${attempt}.json" \
