@@ -12,6 +12,9 @@ fn main() {
     if std::env::var_os("M8_7_FAULT_SMALL_TASK_MAP").is_some() {
         clang_args.push(OsStr::new("-DM8_7_TASK_EPOCH_MAX_ENTRIES=8"));
     }
+    if std::env::var_os("M8_7_FAULT_SMALL_RINGBUF").is_some() {
+        clang_args.push(OsStr::new("-DM8_7_RINGBUF_MAX_ENTRIES=4096"));
+    }
 
     libbpf_cargo::SkeletonBuilder::new()
         .source("src/bpf/persistent.bpf.c")
@@ -21,4 +24,5 @@ fn main() {
 
     println!("cargo:rerun-if-changed=src/bpf/persistent.bpf.c");
     println!("cargo:rerun-if-env-changed=M8_7_FAULT_SMALL_TASK_MAP");
+    println!("cargo:rerun-if-env-changed=M8_7_FAULT_SMALL_RINGBUF");
 }
