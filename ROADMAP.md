@@ -164,18 +164,43 @@ Tracking: GitHub Issues #34, #37, #40, #42, #44, #46 and #49.
 
 ## M9 — Independent Adoption & Real-Workload Evidence
 
+**OPEN — M9.0 CLOSED / PROVED; M9.1 NEXT**
+
+The next highest-value program is independent use of the existing public product on real developer/CI workloads, not another speculative observer feature.
+
+### M9.0 — Protocol & Intake Freeze
+
+**CLOSED / PROVED**
+
+The evidence protocol, machine-readable schema, independence provenance classes, privacy boundary, failure-preservation rules, exact-host performance protocol, and predeclared M6.5 eBPF reopen trigger were frozen before accepted M9 external evidence.
+
+Red Team found and killed an initial schema design that could have allowed self-run compatibility evidence to be mislabeled as independent adoption. The hardened schema requires provenance and CI contains a negative sentinel that rejects this attack.
+
+Closure evidence on protocol snapshot `ffff35904556cd020b06369a3b272da20598b53c`:
+
+- `M9 Evidence Protocol` run `36266376676`: **SUCCESS**;
+- normal `CI` run `36266376681`: **SUCCESS**.
+
+No accepted M9 external/adoption evidence was collected before protocol freeze.
+
+Protocol: `docs/milestones/M9_PROTOCOL.md`.
+Schema: `docs/milestones/M9_EVIDENCE_SCHEMA.json`.
+Tracking: GitHub Issue #51.
+
+### M9.1 — Zero-Contact External Workload Expansion
+
 **NEXT**
 
-The next highest-value milestone is not another speculative observer feature. It is independent use of the existing public product on real developer/CI workloads.
+Before observing results, freeze selection criteria and pinned revisions for multiple public, unmodified external workloads. Run the unchanged public ptrace product without maintainer coordination and preserve all successes and failures. Every self-run external result remains `ZERO_CONTACT_EXTERNAL_REPRO`; it must never be represented as independent adoption.
 
-M9 should seek machine-readable evidence for:
+### M9.2 — Independent Adoption Evidence
 
-- zero-contact installation and first successful use by independent users/projects;
-- real baseline → rerun → drift workflows outside AETHER X-controlled fixtures;
-- false-positive / false-negative reports and usability friction;
-- real command runtimes and ptrace overhead on workloads with direct median >=100 ms;
-- whether any external workload crosses the predeclared M6.5 eBPF trigger;
-- whether users require an observation capability not available under the ptrace product;
-- retention of privacy, completeness, comparability and verdict semantics under external use.
+**PLANNED**
 
-M9 evidence may validate continued ptrace productization or provide the first justified trigger to reopen the eBPF path. It must not manufacture an eBPF need in advance.
+Accept independent-adoption claims only when third-party initiation/execution and provenance are auditable under the frozen schema.
+
+### M9.3 — Evidence Synthesis / Product Decision
+
+**PLANNED**
+
+Conclude whether external evidence supports continued ptrace productization, identifies concrete UX/reliability work, or satisfies an explicit eBPF reopen condition. M9 must not manufacture an eBPF need in advance.
