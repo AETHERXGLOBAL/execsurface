@@ -335,7 +335,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         || decode_errors_total != 0
         || !final_membership_map_empty
         || !final_pending_mechanism_map_empty
-        || report.sessions.iter().any(|session| !session.clean_for_m8_7a)
+        || report
+            .sessions
+            .iter()
+            .any(|session| !session.clean_for_m8_7a)
     {
         return Err("M8.7a persistent observer evidence failed final isolation gates".into());
     }
@@ -381,11 +384,7 @@ fn run_session<M: MapCore + ?Sized>(
 
     let (mut child, release_fd) = spawn_blocked(fixture)?;
     let root_tid = child.id();
-    task_epoch.update(
-        &root_tid.to_ne_bytes(),
-        &epoch.to_ne_bytes(),
-        MapFlags::ANY,
-    )?;
+    task_epoch.update(&root_tid.to_ne_bytes(), &epoch.to_ne_bytes(), MapFlags::ANY)?;
     tracker.borrow_mut().begin(epoch, root_tid)?;
 
     if let Err(error) = release_target(release_fd) {
