@@ -37,33 +37,14 @@ ExecSurface does **not** infer that this is malicious. It reports observed drift
 
 ## Quickstart
 
-### 1. Install the public alpha — no source clone
+### 1. Install from crates.io
 
 ```bash
-VERSION=v0.1.0-alpha.2
-TARGET=x86_64-unknown-linux-gnu
-ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
-
-curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}"
-curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}.sha256"
-
-sha256sum -c "${ASSET}.sha256"
-tar -xzf "${ASSET}"
-
-mkdir -p "$HOME/.local/bin"
-install -m 0755 "execsurface-${VERSION}-${TARGET}/execsurface" "$HOME/.local/bin/execsurface"
-export PATH="$HOME/.local/bin:$PATH"
-
+cargo install execsurface --locked
 execsurface --version
 ```
 
-Optional provenance verification with GitHub CLI:
-
-```bash
-gh attestation verify "$ASSET" -R AETHERXGLOBAL/execsurface
-```
-
-A valid attestation links the artifact to its GitHub build provenance. It does **not** prove the binary is safe.
+The current public alpha is also available as a signed GitHub Release binary for Linux x86_64.
 
 ### 2. Check environment readiness
 
@@ -102,7 +83,8 @@ This creates a starter policy and GitHub Actions workflow. It **does not run you
 The GitHub Action executes its input as `/bin/bash -lc <command>`. Learn locally with the same wrapper:
 
 ```bash
-execsurface learn --   /bin/bash -lc 'cargo test --locked'
+execsurface learn -- \
+  /bin/bash -lc 'cargo test --locked'
 ```
 
 Review `execsurface.lock.json` before committing it.
@@ -110,14 +92,42 @@ Review `execsurface.lock.json` before committing it.
 ### 5. Check the same command
 
 ```bash
-execsurface check   --policy execsurface-policy.json   -- /bin/bash -lc 'cargo test --locked'
+execsurface check \
+  --policy execsurface-policy.json \
+  -- /bin/bash -lc 'cargo test --locked'
 ```
 
 For a five-minute controlled drift demonstration, see **[Five-Minute Start](docs/QUICKSTART_5_MIN.md)**.
 
-## Cargo installation
+## Alternative installation paths
 
-A source clone is not required. Until the first crates.io publication is completed, use the immutable Git tag:
+### GitHub Release binary
+
+```bash
+VERSION=v0.1.0-alpha.2
+TARGET=x86_64-unknown-linux-gnu
+ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
+
+curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}"
+curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}.sha256"
+
+sha256sum -c "${ASSET}.sha256"
+tar -xzf "${ASSET}"
+
+mkdir -p "$HOME/.local/bin"
+install -m 0755 "execsurface-${VERSION}-${TARGET}/execsurface" "$HOME/.local/bin/execsurface"
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Optional provenance verification with GitHub CLI:
+
+```bash
+gh attestation verify "$ASSET" -R AETHERXGLOBAL/execsurface
+```
+
+A valid attestation links the artifact to its GitHub build provenance. It does **not** prove the binary is safe.
+
+### Immutable Git tag fallback
 
 ```bash
 cargo install \
@@ -125,12 +135,6 @@ cargo install \
   --tag v0.1.0-alpha.2 \
   execsurface \
   --locked
-```
-
-The workspace is now registry-ready without changing its runtime semantics. After the first crates.io publication is verified, the Rust-native install path will become:
-
-```bash
-cargo install execsurface --locked
 ```
 
 See [crates.io Publishing](docs/CRATES_IO_PUBLISHING.md).
@@ -272,6 +276,7 @@ You can also read the public adopter call in [Issue #28](https://github.com/AETH
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Command examples](docs/EXAMPLES.md)
 - [GitHub Action](docs/GITHUB_ACTION.md)
+- [crates.io Publishing](docs/CRATES_IO_PUBLISHING.md)
 - [M6.6 distribution architecture](docs/milestones/M6_6_DISTRIBUTION_ARCHITECTURE.md)
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
