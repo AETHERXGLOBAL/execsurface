@@ -1,0 +1,225 @@
+name: M9-H1.6 installed-core ptrace lifecycle regression
+
+on:
+  push:
+    branches:
+      - hardening/m9-ptrace-esrch-just
+    paths:
+      - crates/execsurface-observe/src/linux_ptrace.rs
+      - .github/workflows/m9-h1-6-core-regression.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove-installed-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      JUST_SHA: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+      PROVED_SOURCE_SHA256: 72978ef99fd24b944cb191d5eeae665387ed223271c31e5636818f5ea81def37
+    steps:
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified casey just
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: casey/just
+          ref: ${{ env.JUST_SHA }}
+          path: external/just
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain and verify exact promoted source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+          test "$(git -C external/just rev-parse HEAD)" = "$JUST_SHA"
+          test -z "$(git -C external/just status --porcelain)"
+          actual="$(sha256sum crates/execsurface-observe/src/linux_ptrace.rs | awk '{print $1}')"
+          printf 'proved=%s\ninstalled=%s\n' "$PROVED_SOURCE_SHA256" "$actual"
+          test "$actual" = "$PROVED_SOURCE_SHA256"
+
+      - name: Build deterministic lifecycle fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m9-h1-6-evidence
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/exit_group_sched_getaffinity_race.c \
+            -o /tmp/m9-h1-6-exit-group-race
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+            tests/fixtures/m9/thread_lifecycle_repro.c \
+            -o /tmp/m9-h1-6-thread-lifecycle-repro
+          sha256sum \
+            tests/fixtures/m9/exit_group_sched_getaffinity_race.c \
+            tests/fixtures/m9/thread_lifecycle_repro.c \
+            /tmp/m9-h1-6-exit-group-race \
+            /tmp/m9-h1-6-thread-lifecycle-repro \
+            > m9-h1-6-evidence/fixture-SHA256SUMS
+
+      - name: Run unchanged observer regression suite from installed core
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" fmt --all -- --check
+          cargo "+$RUST_TOOLCHAIN" test -p execsurface-observe \
+            2>&1 | tee m9-h1-6-evidence/observer-tests.log
+          cargo "+$RUST_TOOLCHAIN" build -p execsurface \
+            2>&1 | tee m9-h1-6-evidence/build.log
+
+      - name: Prove installed core on amplified exit-group reproducer
+        shell: bash
+        run: |
+          set -uo pipefail
+          : > m9-h1-6-evidence/exit-group-summary.txt
+          exercised=0
+          complete=0
+          for attempt in $(seq 1 120); do
+            set +e
+            target/debug/execsurface observe -- /tmp/m9-h1-6-exit-group-race \
+              > "m9-h1-6-evidence/exit-group-${attempt}.json" \
+              2> "m9-h1-6-evidence/exit-group-${attempt}.stderr"
+            rc=$?
+            set -e
+            deferred=$(grep -c 'M9_GET_SYSCALL_INFO_EXIT_GROUP_DEATH_DEFERRED' \
+              "m9-h1-6-evidence/exit-group-${attempt}.stderr" || true)
+            exercised=$((exercised + deferred))
+            printf 'attempt=%s rc=%s deferred=%s\n' "$attempt" "$rc" "$deferred" \
+              >> m9-h1-6-evidence/exit-group-summary.txt
+            if [ "$rc" -ne 0 ]; then
+              cat "m9-h1-6-evidence/exit-group-${attempt}.stderr"
+              exit 1
+            fi
+            python3 - "$attempt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          attempt = sys.argv[1]
+          data = json.loads(Path(f"m9-h1-6-evidence/exit-group-{attempt}.json").read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            if grep -Eq 'ExecSurface: ERROR|observer protocol error|observer OS error|M9_(UNTRACKED|UNEXPECTED|DUPLICATE|INVALID|STALE|PREREGISTRATION_STOPS_AT_ECHILD)' \
+              "m9-h1-6-evidence/exit-group-${attempt}.stderr"; then
+              cat "m9-h1-6-evidence/exit-group-${attempt}.stderr"
+              exit 1
+            fi
+            complete=$((complete + 1))
+          done
+          printf 'bounded_recovery_exercised=%s\ncomplete_runs=%s\n' "$exercised" "$complete" \
+            >> m9-h1-6-evidence/exit-group-summary.txt
+          test "$complete" -eq 120
+          test "$exercised" -gt 0
+          cat m9-h1-6-evidence/exit-group-summary.txt
+
+      - name: Re-prove pre-registration ordering from installed core
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > m9-h1-6-evidence/prereg-summary.txt
+          for attempt in $(seq 1 12); do
+            target/debug/execsurface observe -- \
+              /tmp/m9-h1-6-thread-lifecycle-repro 12 16 4 \
+              > "m9-h1-6-evidence/prereg-${attempt}.stdout" \
+              2> "m9-h1-6-evidence/prereg-${attempt}.stderr"
+            python3 - "$attempt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          attempt = sys.argv[1]
+          raw = Path(f"m9-h1-6-evidence/prereg-{attempt}.stdout").read_text()
+          marker = raw.find("\n{")
+          assert marker >= 0, raw[:300]
+          data = json.loads(raw[marker + 1:])
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            reconciled=$(grep -c 'M9_PREREGISTRATION_STOP_RECONCILED' \
+              "m9-h1-6-evidence/prereg-${attempt}.stderr" || true)
+            printf 'attempt=%s complete=true exit=0 prereg_reconciled=%s\n' \
+              "$attempt" "$reconciled" >> m9-h1-6-evidence/prereg-summary.txt
+          done
+
+      - name: Prime pinned external workload directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd external/just && cargo "+$RUST_TOOLCHAIN" test --all >/dev/null 2>&1)
+
+      - name: Prove pinned casey just five consecutive times from installed core
+        shell: bash
+        run: |
+          set -uo pipefail
+          : > m9-h1-6-evidence/just-summary.txt
+          for attempt in 1 2 3 4 5; do
+            set +e
+            target/debug/execsurface observe -- \
+              /bin/bash -lc \
+              "cd external/just && cargo +$RUST_TOOLCHAIN test --all >/dev/null 2>&1" \
+              > "m9-h1-6-evidence/just-${attempt}.json" \
+              2> "m9-h1-6-evidence/just-${attempt}.stderr"
+            rc=$?
+            set -e
+            if [ "$rc" -ne 0 ]; then
+              cat "m9-h1-6-evidence/just-${attempt}.stderr"
+              exit 1
+            fi
+            python3 - "$attempt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          attempt = sys.argv[1]
+          data = json.loads(Path(f"m9-h1-6-evidence/just-{attempt}.json").read_text())
+          assert data.get("complete") is True, data.get("warnings")
+          outcome = data.get("outcome", {})
+          assert outcome.get("exit_code") == 0, outcome
+          assert outcome.get("signal") is None, outcome
+          PY
+            if grep -Eq 'ExecSurface: ERROR|observer protocol error|observer OS error|M9_(UNTRACKED|UNEXPECTED|DUPLICATE|INVALID|STALE|PREREGISTRATION_STOPS_AT_ECHILD)' \
+              "m9-h1-6-evidence/just-${attempt}.stderr"; then
+              cat "m9-h1-6-evidence/just-${attempt}.stderr"
+              exit 1
+            fi
+            prereg=$(grep -c 'M9_PREREGISTRATION_STOP_RECONCILED' \
+              "m9-h1-6-evidence/just-${attempt}.stderr" || true)
+            deferred=$(grep -c 'M9_GET_SYSCALL_INFO_EXIT_GROUP_DEATH_DEFERRED' \
+              "m9-h1-6-evidence/just-${attempt}.stderr" || true)
+            printf 'attempt=%s complete=true exit=0 prereg_reconciled=%s deferred=%s\n' \
+              "$attempt" "$prereg" "$deferred" >> m9-h1-6-evidence/just-summary.txt
+          done
+          cat m9-h1-6-evidence/just-summary.txt
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'head_sha=%s\n' "$GITHUB_SHA"
+            printf 'just_sha=%s\n' "$JUST_SHA"
+            printf 'rust_toolchain=%s\n' "$RUST_TOOLCHAIN"
+            printf 'source_sha256=%s\n' "$(sha256sum crates/execsurface-observe/src/linux_ptrace.rs | awk '{print $1}')"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > m9-h1-6-evidence/environment.txt
+          find m9-h1-6-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > m9-h1-6-evidence/SHA256SUMS
+
+      - name: Upload installed-core evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m9-h1-6-installed-core-${{ github.run_id }}-${{ github.run_attempt }}
+          path: m9-h1-6-evidence
+          if-no-files-found: error
+          retention-days: 30
