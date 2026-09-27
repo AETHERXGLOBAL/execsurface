@@ -18,6 +18,8 @@ ExecSurface is a Linux-first developer tool that learns an accepted **runtime ex
 It is designed for software, CI pipelines, dependencies, developer tools and AI tooling where code review alone does not show every runtime effect.
 
 > **Public Alpha:** Linux x86_64 only. Current product version: **0.1.0-alpha.3**.
+>
+> **Self-service:** no signup, API key, meeting, or AETHER X approval is required. Start with **[Self-Service Start](docs/SELF_SERVICE_START.md)** or run a fully independent evaluation with **[Independent Evaluation](docs/INDEPENDENT_EVALUATION.md)**.
 
 ### The idea in 10 seconds
 
@@ -97,7 +99,7 @@ execsurface check \
   -- /bin/bash -lc 'cargo test --locked'
 ```
 
-For independent evaluation with machine-readable PASS/REVIEW evidence, use the **[Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md)**. For the shortest controlled drift demonstration, see **[Five-Minute Start](docs/QUICKSTART_5_MIN.md)**.
+For independent evaluation with machine-readable PASS/REVIEW evidence, use the **[Independent Evaluation guide](docs/INDEPENDENT_EVALUATION.md)** or the **[Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md)**. For the shortest controlled drift demonstration, see **[Five-Minute Start](docs/QUICKSTART_5_MIN.md)**.
 
 `SELF-EVALUATION PASS ≠ INDEPENDENT ADOPTION`
 
@@ -127,7 +129,7 @@ Optional provenance verification with GitHub CLI:
 gh attestation verify "$ASSET" -R AETHERXGLOBAL/execsurface
 ```
 
-A valid attestation links the artifact to its GitHub build provenance. It does **not** prove the binary is safe.
+A valid attestation links the artifact to its build source/workflow. It does **not** prove the binary is safe.
 
 ### Immutable Git tag fallback
 
@@ -254,7 +256,7 @@ A new baseline is not automatically an approval decision.
 | REVIEW | 10 | one or more findings require review |
 | BLOCK | 20 | one or more findings matched blocking policy |
 
-## Looking for early adopters
+## Looking for independent evaluators
 
 ExecSurface public alpha is most relevant to teams experimenting with:
 
@@ -266,16 +268,19 @@ ExecSurface public alpha is most relevant to teams experimenting with:
 
 We are looking for compatibility evidence and workflow feedback, not testimonials.
 
-ExecSurface detects **observed execution-surface drift under its recorded observer and policy**. It does not prove that a program is safe.
+No prior contact is required. Follow the **[Independent Evaluation guide](docs/INDEPENDENT_EVALUATION.md)** and submit the observed result through the **[Independent Evaluation issue form](https://github.com/AETHERXGLOBAL/execsurface/issues/new/choose)**. Negative, partial, unsupported-environment, usability, and performance-problem results are explicitly welcome.
 
-Use the **[Adoption / Integration issue template](https://github.com/AETHERXGLOBAL/execsurface/issues/new/choose)** and do not post secrets.
+ExecSurface detects **observed execution-surface drift under its recorded observer and policy**. It does not prove that a program is safe.
 
 You can also read the public adopter call in [Issue #28](https://github.com/AETHERXGLOBAL/execsurface/issues/28).
 
 ## Documentation
 
+- [Self-Service Start](docs/SELF_SERVICE_START.md)
+- [Independent Evaluation](docs/INDEPENDENT_EVALUATION.md)
 - [Five-Minute Start](docs/QUICKSTART_5_MIN.md)
 - [Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md)
+- [GitHub Discovery and Marketplace Readiness](docs/GITHUB_DISCOVERY.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Command examples](docs/EXAMPLES.md)
 - [GitHub Action](docs/GITHUB_ACTION.md)
