@@ -1,9 +1,21 @@
 # Post-M9 — eBPF E3 Shared Lifecycle Proposition Parity Protocol
 
 Date: 2026-09-27
-Status: **PREREGISTERED — NOT YET EXECUTED**
+Status: **PREREGISTERED — PRE-EXECUTION CORRECTION APPLIED / NOT YET EXECUTED**
 Tracking: GitHub issue #85
 Baseline HEAD: `d71284de06ac7f50ffcc163ab2c09a01cc408f71`
+
+## Pre-execution correction
+
+The first preregistered draft specified one successful exec occurrence in the success-child role. Before any E3 workflow was created or executed, review against the unchanged M8.7 health contract found that `clean_for_m8_7a` requires `exec_count >= 2` in each accepted session.
+
+The fixture is therefore corrected **before execution** to use a deterministic two-stage successful exec chain in the first child. No observed E3 result exists at the time of this correction. The M8.7 health criterion is not weakened or patched.
+
+The corrected success chain is:
+
+`success_child -> exec this fixture in exec-helper mode -> exec /bin/true`.
+
+Thus the frozen proposition is exactly **two** successful exec occurrences on the first child TID, while the failed-exec child still produces zero successful exec occurrences.
 
 ## Objective
 
@@ -24,21 +36,23 @@ E3 therefore uses a deterministic lifecycle fixture with a prospectively frozen 
 
 ## Frozen fixture topology
 
-A runner-local C fixture supports two launch modes:
+A runner-local C fixture supports three modes:
 
 - `direct` — used by the ptrace reference;
-- `barrier <fd>` — used by the unchanged M8.7 persistent observer so root epoch membership is installed before the workload is released.
+- `barrier <fd>` — used by the unchanged M8.7 persistent observer so root epoch membership is installed before the workload is released;
+- `exec-helper` — internal deterministic stage used only by `success_child` after its first successful exec.
 
-After launch/release, both modes execute the same workload logic:
+After launch/release, both `direct` and `barrier` modes execute the same workload logic:
 
 1. root creates child `success_child` with `fork()`;
-2. `success_child` successfully `execve`s `/bin/true` and exits `0`;
-3. root waits for `success_child` and requires clean exit;
-4. root creates child `failed_exec_child` with `fork()`;
-5. `failed_exec_child` attempts `execve` of the guaranteed-missing path `/__execsurface_post_m9_e3_missing__/exec-probe`;
-6. that exec must fail with `ENOENT`; the child then exits `0`;
-7. root waits for `failed_exec_child` and requires clean exit;
-8. root exits `0`.
+2. `success_child` successfully `execve`s the same fixture in `exec-helper` mode;
+3. `exec-helper` successfully `execve`s `/bin/true` on the same TID and exits `0`;
+4. root waits for `success_child` and requires clean exit;
+5. root creates child `failed_exec_child` with `fork()`;
+6. `failed_exec_child` attempts `execve` of the guaranteed-missing path `/__execsurface_post_m9_e3_missing__/exec-probe`;
+7. that exec must fail with `ENOENT`; the child then exits `0`;
+8. root waits for `failed_exec_child` and requires clean exit;
+9. root exits `0`.
 
 No threads, vfork, clone3, file payload assertions or network behavior are part of E3.
 
@@ -55,9 +69,12 @@ Both backends must establish exactly two root-created child roles in workload or
 
 The eBPF persistent transcript must preserve parent -> child identity well enough to assign both children to the active root session.
 
-### P2 — successful child exec occurrence
+### P2 — successful child exec occurrences
 
-The first spawned child must produce exactly one successful exec occurrence after its spawn.
+The first spawned child must produce exactly **two** successful exec occurrences on the same child TID after its spawn:
+
+1. fixture -> `exec-helper`;
+2. `exec-helper` -> `/bin/true`.
 
 Path identity is **not** compared in this gate because the M8.7 persistent lifecycle event is occurrence-only.
 
@@ -84,7 +101,8 @@ The persistent session used for parity must retain the E2/M8.7 health invariants
 - routing errors `0`;
 - membership maps empty;
 - event limit not hit;
-- authority block unchanged.
+- authority block unchanged;
+- existing `clean_for_m8_7a == true` is preserved unchanged.
 
 ## Reference evidence
 
@@ -101,6 +119,14 @@ The projection consumes only:
 - command outcome and health.
 
 Other ptrace events are retained in the raw artifact but ignored for this E3 proposition gate.
+
+The ptrace projection is frozen as:
+
+- exactly two `process_spawn` events whose parent TID is the same root role;
+- first spawned child has exactly two `process_exec` events;
+- second spawned child has zero `process_exec` events;
+- no additional spawned child roles;
+- outcome exit `0`, no signal.
 
 ## Persistent eBPF evidence
 
@@ -125,6 +151,16 @@ The instrumentation may not:
 
 The exact runner-only patch must be preserved as evidence.
 
+The persistent projection is frozen as:
+
+- exactly two accepted `spawn` transcript events whose `tid` is the session root TID;
+- first spawn's child TID has exactly two accepted `exec` transcript events;
+- second spawn's child TID has zero accepted `exec` transcript events;
+- no additional accepted spawn roles;
+- M8.7 session outcome/health satisfies P5.
+
+Exit transcript events are retained for health evidence but are not compared against ptrace because public raw Observation does not serialize process-exit events.
+
 ## Execution shape
 
 Run on one GitHub-hosted Ubuntu 24.04 job:
@@ -135,7 +171,7 @@ Run on one GitHub-hosted Ubuntu 24.04 job:
 4. build the M8.7 persistent observer with transcript-only runner instrumentation;
 5. execute one persistent-observer invocation (which naturally contains 2 distinct-epoch sessions);
 6. require both persistent sessions independently satisfy P1–P5;
-7. compare each eBPF session projection against the deterministic ptrace proposition vector.
+7. compare each eBPF session proposition vector against the deterministic ptrace proposition vector.
 
 No failed run/session may be replaced or retried.
 
@@ -150,7 +186,7 @@ E3 PASS requires:
 - persistent invocation exits `0` and has exactly 2 sessions;
 - both persistent sessions satisfy P1–P5;
 - both persistent proposition projections equal the ptrace proposition vector for P1–P4;
-- `full_surface_comparable` remains explicitly `false`;
+- `full_surface_comparable` remains explicitly `false` in the E3 aggregate decision;
 - `ebpf_pass_authorized` remains explicitly `false`;
 - `product_integration_authorized` remains explicitly `false`.
 
