@@ -1,0 +1,117 @@
+name: Independent Evaluation
+
+description: Submit an independently initiated ExecSurface evaluation, including negative or partial results.
+title: "[Independent Evaluation] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for evaluating ExecSurface independently.
+
+        Please report the result as observed. PASS, REVIEW, BLOCK, ERROR, PARTIAL, unsupported-environment, performance concerns, false positives, false negatives, and usability failures are all useful evidence.
+
+        Do not include secrets, credentials, private source code, environment values, file contents, stdin, or network payloads.
+
+  - type: checkboxes
+    id: independence
+    attributes:
+      label: Independence declaration
+      description: This distinction is required for M9.2 evidence classification.
+      options:
+        - label: I initiated and executed this evaluation independently, without AETHER X operating the test for me.
+          required: true
+
+  - type: input
+    id: project
+    attributes:
+      label: Project / repository
+      description: Public URL if available, otherwise a non-sensitive description.
+      placeholder: https://github.com/owner/project
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: ExecSurface version
+      placeholder: 0.1.0-alpha.3
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, architecture, and relevant CI/runtime environment.
+      placeholder: Ubuntu 24.04, x86_64, GitHub Actions
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command evaluated
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: doctor
+    attributes:
+      label: execsurface doctor
+      options:
+        - PASS
+        - FAIL / unsupported
+    validations:
+      required: true
+
+  - type: textarea
+    id: baseline
+    attributes:
+      label: Baseline learn result
+      description: Include whether learning completed and whether evidence was complete.
+    validations:
+      required: true
+
+  - type: textarea
+    id: unchanged
+    attributes:
+      label: Two unchanged checks
+      description: Report verdict, finding count, and completeness for each run.
+      placeholder: |
+        Check 1: PASS, 0 findings, complete
+        Check 2: PASS, 0 findings, complete
+    validations:
+      required: true
+
+  - type: textarea
+    id: drift
+    attributes:
+      label: Controlled drift result
+      description: Describe the deliberate runtime change and whether ExecSurface surfaced it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: problems
+    attributes:
+      label: Problems or surprises
+      description: False positives, false negatives, instability, crashes, usability problems, or overhead. Write "None observed" if none.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction notes
+      description: Provide enough non-sensitive detail for another developer to reproduce the result.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Evidence use
+      options:
+        - label: I understand this public issue may be cited as independent evaluation evidence with its original result preserved.
+          required: true
