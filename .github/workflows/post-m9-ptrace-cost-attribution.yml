@@ -48,7 +48,7 @@ jobs:
           repository: ${{ matrix.repository }}
           ref: ${{ matrix.revision }}
           path: external/project
-          fetch-depth: ${{ matrix.project == 'fzf' && 0 || 1 }}
+          fetch-depth: ${{ matrix.project == 'fzf' && '0' || '1' }}
           fetch-tags: ${{ matrix.project == 'fzf' }}
           persist-credentials: false
 
