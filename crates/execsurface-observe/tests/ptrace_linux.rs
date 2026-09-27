@@ -303,6 +303,40 @@ fn captures_local_network_connect_destination() {
 }
 
 #[test]
+fn phase_fast_path_handles_irrelevant_syscall_exit_pairs() {
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("irrelevant-syscalls")
+            .arg("5000"),
+    )
+    .expect("observe");
+    assert!(observation.complete, "{:#?}", observation.warnings);
+    assert!(observation.warnings.is_empty());
+    assert_eq!(observation.outcome.exit_code, Some(0));
+    assert_eq!(observation.outcome.signal, None);
+}
+
+#[test]
+fn phase_fast_path_falls_back_cleanly_across_signal_interruption() {
+    let observation =
+        observe_command(&CommandSpec::new(fixture()).arg("signal-nanosleep")).expect("observe");
+    assert!(observation.complete, "{:#?}", observation.warnings);
+    assert!(observation.warnings.is_empty());
+    assert_eq!(observation.outcome.exit_code, Some(0));
+    assert_eq!(observation.outcome.signal, None);
+}
+
+#[test]
+fn phase_fast_path_survives_failed_exec_then_continued_syscalls() {
+    let observation =
+        observe_command(&CommandSpec::new(fixture()).arg("failed-exec")).expect("observe");
+    assert!(observation.complete, "{:#?}", observation.warnings);
+    assert!(observation.warnings.is_empty());
+    assert_eq!(observation.outcome.exit_code, Some(0));
+    assert_eq!(observation.outcome.signal, None);
+}
+
+#[test]
 fn backend_declares_hardened_scope_and_limitations() {
     let observation = observe_command(&CommandSpec::new(fixture()).arg("noop")).expect("observe");
     assert_eq!(observation.backend.name, "linux-ptrace-metadata-v2");

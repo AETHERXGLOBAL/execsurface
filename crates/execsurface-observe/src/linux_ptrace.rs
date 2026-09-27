@@ -115,6 +115,7 @@ struct TraceeState {
     exit_event_status: Option<libc::c_int>,
     exit_group_pending: bool,
     syscall_info_esrch_after_exit_group: bool,
+    skip_next_syscall_exit_info: bool,
 }
 
 impl TraceeState {
@@ -130,6 +131,7 @@ impl TraceeState {
             exit_event_status: None,
             exit_group_pending: false,
             syscall_info_esrch_after_exit_group: false,
+            skip_next_syscall_exit_info: false,
         }
     }
 
@@ -145,6 +147,7 @@ impl TraceeState {
             exit_event_status: None,
             exit_group_pending: false,
             syscall_info_esrch_after_exit_group: false,
+            skip_next_syscall_exit_info: false,
         }
     }
 }
@@ -502,6 +505,9 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
         }
 
         if stop_signal == libc::SIGTRAP && event != 0 {
+            if let Some(state) = tracees.get_mut(&tid) {
+                state.skip_next_syscall_exit_info = false;
+            }
             handle_ptrace_event(
                 tid,
                 event,
@@ -515,6 +521,19 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
         }
 
         if stop_signal == (libc::SIGTRAP | 0x80) {
+            let fast_exit = tracees
+                .get(&tid)
+                .map(|state| state.skip_next_syscall_exit_info)
+                .unwrap_or(false);
+            if fast_exit {
+                let state = tracees.get_mut(&tid).ok_or_else(|| {
+                    ObserveError::Protocol(format!("fast exit-info path lost tracked tid {tid}"))
+                })?;
+                state.skip_next_syscall_exit_info = false;
+                resume_after_observed_stop(root, tid, 0, &mut tracees, &mut root_outcome)?;
+                continue;
+            }
+
             let info = match syscall_info(tid) {
                 Ok(info) => info,
                 Err(ObserveError::Os(error)) if error.raw_os_error() == Some(libc::ESRCH) => {
@@ -552,11 +571,25 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
             };
             if let Some((nr, args)) = info.entry() {
                 handle_syscall_entry(tid, nr, args, &mut tracees, &mut collector);
+                let eligible = exit_info_fast_path_eligible(tid, nr, &tracees);
+                if let Some(state) = tracees.get_mut(&tid) {
+                    state.skip_next_syscall_exit_info = eligible;
+                }
             } else if let Some(result) = info.exit() {
                 handle_syscall_exit(tid, result, &mut tracees, &mut fd_tables, &mut collector);
+                if let Some(state) = tracees.get_mut(&tid) {
+                    state.skip_next_syscall_exit_info = false;
+                }
             }
             resume_after_observed_stop(root, tid, 0, &mut tracees, &mut root_outcome)?;
             continue;
+        }
+
+        // Any non-syscall stop conservatively invalidates the optional fast-exit
+        // phase. The next syscall stop will therefore use authoritative
+        // PTRACE_GET_SYSCALL_INFO rather than guessing across an interruption.
+        if let Some(state) = tracees.get_mut(&tid) {
+            state.skip_next_syscall_exit_info = false;
         }
 
         let suppress_signal = match tracees.get_mut(&tid) {
@@ -825,6 +858,40 @@ fn apply_exec_fd_semantics(
     } else {
         fd_tables.tables.insert(old_id, table);
     }
+}
+
+fn exit_info_fast_path_eligible(
+    tid: libc::pid_t,
+    nr: u64,
+    tracees: &HashMap<libc::pid_t, TraceeState>,
+) -> bool {
+    let nr = nr as libc::c_long;
+    let phase_sensitive = [
+        libc::SYS_execve,
+        libc::SYS_execveat,
+        libc::SYS_exit,
+        libc::SYS_exit_group,
+        libc::SYS_fork,
+        libc::SYS_vfork,
+        libc::SYS_clone,
+        libc::SYS_clone3,
+        libc::SYS_rt_sigreturn,
+        libc::SYS_restart_syscall,
+    ]
+    .contains(&nr);
+    if phase_sensitive {
+        return false;
+    }
+
+    tracees
+        .get(&tid)
+        .map(|state| {
+            state.pending_syscall.is_none()
+                && !state.exit_group_pending
+                && !state.retired_by_exec
+                && state.exit_event_status.is_none()
+        })
+        .unwrap_or(false)
 }
 
 fn handle_syscall_entry(

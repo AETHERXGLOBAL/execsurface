@@ -126,6 +126,60 @@ fn main() {
                 libc::close(fd);
             }
         }
+        Some("irrelevant-syscalls") => {
+            let count: usize = args.next().expect("count").parse().expect("count");
+            let mut accumulator = 0_i64;
+            for _ in 0..count {
+                accumulator ^= unsafe { libc::syscall(libc::SYS_getpid) } as i64;
+            }
+            assert_ne!(accumulator, -1);
+        }
+        Some("signal-nanosleep") => {
+            extern "C" fn handler(_: libc::c_int) {}
+            unsafe {
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = handler as usize;
+                action.sa_flags = 0;
+                libc::sigemptyset(&mut action.sa_mask);
+                assert_eq!(
+                    libc::sigaction(libc::SIGUSR1, &action, std::ptr::null_mut()),
+                    0
+                );
+            }
+            let parent = unsafe { libc::getpid() };
+            let child = unsafe { libc::fork() };
+            assert!(child >= 0);
+            if child == 0 {
+                unsafe {
+                    libc::usleep(20_000);
+                    libc::kill(parent, libc::SIGUSR1);
+                    libc::_exit(0);
+                }
+            }
+            let request = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 200_000_000,
+            };
+            let mut remaining: libc::timespec = unsafe { std::mem::zeroed() };
+            let rc = unsafe { libc::nanosleep(&request, &mut remaining) };
+            assert_eq!(rc, -1);
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::EINTR)
+            );
+            let mut status = 0;
+            assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+            assert!(libc::WIFEXITED(status));
+            assert_eq!(libc::WEXITSTATUS(status), 0);
+            let _ = unsafe { libc::syscall(libc::SYS_getpid) };
+        }
+        Some("failed-exec") => {
+            let path = CString::new("/definitely/not/execsurface-present").expect("path");
+            let argv = [path.as_ptr(), std::ptr::null()];
+            let rc = unsafe { libc::execv(path.as_ptr(), argv.as_ptr()) };
+            assert_eq!(rc, -1);
+            let _ = unsafe { libc::syscall(libc::SYS_getpid) };
+        }
         Some("fault-path") => {
             let result = unsafe {
                 libc::syscall(
