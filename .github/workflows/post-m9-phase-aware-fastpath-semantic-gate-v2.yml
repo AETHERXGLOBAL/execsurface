@@ -1,0 +1,170 @@
+name: Post-M9 phase-aware fast-path semantic gate v2
+
+on:
+  push:
+    branches:
+      - experiment/post-m9-ptrace-phase-aware-exit-fastpath
+    paths:
+      - .github/workflows/post-m9-phase-aware-fastpath-semantic-gate-v2.yml
+      - experiments/post_m9_phase_aware/**
+      - docs/milestones/POST_M9_PTRACE_PHASE_AWARE_SEMANTIC_COMPARATOR.md
+      - docs/milestones/POST_M9_PTRACE_PHASE_AWARE_EXIT_FASTPATH_PROTOCOL.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      REFERENCE_SHA: fdf668af61ba08a11f0bc7d3dac44cdc484bbcf2
+      REF_ROOT: /tmp/execsurface-reference-tree
+      REF_BIN: /tmp/execsurface-reference
+      CAND_BIN: /tmp/execsurface-candidate
+      FIXTURE_BIN: /tmp/execsurface-fixture-reference
+      HELPER_BIN: /tmp/execsurface-phase-helper
+      EVIDENCE: post-m9-phase-aware-semantic-v2
+
+    steps:
+      - name: Checkout experiment branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Freeze environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f docs/milestones/POST_M9_PTRACE_PHASE_AWARE_EXIT_FASTPATH_PROTOCOL.md
+          test -f docs/milestones/POST_M9_PTRACE_PHASE_AWARE_SEMANTIC_COMPARATOR.md
+          test -f experiments/post_m9_phase_aware/apply_candidate.py
+          test -f experiments/post_m9_phase_aware/phase_helper.c
+          test -f experiments/post_m9_phase_aware/semantic_compare.py
+          mkdir -p "$EVIDENCE"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc strace
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'experiment_sha=%s\n' "$GITHUB_SHA"
+            printf 'reference_sha=%s\n' "$REFERENCE_SHA"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+            printf 'arch=%s\n' "$(uname -m)"
+            printf 'cpu=%s\n' "$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)"
+            printf 'rustc=%s\n' "$(rustc +$RUST_TOOLCHAIN --version)"
+            printf 'gcc=%s\n' "$(gcc --version | head -1)"
+            printf 'strace=%s\n' "$(strace -V | head -1)"
+          } > "$EVIDENCE/environment.txt"
+
+      - name: Build exact frozen reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "$REFERENCE_SHA^{commit}"
+          rm -rf "$REF_ROOT"
+          git worktree add --detach "$REF_ROOT" "$REFERENCE_SHA"
+          (
+            cd "$REF_ROOT"
+            cargo "+$RUST_TOOLCHAIN" build --locked --release -p execsurface --bin execsurface
+            cargo "+$RUST_TOOLCHAIN" build --locked --release -p execsurface-observe --bin execsurface-fixture
+          )
+          cp "$REF_ROOT/target/release/execsurface" "$REF_BIN"
+          cp "$REF_ROOT/target/release/execsurface-fixture" "$FIXTURE_BIN"
+          sha256sum "$REF_BIN" "$FIXTURE_BIN" > "$EVIDENCE/reference-binaries.sha256"
+
+      - name: Apply Candidate A experiment-only patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 experiments/post_m9_phase_aware/apply_candidate.py
+          cargo "+$RUST_TOOLCHAIN" fmt --all
+          git diff --check
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs > "$EVIDENCE/candidate.patch"
+          test -s "$EVIDENCE/candidate.patch"
+
+      - name: Candidate compile and repository semantic tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" clippy --locked -p execsurface-observe --all-targets -- -D warnings
+          cargo "+$RUST_TOOLCHAIN" test --locked -p execsurface-observe
+          cargo "+$RUST_TOOLCHAIN" test --locked --workspace
+          cargo "+$RUST_TOOLCHAIN" build --locked --release -p execsurface --bin execsurface
+          cp target/release/execsurface "$CAND_BIN"
+          sha256sum "$CAND_BIN" > "$EVIDENCE/candidate-binary.sha256"
+
+      - name: Build frozen adversarial helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcc -O2 -Wall -Wextra -Werror -pthread \
+            experiments/post_m9_phase_aware/phase_helper.c -o "$HELPER_BIN"
+          test -x "$HELPER_BIN"
+          cp experiments/post_m9_phase_aware/phase_helper.c "$EVIDENCE/phase_helper.c"
+          sha256sum "$HELPER_BIN" > "$EVIDENCE/helper.sha256"
+
+      - name: Differential semantic parity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 experiments/post_m9_phase_aware/semantic_compare.py \
+            "$REF_BIN" "$CAND_BIN" "$HELPER_BIN" "$FIXTURE_BIN" "$EVIDENCE"
+
+      - name: Fast-path activation diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE/diagnostic"
+          for mode in reference candidate; do
+            if [ "$mode" = reference ]; then exe="$REF_BIN"; else exe="$CAND_BIN"; fi
+            for n in 0 5000; do
+              strace -qq -s 128 -o "$EVIDENCE/diagnostic/${mode}-${n}.strace" \
+                -e trace=ptrace,wait4,waitid,readlink,readlinkat \
+                "$exe" observe -- "$HELPER_BIN" getpid "$n" \
+                > "$EVIDENCE/diagnostic/${mode}-${n}.json" \
+                2> "$EVIDENCE/diagnostic/${mode}-${n}.stderr"
+            done
+          done
+          python3 - "$EVIDENCE/diagnostic" <<'PY'
+          import json,re,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          def count(mode,n):
+              text=(root/f'{mode}-{n}.strace').read_text(errors='replace')
+              return len(re.findall(r'\bptrace\(PTRACE_GET_SYSCALL_INFO,',text))
+          counts={m:{n:count(m,n) for n in (0,5000)} for m in ('reference','candidate')}
+          rd=counts['reference'][5000]-counts['reference'][0]
+          cd=counts['candidate'][5000]-counts['candidate'][0]
+          result={
+              'counts':counts,
+              'reference_delta':rd,
+              'candidate_delta':cd,
+              'expected_reference_delta':10000,
+              'expected_candidate_delta':5000,
+          }
+          (root/'activation.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(result,indent=2,sort_keys=True))
+          if rd != 10000 or cd != 5000:
+              raise SystemExit(1)
+          PY
+
+      - name: Record experiment branch diff
+        if: always()
+        shell: bash
+        run: |
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs > "$EVIDENCE/final-candidate.patch" || true
+          git status --short > "$EVIDENCE/working-tree-status.txt" || true
+
+      - name: Upload semantic-gate evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-m9-phase-aware-semantic-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-m9-phase-aware-semantic-v2
+          if-no-files-found: error
+          retention-days: 30
