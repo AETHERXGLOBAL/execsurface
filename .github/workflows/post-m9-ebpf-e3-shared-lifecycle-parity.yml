@@ -1,0 +1,407 @@
+name: Post-M9 eBPF E3 shared lifecycle parity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/post-m9-ebpf-e3-shared-lifecycle-parity.yml
+      - docs/milestones/POST_M9_EBPF_E3_SHARED_LIFECYCLE_PARITY_PROTOCOL.md
+      - experiments/m8-ebpf/persistent-observer/**
+      - crates/execsurface-observe/**
+      - crates/execsurface-model/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      EVIDENCE: post-m9-ebpf-e3
+      FIXTURE: /tmp/execsurface-post-m9-e3-fixture
+      PERSISTENT: /tmp/execsurface-post-m9-e3-persistent
+      CLI: /tmp/execsurface-post-m9-e3-cli
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Freeze environment and install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          test -f docs/milestones/POST_M9_EBPF_E3_SHARED_LIFECYCLE_PARITY_PROTOCOL.md
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          rustup toolchain install 1.90.0 --profile minimal
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'source_sha=%s\n' "$GITHUB_SHA"
+            printf 'runner=%s\n' 'ubuntu-24.04'
+            printf 'fixture=deterministic_two_child_two_stage_exec_v1\n'
+            printf 'ptrace_reference_runs=2\n'
+            printf 'persistent_invocations=1\n'
+            printf 'persistent_sessions=2\n'
+            printf 'performance_measurement=false\n'
+            printf 'full_surface_comparable=false\n'
+            printf 'ebpf_pass_authorized=false\n'
+            printf 'product_integration_authorized=false\n'
+          } > "$EVIDENCE/environment.txt"
+          sha256sum \
+            experiments/m8-ebpf/persistent-observer/src/main.rs \
+            experiments/m8-ebpf/persistent-observer/src/bpf/persistent.bpf.c \
+            > "$EVIDENCE/original-persistent-source.sha256"
+
+      - name: Build deterministic E3 fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$EVIDENCE/e3_fixture.c" <<'C'
+          #include <errno.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <sys/types.h>
+          #include <sys/wait.h>
+          #include <unistd.h>
+
+          static const char *missing_path = "/__execsurface_post_m9_e3_missing__/exec-probe";
+
+          static int wait_clean(pid_t child) {
+              int status = 0;
+              pid_t got;
+              do {
+                  got = waitpid(child, &status, 0);
+              } while (got < 0 && errno == EINTR);
+              if (got != child) return 80;
+              if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) return 81;
+              return 0;
+          }
+
+          static int release_wait(const char *text) {
+              char *end = NULL;
+              errno = 0;
+              long value = strtol(text, &end, 10);
+              if (errno || end == text || *end != '\0' || value < 0 || value > 1048576) return 64;
+              int fd = (int)value;
+              unsigned char byte = 0;
+              ssize_t rc;
+              do {
+                  rc = read(fd, &byte, 1);
+              } while (rc < 0 && errno == EINTR);
+              close(fd);
+              return rc == 1 ? 0 : 65;
+          }
+
+          static int workload(void) {
+              pid_t success = fork();
+              if (success < 0) return 70;
+              if (success == 0) {
+                  execl("/proc/self/exe", "e3-fixture", "exec-helper", (char *)NULL);
+                  _exit(71);
+              }
+              int rc = wait_clean(success);
+              if (rc) return rc;
+
+              pid_t failed = fork();
+              if (failed < 0) return 72;
+              if (failed == 0) {
+                  execl(missing_path, "missing-e3", (char *)NULL);
+                  if (errno != ENOENT) _exit(73);
+                  _exit(0);
+              }
+              return wait_clean(failed);
+          }
+
+          int main(int argc, char **argv) {
+              if (argc == 2 && strcmp(argv[1], "direct") == 0) return workload();
+              if (argc == 3 && strcmp(argv[1], "barrier") == 0) {
+                  int rc = release_wait(argv[2]);
+                  return rc ? rc : workload();
+              }
+              if (argc == 2 && strcmp(argv[1], "exec-helper") == 0) {
+                  execl("/bin/true", "true", (char *)NULL);
+                  return 74;
+              }
+              fprintf(stderr, "usage: %s direct | barrier <fd> | exec-helper\n", argv[0]);
+              return 64;
+          }
+          C
+          clang -O2 -Wall -Wextra -Werror "$EVIDENCE/e3_fixture.c" -o "$FIXTURE"
+          test -x "$FIXTURE"
+          "$FIXTURE" direct
+          sha256sum "$EVIDENCE/e3_fixture.c" "$FIXTURE" > "$EVIDENCE/fixture.sha256"
+
+      - name: Build unchanged public ptrace CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.90.0 build --locked --release -p execsurface --bin execsurface
+          cp target/release/execsurface "$CLI"
+          test -x "$CLI"
+          sha256sum "$CLI" > "$EVIDENCE/ptrace-cli.sha256"
+
+      - name: Run ptrace reference twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in 1 2; do
+            "$CLI" observe -- "$FIXTURE" direct \
+              > "$EVIDENCE/ptrace-${i}.json" \
+              2> "$EVIDENCE/ptrace-${i}.stderr"
+          done
+
+          python3 - "$EVIDENCE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+
+          def project(path):
+              d=json.load(open(path))
+              if d.get('complete') is not True or d.get('warnings') != []:
+                  raise SystemExit(f'ptrace health failure: {path}: {d.get("warnings")}')
+              if d.get('outcome') != {'exit_code':0,'signal':None}:
+                  raise SystemExit(f'ptrace outcome failure: {path}: {d.get("outcome")}')
+              events=sorted(d.get('events',[]), key=lambda e:e.get('sequence',0))
+              spawns=[e for e in events if e.get('event_type')=='process_spawn']
+              if len(spawns)!=2:
+                  raise SystemExit(f'expected exactly two ptrace spawns, got {len(spawns)}: {spawns}')
+              parents=[e.get('tid') for e in spawns]
+              if parents[0] != parents[1]:
+                  raise SystemExit(f'ptrace spawns do not share root parent: {parents}')
+              children=[e.get('child_tid') for e in spawns]
+              if any(c is None for c in children) or children[0] == children[1]:
+                  raise SystemExit(f'invalid ptrace child identities: {children}')
+              execs=[e for e in events if e.get('event_type')=='process_exec']
+              counts=[sum(1 for e in execs if e.get('tid')==child) for child in children]
+              projection={
+                  'spawn_roles':['success_child','failed_exec_child'],
+                  'root_spawn_count':2,
+                  'success_child_exec_occurrences':counts[0],
+                  'failed_exec_child_exec_occurrences':counts[1],
+                  'outcome':'exit_0',
+              }
+              if projection['success_child_exec_occurrences'] != 2:
+                  raise SystemExit(f'ptrace success-child exec proposition failed: {projection}')
+              if projection['failed_exec_child_exec_occurrences'] != 0:
+                  raise SystemExit(f'ptrace failed-exec promotion detected: {projection}')
+              return projection
+
+          p1=project(root/'ptrace-1.json')
+          p2=project(root/'ptrace-2.json')
+          if p1 != p2:
+              raise SystemExit(f'ptrace reference/reference proposition nondeterminism: {p1} != {p2}')
+          (root/'ptrace-projection.json').write_text(json.dumps(p1,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(p1,indent=2,sort_keys=True))
+          PY
+
+      - name: Apply transcript-only instrumentation to M8.7 userspace collector
+        shell: bash
+        run: |
+          set -euo pipefail
+          src=experiments/m8-ebpf/persistent-observer/src/main.rs
+          cp "$src" "$EVIDENCE/persistent-main.original.rs"
+          python3 - "$src" <<'PY'
+          from pathlib import Path
+          import sys
+          p=Path(sys.argv[1])
+          s=p.read_text()
+
+          old='''#[derive(Debug)]\nstruct Options {'''
+          new='''#[derive(Debug, Clone, Serialize)]\nstruct TranscriptEvent {\n    sequence: u64,\n    kind: &'static str,\n    tid: u32,\n    tgid: u32,\n    value: u32,\n}\n\n#[derive(Debug)]\nstruct Options {'''
+          if old not in s: raise SystemExit('transcript struct insertion anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''    event_limit_hit: bool,\n}'''
+          new='''    event_limit_hit: bool,\n    transcript: Vec<TranscriptEvent>,\n}'''
+          if old not in s: raise SystemExit('ActiveSession field anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''            event_limit_hit: false,\n        }'''
+          new='''            event_limit_hit: false,\n            transcript: Vec::new(),\n        }'''
+          if old not in s: raise SystemExit('ActiveSession init anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''                self.spawn_count = self.spawn_count.saturating_add(1);\n            }'''
+          new='''                self.spawn_count = self.spawn_count.saturating_add(1);\n                self.transcript.push(TranscriptEvent {\n                    sequence: self.sequence,\n                    kind: "spawn",\n                    tid: event.tid,\n                    tgid: event.tgid,\n                    value: event.value,\n                });\n            }'''
+          if old not in s: raise SystemExit('spawn transcript anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''                self.exec_count = self.exec_count.saturating_add(1);\n            }'''
+          new='''                self.exec_count = self.exec_count.saturating_add(1);\n                self.transcript.push(TranscriptEvent {\n                    sequence: self.sequence,\n                    kind: "exec",\n                    tid: event.tid,\n                    tgid: event.tgid,\n                    value: event.value,\n                });\n            }'''
+          if old not in s: raise SystemExit('exec transcript anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''                self.exit_count = self.exit_count.saturating_add(1);\n            }'''
+          new='''                self.exit_count = self.exit_count.saturating_add(1);\n                self.transcript.push(TranscriptEvent {\n                    sequence: self.sequence,\n                    kind: "exit",\n                    tid: event.tid,\n                    tgid: event.tgid,\n                    value: event.value,\n                });\n            }'''
+          if old not in s: raise SystemExit('exit transcript anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''    clean_for_m8_7a: bool,\n}'''
+          new='''    clean_for_m8_7a: bool,\n    transcript: Vec<TranscriptEvent>,\n}'''
+          if old not in s: raise SystemExit('SessionReport field anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''        event_limit_hit: session.event_limit_hit,\n        clean_for_m8_7a,\n    })'''
+          new='''        event_limit_hit: session.event_limit_hit,\n        clean_for_m8_7a,\n        transcript: session.transcript,\n    })'''
+          if old not in s: raise SystemExit('SessionReport construction anchor missing')
+          s=s.replace(old,new,1)
+
+          p.write_text(s)
+          PY
+
+          cargo +1.82.0 fmt --manifest-path experiments/m8-ebpf/persistent-observer/Cargo.toml
+          git diff --check
+          git diff -- experiments/m8-ebpf/persistent-observer/src/main.rs \
+            > "$EVIDENCE/transcript-only.patch"
+          test -s "$EVIDENCE/transcript-only.patch"
+          # BPF source must remain byte-for-byte unmodified.
+          git diff --exit-code -- experiments/m8-ebpf/persistent-observer/src/bpf/persistent.bpf.c
+          sha256sum experiments/m8-ebpf/persistent-observer/src/bpf/persistent.bpf.c \
+            > "$EVIDENCE/persistent-bpf-after.sha256"
+
+      - name: Build instrumented persistent observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=experiments/m8-ebpf/persistent-observer/Cargo.toml
+          rm -f "$(dirname "$manifest")/Cargo.lock"
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile --manifest-path "$manifest"
+          cargo +1.82.0 build --manifest-path "$manifest" --release --locked \
+            2>&1 | tee "$EVIDENCE/persistent-build.log"
+          cp experiments/m8-ebpf/persistent-observer/target/release/execsurface-m8-persistent-observer "$PERSISTENT"
+          test -x "$PERSISTENT"
+          sha256sum "$PERSISTENT" "$EVIDENCE/transcript-only.patch" > "$EVIDENCE/persistent-instrumented.sha256"
+
+      - name: Run one two-session persistent parity invocation
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo "$PERSISTENT" \
+            --report "$GITHUB_WORKSPACE/$EVIDENCE/persistent-report.json" \
+            --fixture "$FIXTURE" \
+            > "$EVIDENCE/persistent.stdout" \
+            2> "$EVIDENCE/persistent.stderr"
+          python3 -m json.tool "$EVIDENCE/persistent-report.json" >/dev/null
+
+      - name: Evaluate frozen E3 proposition gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$EVIDENCE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          reference=json.load(open(root/'ptrace-projection.json'))
+          report=json.load(open(root/'persistent-report.json'))
+
+          authority=report.get('authority',{})
+          if authority.get('ptrace_correctness_reference') is not True:
+              raise SystemExit('ptrace correctness-reference authority changed')
+          if authority.get('full_surface_comparable') is not False:
+              raise SystemExit('full_surface_comparable unexpectedly true')
+          if authority.get('ebpf_pass_authorized') is not False:
+              raise SystemExit('ebpf PASS authority unexpectedly true')
+          if authority.get('product_integration_authorized') is not False:
+              raise SystemExit('product integration unexpectedly authorized')
+          if report.get('unexpected_without_session') != 0 or report.get('decode_errors_total') != 0:
+              raise SystemExit('persistent final isolation/decode failure')
+          if report.get('final_membership_map_empty') is not True or report.get('final_pending_mechanism_map_empty') is not True:
+              raise SystemExit('persistent final maps not empty')
+
+          sessions=report.get('sessions',[])
+          if len(sessions) != 2:
+              raise SystemExit(f'expected exactly two persistent sessions, got {len(sessions)}')
+
+          session_results=[]
+          for session in sessions:
+              health={
+                  'outcome':session.get('outcome')=={'exit_code':0,'signal':None},
+                  'lifecycle_drain_complete':session.get('lifecycle_drain_complete') is True,
+                  'active_remaining':session.get('active_remaining')==0,
+                  'stale_epoch_events':session.get('stale_epoch_events')==0,
+                  'integrity_errors':session.get('integrity_errors')==0,
+                  'decode_error_delta':session.get('decode_error_delta')==0,
+                  'producer_drop_delta':session.get('producer_drop_delta')==0,
+                  'routing_error_delta':session.get('routing_error_delta')==0,
+                  'membership_map_empty':session.get('membership_map_empty') is True,
+                  'pending_mechanism_map_empty':session.get('pending_mechanism_map_empty') is True,
+                  'event_limit_hit':session.get('event_limit_hit') is False,
+                  'clean_for_m8_7a':session.get('clean_for_m8_7a') is True,
+              }
+              if not all(health.values()):
+                  raise SystemExit(f'persistent health failure epoch={session.get("epoch")}: {health}')
+
+              transcript=sorted(session.get('transcript',[]), key=lambda e:e.get('sequence',0))
+              spawns=[e for e in transcript if e.get('kind')=='spawn']
+              if len(spawns)!=2:
+                  raise SystemExit(f'expected two persistent spawns epoch={session.get("epoch")}: {spawns}')
+              root_tid=session.get('root_tid')
+              if any(e.get('tid') != root_tid for e in spawns):
+                  raise SystemExit(f'persistent spawn parent not root epoch={session.get("epoch")}: root={root_tid} spawns={spawns}')
+              children=[e.get('value') for e in spawns]
+              if any(not isinstance(c,int) or c<=0 for c in children) or children[0]==children[1]:
+                  raise SystemExit(f'invalid persistent child identities: {children}')
+              execs=[e for e in transcript if e.get('kind')=='exec']
+              counts=[sum(1 for e in execs if e.get('tid')==child) for child in children]
+              projection={
+                  'spawn_roles':['success_child','failed_exec_child'],
+                  'root_spawn_count':2,
+                  'success_child_exec_occurrences':counts[0],
+                  'failed_exec_child_exec_occurrences':counts[1],
+                  'outcome':'exit_0',
+              }
+              if projection != reference:
+                  raise SystemExit(f'proposition contradiction epoch={session.get("epoch")}: ref={reference} cand={projection}')
+              session_results.append({
+                  'epoch':session.get('epoch'),
+                  'projection':projection,
+                  'health':health,
+                  'event_count':session.get('event_count'),
+                  'spawn_count':session.get('spawn_count'),
+                  'exec_count':session.get('exec_count'),
+                  'exit_count':session.get('exit_count'),
+              })
+
+          result={
+              'classification':'E3_SHARED_LIFECYCLE_PROPOSITION_PARITY_PASS',
+              'reference_projection':reference,
+              'persistent_sessions':session_results,
+              'full_surface_comparable':False,
+              'ebpf_pass_authorized':False,
+              'product_integration_authorized':False,
+              'performance_measurement_authorized_next':True,
+              'public_backend_authority_changed':False,
+          }
+          (root/'e3-result.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(result,indent=2,sort_keys=True))
+          PY
+
+      - name: Record evidence identity
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum "$EVIDENCE"/*.json "$EVIDENCE"/*.stderr "$EVIDENCE"/*.patch "$EVIDENCE/e3_fixture.c" \
+            > "$EVIDENCE/evidence.sha256" || true
+          git status --short > "$EVIDENCE/working-tree-status.txt" || true
+
+      - name: Upload E3 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-m9-ebpf-e3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-m9-ebpf-e3
+          if-no-files-found: error
+          retention-days: 30
