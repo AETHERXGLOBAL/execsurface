@@ -41,7 +41,7 @@ index fea11f2..0000000 100644
          }
      }
  }
-@@ -515,6 +526,18 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
+@@ -515,6 +526,19 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
          }
  
          if stop_signal == (libc::SIGTRAP | 0x80) {
@@ -61,7 +61,7 @@ index fea11f2..0000000 100644
              let info = match syscall_info(tid) {
                  Ok(info) => info,
                  Err(ObserveError::Os(error)) if error.raw_os_error() == Some(libc::ESRCH) => {
-@@ -540,6 +563,7 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
+@@ -540,6 +564,7 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
                          ))
                      })?;
                      state.syscall_info_esrch_after_exit_group = true;
@@ -69,7 +69,7 @@ index fea11f2..0000000 100644
                      /*
                       * The kernel has already refused a ptrace read while the
                       * same thread group is in an explicitly observed
-@@ -553,10 +577,51 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
+@@ -553,9 +578,47 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
                  Err(error) => return Err(error),
              };
              if let Some((nr, args)) = info.entry() {
@@ -117,7 +117,7 @@ index fea11f2..0000000 100644
              }
              resume_after_observed_stop(root, tid, 0, &mut tracees, &mut root_outcome)?;
              continue;
-@@ -639,6 +704,7 @@ fn resume_after_observed_stop(
+@@ -639,6 +702,7 @@ fn resume_after_observed_stop(
                  ObserveError::Protocol(format!("M9_RESTART_ESRCH_FOR_UNTRACKED_TID tid={tid}"))
              })?;
              state.restart_esrch_seen = true;
@@ -125,7 +125,7 @@ index fea11f2..0000000 100644
              Ok(())
          }
          Err(error) => Err(error),
-@@ -654,6 +720,10 @@ fn handle_ptrace_event(
+@@ -654,6 +718,10 @@ fn handle_ptrace_event(
      fd_tables: &mut FdTables,
      collector: &mut Collector,
  ) -> Result<(), ObserveError> {
@@ -136,7 +136,7 @@ index fea11f2..0000000 100644
      match event {
          libc::PTRACE_EVENT_FORK | libc::PTRACE_EVENT_VFORK | libc::PTRACE_EVENT_CLONE => {
              let child_tid = get_event_message(tid)? as libc::pid_t;
-@@ -755,6 +825,7 @@ fn handle_ptrace_event(
+@@ -755,6 +823,7 @@ fn handle_ptrace_event(
                      other_state.retired_by_exec = true;
                      other_state.pending_exec = None;
                      other_state.pending_syscall = None;
@@ -144,7 +144,7 @@ index fea11f2..0000000 100644
                      retired.push(*other_tid);
                  }
              }
-@@ -768,6 +839,7 @@ fn handle_ptrace_event(
+@@ -768,6 +837,7 @@ fn handle_ptrace_event(
              state.exit_event_status = None;
              state.exit_group_pending = false;
              state.syscall_info_esrch_after_exit_group = false;
@@ -152,7 +152,7 @@ index fea11f2..0000000 100644
              tracees.insert(tid, state);
  
              apply_exec_fd_semantics(tid, tracees, fd_tables);
-@@ -790,6 +862,7 @@ fn handle_ptrace_event(
+@@ -790,6 +860,7 @@ fn handle_ptrace_event(
                  ObserveError::Protocol(format!("PTRACE_EVENT_EXIT arrived for untracked tid {tid}"))
              })?;
              state.exit_event_status = Some(exit_status);
