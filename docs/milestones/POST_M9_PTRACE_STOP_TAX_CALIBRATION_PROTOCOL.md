@@ -102,3 +102,7 @@ The external `ripgrep` and `fzf` Phase A results remain separate evidence and ar
 ## Next gate if the causal test passes
 
 A candidate optimization may be designed only in a separate prospective record. It must identify how it reduces irrelevant stop/resume work while preserving every authority-relevant observation and current fail-closed behavior. No observer implementation change is authorized by this protocol itself.
+
+## Execution registration
+
+The calibration workflow was added only after this protocol and all thresholds above were already committed. This note records the first executable run trigger after workflow registration; it changes none of the frozen N values, sample counts, thresholds, decision rules, or interpretation boundaries.
