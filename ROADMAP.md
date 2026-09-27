@@ -162,9 +162,9 @@ Tracking: GitHub Issues #34, #37, #40, #42, #44, #46 and #49.
 
 ## M9 — Independent Adoption & Real-Workload Evidence
 
-**OPEN — M9.0 CLOSED / PROVED; M9.1 CLOSED; M9.2 CLOSED / KILLED IN DECLARED SEARCH SCOPE; M9.3 NEXT**
+**CLOSED — M9.0 CLOSED / PROVED; M9.1 CLOSED; M9.2 CLOSED / KILLED IN DECLARED SEARCH SCOPE; M9.3 CLOSED / PRODUCT DECISION FROZEN**
 
-M9 evaluates the existing public product using real external workloads while keeping compatibility evidence, independent adoption, performance evidence and backend authority distinct.
+M9 evaluated the existing public product using real external workloads while keeping compatibility evidence, independent adoption, performance evidence and backend authority distinct.
 
 ### M9.0 — Protocol & Intake Freeze
 
@@ -203,10 +203,25 @@ Discovery scope: `docs/milestones/M9_2_DISCOVERY_SCOPE.md`.
 Discovery ledger: `docs/milestones/M9_2_DISCOVERY_LEDGER.md`.
 Closeout: `docs/milestones/M9_2_CLOSEOUT.md`.
 
+Post-M9.2 external-evaluation outreach is prospective only. It does not reopen or rewrite the frozen M9.2 result; any future qualifying third-party run is new evidence and must be classified prospectively under the existing provenance/privacy rules.
+
 ### M9.3 — Evidence Synthesis / Product Decision
 
-**NEXT**
+**CLOSED — CONTINUE PUBLIC ALPHA UNDER BOUNDED CLAIMS**
 
-Synthesize M9.1 compatibility/performance/drift evidence, preserved failure/friction evidence, the negative eBPF value-screen result, and the bounded M9.2 adoption result into one product decision.
+M9.3 synthesized the accepted M9.1 compatibility/performance/drift evidence, preserved failure/friction evidence, the negative eBPF value-screen result, and the bounded M9.2 adoption result.
 
-M9.3 must state exactly what can be claimed publicly, identify only evidence-backed product changes, decide the appropriate public-alpha/release posture, and preserve the current ptrace/eBPF authority boundary unless a new gate supplies contrary evidence.
+Product decision:
+
+- keep `v0.1.0-alpha.3` as the current public alpha;
+- keep native ptrace as the public correctness-reference backend;
+- keep eBPF research-only with no PASS, `learn`/`check`, auto-selection, public-integration, or baseline-interchange authority;
+- make no independent-adoption claim from the frozen M9.2 scope;
+- make no universal performance claim from exact-host M9.1 measurements;
+- make no runtime-semantics, evidence-authority, policy-threshold, verdict, or privacy-boundary change merely to improve product narrative;
+- prioritize prospective independent evidence, semantics-preserving ptrace cost reduction, explicit research into legitimate ephemeral build/test behavior, and eBPF completeness research before any future value claim.
+
+M9.3 does not justify promoting maturity beyond public alpha or cutting a new binary release solely for milestone closure.
+
+Decision: `docs/milestones/M9_3_EVIDENCE_SYNTHESIS_PRODUCT_DECISION.md`.
+Tracking: issue #83.
