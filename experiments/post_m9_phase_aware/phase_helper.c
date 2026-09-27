@@ -66,7 +66,7 @@ int main(int argc, char **argv) {
         int fd = open("/dev/null", O_RDONLY);
         if (fd < 0) return 32;
         char b = 0;
-        (void)read(fd, &b, 1);
+        if (read(fd, &b, 1) < 0) return 33;
         close(fd);
         return 0;
     }
@@ -75,7 +75,11 @@ int main(int argc, char **argv) {
         if (fd < 0) return 41;
         pid_t p = fork();
         if (p < 0) return 42;
-        if (p == 0) { char b = 0; (void)read(fd, &b, 1); _exit(0); }
+        if (p == 0) {
+            char b = 0;
+            if (read(fd, &b, 1) != 1) _exit(45);
+            _exit(0);
+        }
         int st = 0;
         if (waitpid(p, &st, 0) != p) return 43;
         close(fd);
