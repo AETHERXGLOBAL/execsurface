@@ -1,0 +1,248 @@
+name: Post-M9 ptrace cost attribution
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/post-m9-ptrace-cost-attribution.yml
+      - docs/milestones/POST_M9_PTRACE_COST_ATTRIBUTION_PROTOCOL.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  attribution:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: PTRACE-COST-RG-001
+            project: ripgrep
+            repository: BurntSushi/ripgrep
+            revision: 3fce3b5bb0236da2df6d99672afb8a719642eca7
+          - id: PTRACE-COST-FZF-001
+            project: fzf
+            repository: junegunn/fzf
+            revision: b1be3a8be1b833ce5b92fbbac11637643d60a046
+    env:
+      EXECSURFACE_RUST_TOOLCHAIN: 1.90.0
+      RIPGREP_RUST_TOOLCHAIN: 1.96.0
+      SAMPLE_TIMEOUT: 120
+      INSTALL_ROOT: /tmp/execsurface-post-m9-install
+      WORK_ROOT: /tmp/execsurface-post-m9-external
+
+    steps:
+      - name: Checkout ExecSurface
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pinned external target
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.revision }}
+          path: external/project
+          fetch-depth: ${{ matrix.project == 'fzf' && 0 || 1 }}
+          fetch-tags: ${{ matrix.project == 'fzf' }}
+          persist-credentials: false
+
+      - name: Freeze environment and build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f docs/milestones/POST_M9_PTRACE_COST_ATTRIBUTION_PROTOCOL.md
+          test "$(git -C external/project rev-parse HEAD)" = "${{ matrix.revision }}"
+          test -z "$(git -C external/project status --porcelain)"
+          rustup toolchain install "$EXECSURFACE_RUST_TOOLCHAIN" --profile minimal
+          if [ "${{ matrix.project }}" = "ripgrep" ]; then
+            rustup toolchain install "$RIPGREP_RUST_TOOLCHAIN" --profile minimal
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq strace
+
+          rm -rf "$WORK_ROOT" "$INSTALL_ROOT"
+          cp -a external/project "$WORK_ROOT"
+          mkdir -p "$INSTALL_ROOT" "post-m9-ptrace/${{ matrix.id }}"
+          evidence="post-m9-ptrace/${{ matrix.id }}"
+
+          if [ "${{ matrix.project }}" = "ripgrep" ]; then
+            printf '%s\n' "cd '$WORK_ROOT' && ./target/release/rg --no-heading --line-number 'ripgrep' README.md >/dev/null" > /tmp/post-m9-runtime-command
+            printf '%s\n' "cargo +$RIPGREP_RUST_TOOLCHAIN build --locked --release" > /tmp/post-m9-build-command
+          else
+            printf '%s\n' "cd '$WORK_ROOT' && printf 'alpha\\nbeta\\ngamma\\n' | ./target/fzf-linux_amd64 --filter=beta --select-1 --exit-0 >/dev/null" > /tmp/post-m9-runtime-command
+            printf '%s\n' "make" > /tmp/post-m9-build-command
+          fi
+
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'execsurface_source_sha=%s\n' "$GITHUB_SHA"
+            printf 'project=%s\n' '${{ matrix.repository }}'
+            printf 'revision=%s\n' '${{ matrix.revision }}'
+            printf 'kernel=%s\n' "$(uname -srmo)"
+            printf 'architecture=%s\n' "$(uname -m)"
+            printf 'cpu=%s\n' "$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)"
+            printf 'execsurface_rustc=%s\n' "$(rustc +$EXECSURFACE_RUST_TOOLCHAIN --version)"
+            printf 'external_rustc=%s\n' "$(rustc +$RIPGREP_RUST_TOOLCHAIN --version 2>/dev/null || echo NOT_APPLICABLE)"
+            printf 'go=%s\n' "$(go version 2>/dev/null || echo NOT_APPLICABLE)"
+            printf 'strace=%s\n' "$(strace -V | head -1)"
+            printf 'build_command=%s\n' "$(cat /tmp/post-m9-build-command)"
+            printf 'runtime_command=%s\n' "$(cat /tmp/post-m9-runtime-command)"
+          } > "$evidence/environment.txt"
+
+      - name: Build ExecSurface and frozen target
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="post-m9-ptrace/${{ matrix.id }}"
+          cargo "+$EXECSURFACE_RUST_TOOLCHAIN" install --locked --path crates/execsurface-cli --root "$INSTALL_ROOT" \
+            > "$evidence/install.stdout" 2> "$evidence/install.stderr"
+          if [ "${{ matrix.project }}" = "ripgrep" ]; then
+            (cd "$WORK_ROOT" && cargo "+$RIPGREP_RUST_TOOLCHAIN" build --locked --release) \
+              > "$evidence/build.stdout" 2> "$evidence/build.stderr"
+            test -x "$WORK_ROOT/target/release/rg"
+          else
+            (cd "$WORK_ROOT" && make) > "$evidence/build.stdout" 2> "$evidence/build.stderr"
+            test -x "$WORK_ROOT/target/fzf-linux_amd64"
+          fi
+          git -C "$WORK_ROOT" status --porcelain --untracked-files=no > "$evidence/tracked-status-after-build.txt"
+          test ! -s "$evidence/tracked-status-after-build.txt"
+          "$INSTALL_ROOT/bin/execsurface" doctor > "$evidence/doctor.stdout" 2> "$evidence/doctor.stderr"
+
+      - name: Frozen 3 plus 15 direct/ptrace measurement
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="post-m9-ptrace/${{ matrix.id }}"
+          exe="$INSTALL_ROOT/bin/execsurface"
+          cmd="$(cat /tmp/post-m9-runtime-command)"
+          : > "$evidence/warmup-direct-ms.txt"
+          : > "$evidence/warmup-ptrace-ms.txt"
+          : > "$evidence/measured-direct-ms.txt"
+          : > "$evidence/measured-ptrace-ms.txt"
+
+          measure_direct() {
+            python3 - "$cmd" "$SAMPLE_TIMEOUT" "$1" <<'PY'
+          import subprocess,sys,time
+          cmd,timeout_s,out=sys.argv[1],float(sys.argv[2]),sys.argv[3]
+          t0=time.perf_counter_ns()
+          try: rc=subprocess.run(['/bin/bash','-lc',cmd],timeout=timeout_s).returncode
+          except subprocess.TimeoutExpired: rc=124
+          ms=(time.perf_counter_ns()-t0)/1_000_000
+          with open(out,'a') as f:f.write(f'{ms:.6f}\n')
+          raise SystemExit(0 if rc==0 else 1)
+          PY
+          }
+
+          measure_ptrace() {
+            python3 - "$exe" "$cmd" "$SAMPLE_TIMEOUT" "$1" "$2" "$3" <<'PY'
+          import json,subprocess,sys,time
+          exe,cmd,timeout_s,timings,jout,jerr=sys.argv[1:]
+          t0=time.perf_counter_ns()
+          try:
+              with open(jout,'w') as out,open(jerr,'w') as err:
+                  rc=subprocess.run([exe,'observe','--','/bin/bash','-lc',cmd],stdout=out,stderr=err,timeout=float(timeout_s)).returncode
+          except subprocess.TimeoutExpired: rc=124
+          ms=(time.perf_counter_ns()-t0)/1_000_000
+          with open(timings,'a') as f:f.write(f'{ms:.6f}\n')
+          if rc != 0: raise SystemExit(1)
+          d=json.load(open(jout)); o=d.get('outcome',{})
+          assert d.get('complete') is True, d.get('warnings')
+          assert o.get('exit_code') == 0 and o.get('signal') is None, o
+          PY
+          }
+
+          for i in 1 2 3; do measure_direct "$evidence/warmup-direct-ms.txt"; done
+          for i in 1 2 3; do measure_ptrace "$evidence/warmup-ptrace-ms.txt" "$evidence/warmup-${i}.json" "$evidence/warmup-${i}.stderr"; done
+
+          for i in $(seq 1 15); do
+            if [ $((i % 2)) -eq 1 ]; then
+              measure_direct "$evidence/measured-direct-ms.txt"
+              measure_ptrace "$evidence/measured-ptrace-ms.txt" "$evidence/measured-${i}.json" "$evidence/measured-${i}.stderr"
+            else
+              measure_ptrace "$evidence/measured-ptrace-ms.txt" "$evidence/measured-${i}.json" "$evidence/measured-${i}.stderr"
+              measure_direct "$evidence/measured-direct-ms.txt"
+            fi
+          done
+
+          test "$(wc -l < "$evidence/measured-direct-ms.txt")" -eq 15
+          test "$(wc -l < "$evidence/measured-ptrace-ms.txt")" -eq 15
+
+      - name: Observer-only syscall attribution diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="post-m9-ptrace/${{ matrix.id }}"
+          exe="$INSTALL_ROOT/bin/execsurface"
+          cmd="$(cat /tmp/post-m9-runtime-command)"
+          timeout --signal=TERM --kill-after=5s "${SAMPLE_TIMEOUT}s" \
+            strace -qq -s 256 -o "$evidence/observer-strace.log" \
+            -e trace=ptrace,wait4,waitid,readlink,readlinkat \
+            "$exe" observe -- /bin/bash -lc "$cmd" \
+            > "$evidence/diagnostic-observe.json" 2> "$evidence/diagnostic-observe.stderr"
+
+          python3 - "$evidence" <<'PY'
+          import json,re,statistics,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          d=json.loads((root/'diagnostic-observe.json').read_text())
+          o=d.get('outcome',{})
+          assert d.get('complete') is True, d.get('warnings')
+          assert o.get('exit_code') == 0 and o.get('signal') is None, o
+
+          text=(root/'observer-strace.log').read_text(errors='replace')
+          def count(token): return text.count(token)
+          counters={
+              'ptrace_total': len(re.findall(r'\bptrace\(',text)),
+              'ptrace_get_syscall_info': count('PTRACE_GET_SYSCALL_INFO'),
+              'ptrace_syscall_resume': count('PTRACE_SYSCALL'),
+              'ptrace_geteventmsg': count('PTRACE_GETEVENTMSG'),
+              'ptrace_setoptions': count('PTRACE_SETOPTIONS'),
+              'ptrace_peekdata': count('PTRACE_PEEKDATA'),
+              'wait4_total': len(re.findall(r'\bwait4\(',text)),
+              'waitid_total': len(re.findall(r'\bwaitid\(',text)),
+              'readlink_total': len(re.findall(r'\breadlink\(',text)),
+              'readlinkat_total': len(re.findall(r'\breadlinkat\(',text)),
+              'raw_event_count': len(d.get('events',[])),
+              'warning_count': len(d.get('warnings',[])),
+          }
+          direct=[float(x) for x in (root/'measured-direct-ms.txt').read_text().split()]
+          ptrace=[float(x) for x in (root/'measured-ptrace-ms.txt').read_text().split()]
+          def median_mad(xs):
+              m=statistics.median(xs); return m,statistics.median(abs(x-m) for x in xs)
+          dm,dmad=median_mad(direct); pm,pmad=median_mad(ptrace)
+          result={
+              'classification':'COMPUTATIONAL_EVIDENCE',
+              'diagnostic_scope':'observer process only; strace run excluded from timing samples',
+              'source_sha': __import__('os').environ['GITHUB_SHA'],
+              'target':'${{ matrix.id }}',
+              'direct_ms':{'samples':direct,'median':dm,'mad':dmad},
+              'ptrace_ms':{'samples':ptrace,'median':pm,'mad':pmad},
+              'median_absolute_overhead_ms':pm-dm,
+              'slowdown_ratio':pm/dm,
+              'observer_syscall_counters':counters,
+              'attribution_status':{
+                  'ptrace_request_counts':'MEASURED',
+                  'wait_syscall_counts':'MEASURED',
+                  'proc_path_readlink_counts':'SUPPORTED_CORRELATION',
+                  'per-request causal wall_cost':'OPEN'
+              }
+          }
+          (root/'attribution.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(result,indent=2,sort_keys=True))
+          PY
+
+      - name: Upload attribution evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-m9-ptrace-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-m9-ptrace/${{ matrix.id }}
+          if-no-files-found: error
+          retention-days: 30
