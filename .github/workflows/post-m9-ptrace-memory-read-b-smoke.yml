@@ -1,0 +1,121 @@
+name: Post-M9 ptrace memory-read Candidate B smoke gate
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/post-m9-ptrace-memory-read-b-smoke.yml
+      - experiments/post_m9_memory_read_batching/apply_candidate_b.py
+      - docs/milestones/POST_M9_PTRACE_MEMORY_READ_BATCHING_PROTOCOL.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate-b-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          rustc "+$RUST_TOOLCHAIN" --version --verbose
+
+      - name: Apply Candidate B only inside runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f experiments/post_m9_memory_read_batching/apply_candidate_b.py
+          cp crates/execsurface-observe/src/linux_ptrace.rs /tmp/linux_ptrace.reference.rs
+          python3 experiments/post_m9_memory_read_batching/apply_candidate_b.py
+          cmp -s /tmp/linux_ptrace.reference.rs crates/execsurface-observe/src/linux_ptrace.rs && {
+            echo "Candidate B patcher made no change" >&2
+            exit 1
+          }
+          grep -q 'libc::process_vm_readv' crates/execsurface-observe/src/linux_ptrace.rs
+          git diff --check
+
+      - name: Privacy-shape static gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path('crates/execsurface-observe/src/linux_ptrace.rs').read_text()
+          required = [
+              'let reference_word_len = size_of::<libc::c_long>();',
+              'let chunk_len = remaining.min(reference_word_len);',
+              'process_vm_read_exact(tid, chunk_address, chunk_len)',
+              'process_vm_read_exact(tid, address, len)',
+          ]
+          missing = [item for item in required if item not in text]
+          if missing:
+              raise SystemExit(f'Candidate B privacy shape missing: {missing}')
+          PY
+
+      - name: Formatting gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" fmt --all -- --check
+
+      - name: Strict workspace Clippy gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Existing observer tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test --locked -p execsurface-observe --all-targets -- --nocapture
+
+      - name: Existing workspace tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test --locked --workspace
+
+      - name: Record isolated candidate evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p post-m9-memory-read-b-smoke
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs > post-m9-memory-read-b-smoke/candidate-b.diff || true
+          sha256sum experiments/post_m9_memory_read_batching/apply_candidate_b.py \
+            > post-m9-memory-read-b-smoke/patcher.sha256
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'base_sha=%s\n' "$GITHUB_SHA"
+            printf 'candidate=B\n'
+            printf 'mechanism=process_vm_readv_with_reference_fallback\n'
+            printf 'cstring_chunk_max=sizeof(c_long)\n'
+            printf 'public_runtime_modified=false\n'
+            printf 'performance_evaluated=false\n'
+            printf 'adversarial_parity_evaluated=false\n'
+          } > post-m9-memory-read-b-smoke/identity.txt
+
+      - name: Upload Candidate B smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-m9-ptrace-memory-read-b-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-m9-memory-read-b-smoke
+          if-no-files-found: error
+          retention-days: 30
