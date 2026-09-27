@@ -1,0 +1,348 @@
+name: Post-M9 eBPF E2 persistent real-workload health
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/post-m9-ebpf-e2-persistent-real-workload-health.yml
+      - docs/milestones/POST_M9_EBPF_E2_PERSISTENT_REAL_WORKLOAD_HEALTH_PROTOCOL.md
+      - experiments/m8-ebpf/persistent-observer/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: E2-JUST
+            repository: casey/just
+            revision: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+            shell_script: cargo +1.90.0 test --all >/dev/null 2>&1
+          - id: E2-FZF
+            repository: junegunn/fzf
+            revision: b1be3a8be1b833ce5b92fbbac11637643d60a046
+            shell_script: go test ./... >/dev/null 2>&1
+    env:
+      EVIDENCE: post-m9-ebpf-e2/${{ matrix.id }}
+
+    steps:
+      - name: Checkout ExecSurface source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pinned workload
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.revision }}
+          path: external/workload
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Freeze inputs and install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          test -f docs/milestones/POST_M9_EBPF_E2_PERSISTENT_REAL_WORKLOAD_HEALTH_PROTOCOL.md
+          test "$(git -C external/workload rev-parse HEAD)" = '${{ matrix.revision }}'
+          test -z "$(git -C external/workload status --porcelain)"
+
+          rm -rf "$RUNNER_TEMP/e2-workload"
+          cp -a external/workload "$RUNNER_TEMP/e2-workload"
+          echo "E2_WORKDIR=$RUNNER_TEMP/e2-workload" >> "$GITHUB_ENV"
+
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          rustup toolchain install 1.90.0 --profile minimal
+
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'source_sha=%s\n' "$GITHUB_SHA"
+            printf 'target=%s\n' '${{ matrix.repository }}'
+            printf 'revision=%s\n' '${{ matrix.revision }}'
+            printf 'command=%s\n' '${{ matrix.shell_script }}'
+            printf 'persistent_invocations=3\n'
+            printf 'sessions_per_invocation=2\n'
+            printf 'expected_session_opportunities=6\n'
+            printf 'collector_source_modified=false\n'
+            printf 'performance_measurement=false\n'
+            printf 'ebpf_authority_changed=false\n'
+          } > "$EVIDENCE/environment.txt"
+
+          sha256sum \
+            experiments/m8-ebpf/persistent-observer/src/main.rs \
+            experiments/m8-ebpf/persistent-observer/src/bpf/persistent.bpf.c \
+            experiments/m8-ebpf/persistent-observer/Cargo.toml \
+            > "$EVIDENCE/persistent-source.sha256"
+
+      - name: Prime exact workload
+        shell: bash
+        env:
+          WORKLOAD_SCRIPT: ${{ matrix.shell_script }}
+        run: |
+          set -euo pipefail
+          cd "$E2_WORKDIR"
+          /bin/bash -lc "$WORKLOAD_SCRIPT"
+          test "$(git rev-parse HEAD)" = '${{ matrix.revision }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Build unchanged M8.7 persistent observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=experiments/m8-ebpf/persistent-observer/Cargo.toml
+          cargo +1.82.0 fmt --manifest-path "$manifest" -- --check
+          rm -f "$(dirname "$manifest")/Cargo.lock"
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile --manifest-path "$manifest"
+          cargo +1.82.0 build --manifest-path "$manifest" --release --locked \
+            2>&1 | tee "$EVIDENCE/persistent-build.log"
+
+          persistent="$PWD/experiments/m8-ebpf/persistent-observer/target/release/execsurface-m8-persistent-observer"
+          test -x "$persistent"
+          echo "E2_PERSISTENT=$persistent" >> "$GITHUB_ENV"
+          sha256sum "$persistent" > "$EVIDENCE/persistent-binary.sha256"
+
+          # Ensure the gate has not modified the committed M8.7 collector sources.
+          git diff --exit-code -- \
+            experiments/m8-ebpf/persistent-observer/src/main.rs \
+            experiments/m8-ebpf/persistent-observer/src/bpf/persistent.bpf.c
+
+      - name: Build runner-local generic barrier adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/e2_barrier_adapter.c" <<'C'
+          #include <errno.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <unistd.h>
+
+          int main(int argc, char **argv) {
+              if (argc != 3 || strcmp(argv[1], "barrier") != 0) {
+                  fprintf(stderr, "adapter: expected barrier <fd>\n");
+                  return 64;
+              }
+
+              char *end = NULL;
+              errno = 0;
+              long value = strtol(argv[2], &end, 10);
+              if (errno != 0 || end == argv[2] || *end != '\0' || value < 0 || value > 1048576) {
+                  fprintf(stderr, "adapter: invalid barrier fd\n");
+                  return 65;
+              }
+              int fd = (int)value;
+
+              unsigned char byte = 0;
+              ssize_t rc;
+              do {
+                  rc = read(fd, &byte, 1);
+              } while (rc < 0 && errno == EINTR);
+              if (rc != 1) {
+                  fprintf(stderr, "adapter: barrier read failed\n");
+                  return 66;
+              }
+              close(fd);
+
+              const char *script = getenv("EXECSURFACE_E2_COMMAND");
+              if (script == NULL || script[0] == '\0') {
+                  fprintf(stderr, "adapter: missing EXECSURFACE_E2_COMMAND\n");
+                  return 67;
+              }
+
+              execl("/bin/bash", "bash", "-lc", script, (char *)NULL);
+              perror("adapter: exec /bin/bash");
+              return 127;
+          }
+          C
+
+          clang -O2 -Wall -Wextra -Werror "$RUNNER_TEMP/e2_barrier_adapter.c" \
+            -o "$RUNNER_TEMP/e2_barrier_adapter"
+          test -x "$RUNNER_TEMP/e2_barrier_adapter"
+          echo "E2_ADAPTER=$RUNNER_TEMP/e2_barrier_adapter" >> "$GITHUB_ENV"
+          sha256sum "$RUNNER_TEMP/e2_barrier_adapter.c" "$RUNNER_TEMP/e2_barrier_adapter" \
+            > "$EVIDENCE/adapter.sha256"
+          cp "$RUNNER_TEMP/e2_barrier_adapter.c" "$EVIDENCE/adapter.c"
+
+      - name: Execute three frozen persistent health invocations
+        shell: bash
+        env:
+          WORKLOAD_SCRIPT: ${{ matrix.shell_script }}
+        run: |
+          set -euo pipefail
+          runner_home="$HOME"
+          go_cache="$(go env GOCACHE 2>/dev/null || true)"
+          go_path="$(go env GOPATH 2>/dev/null || true)"
+          workload="cd '$E2_WORKDIR' && $WORKLOAD_SCRIPT"
+
+          for i in 1 2 3; do
+            report="$GITHUB_WORKSPACE/$EVIDENCE/invocation-${i}.report.json"
+            stdout="$GITHUB_WORKSPACE/$EVIDENCE/invocation-${i}.stdout"
+            stderr="$GITHUB_WORKSPACE/$EVIDENCE/invocation-${i}.stderr"
+
+            set +e
+            sudo env \
+              HOME="$runner_home" \
+              RUSTUP_HOME="$runner_home/.rustup" \
+              CARGO_HOME="$runner_home/.cargo" \
+              GOCACHE="$go_cache" \
+              GOPATH="$go_path" \
+              PATH="$PATH" \
+              EXECSURFACE_E2_COMMAND="$workload" \
+              "$E2_PERSISTENT" \
+                --report "$report" \
+                --fixture "$E2_ADAPTER" \
+                >"$stdout" 2>"$stderr"
+            rc=$?
+            set -e
+            printf '%s\n' "$rc" > "$EVIDENCE/invocation-${i}.rc"
+
+            if [ -f "$report" ]; then
+              python3 -m json.tool "$report" >/dev/null
+            fi
+
+            # No retry and no sample replacement. Continue to the remaining
+            # preregistered invocations even if this one failed so all three
+            # planned opportunities remain visible as evidence.
+            sleep 1
+          done
+
+          test "$(git -C "$E2_WORKDIR" rev-parse HEAD)" = '${{ matrix.revision }}'
+          test -z "$(git -C "$E2_WORKDIR" status --porcelain --untracked-files=no)"
+
+      - name: Evaluate frozen E2 health gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$EVIDENCE" <<'PY'
+          import json,sys
+          from pathlib import Path
+
+          root=Path(sys.argv[1])
+          invocations=[]
+          all_pass=True
+          total_sessions=0
+
+          for i in (1,2,3):
+              rc=int((root/f'invocation-{i}.rc').read_text().strip())
+              report_path=root/f'invocation-{i}.report.json'
+              row={'invocation':i,'return_code':rc,'report_present':report_path.exists(),'pass':False}
+              if not report_path.exists():
+                  row['failure']='missing_report'
+                  all_pass=False
+                  invocations.append(row)
+                  continue
+
+              report=json.load(open(report_path))
+              sessions=report.get('sessions',[])
+              total_sessions += len(sessions)
+              session_results=[]
+              sessions_ok=len(sessions)==2
+              for s in sessions:
+                  checks={
+                      'outcome':s.get('outcome')=={'exit_code':0,'signal':None},
+                      'lifecycle_drain_complete':s.get('lifecycle_drain_complete') is True,
+                      'active_remaining':s.get('active_remaining')==0,
+                      'stale_epoch_events':s.get('stale_epoch_events')==0,
+                      'integrity_errors':s.get('integrity_errors')==0,
+                      'decode_error_delta':s.get('decode_error_delta')==0,
+                      'producer_drop_delta':s.get('producer_drop_delta')==0,
+                      'routing_error_delta':s.get('routing_error_delta')==0,
+                      'membership_map_empty':s.get('membership_map_empty') is True,
+                      'pending_mechanism_map_empty':s.get('pending_mechanism_map_empty') is True,
+                      'event_limit_hit':s.get('event_limit_hit') is False,
+                      'clean_for_m8_7a':s.get('clean_for_m8_7a') is True,
+                      'exec_activity':int(s.get('exec_count',0)) >= 2,
+                      'spawn_activity':int(s.get('spawn_count',0)) >= 1,
+                      'exit_activity':int(s.get('exit_count',0)) >= 2,
+                  }
+                  ok=all(checks.values())
+                  sessions_ok = sessions_ok and ok
+                  session_results.append({
+                      'epoch':s.get('epoch'),
+                      'root_tid':s.get('root_tid'),
+                      'event_count':s.get('event_count'),
+                      'spawn_count':s.get('spawn_count'),
+                      'exec_count':s.get('exec_count'),
+                      'exit_count':s.get('exit_count'),
+                      'checks':checks,
+                      'pass':ok,
+                  })
+
+              authority=report.get('authority',{})
+              final_checks={
+                  'return_code':rc==0,
+                  'session_count':len(sessions)==2,
+                  'unexpected_without_session':report.get('unexpected_without_session')==0,
+                  'decode_errors_total':report.get('decode_errors_total')==0,
+                  'final_membership_map_empty':report.get('final_membership_map_empty') is True,
+                  'final_pending_mechanism_map_empty':report.get('final_pending_mechanism_map_empty') is True,
+                  'ptrace_correctness_reference':authority.get('ptrace_correctness_reference') is True,
+                  'full_surface_comparable_false':authority.get('full_surface_comparable') is False,
+                  'ebpf_pass_authorized_false':authority.get('ebpf_pass_authorized') is False,
+                  'product_integration_authorized_false':authority.get('product_integration_authorized') is False,
+              }
+              row.update({
+                  'sessions':session_results,
+                  'final_checks':final_checks,
+                  'pass':sessions_ok and all(final_checks.values()),
+              })
+              all_pass = all_pass and row['pass']
+              invocations.append(row)
+
+          expected_sessions=6
+          if total_sessions != expected_sessions:
+              all_pass=False
+
+          result={
+              'target':'${{ matrix.id }}',
+              'classification':'E2_PERSISTENT_REAL_WORKLOAD_HEALTH_PASS' if all_pass else 'E2_PERSISTENT_REAL_WORKLOAD_HEALTH_FAIL',
+              'invocations_expected':3,
+              'sessions_per_invocation_expected':2,
+              'total_sessions_expected':expected_sessions,
+              'total_sessions_observed':total_sessions,
+              'all_pass':all_pass,
+              'invocations':invocations,
+              'performance_value_claim_authorized':False,
+              'full_surface_semantic_parity_established':False,
+              'public_backend_authority_changed':False,
+          }
+          (root/'aggregate.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(result,indent=2,sort_keys=True))
+          if not all_pass:
+              raise SystemExit(1)
+          PY
+
+      - name: Record evidence identity
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum "$EVIDENCE"/*.json "$EVIDENCE"/*.stderr "$EVIDENCE"/*.rc \
+            "$EVIDENCE/adapter.c" \
+            > "$EVIDENCE/evidence.sha256" || true
+          git status --short > "$EVIDENCE/working-tree-status.txt" || true
+
+      - name: Upload E2 health evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-m9-ebpf-e2-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-m9-ebpf-e2/${{ matrix.id }}
+          if-no-files-found: error
+          retention-days: 30
