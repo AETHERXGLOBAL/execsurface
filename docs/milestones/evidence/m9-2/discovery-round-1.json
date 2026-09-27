@@ -1,0 +1,54 @@
+{
+  "schema_version": "m9-2-discovery-v1",
+  "round": "M9.2-discovery-round-1",
+  "date": "2026-09-27",
+  "scope_freeze_commit": "59b6d3f3292766f26e33101722c9d2df96e6e49c",
+  "base_main": "a6260344c5a21c4fe5d4ea6cb7fc682092077ebb",
+  "status": "KILLED_NO_ACCEPTED_INDEPENDENT_EVIDENCE_IN_DECLARED_SCOPE",
+  "accepted_independent_records": 0,
+  "positive_adoption_close_satisfied": false,
+  "searches": [
+    {"surface": "code", "query": "AETHERXGLOBAL/execsurface@", "exact_total": 0},
+    {"surface": "code", "query": "cargo install execsurface", "exact_total": 0},
+    {"surface": "code", "query": "execsurface.lock.json", "exact_total": 0},
+    {"surface": "code", "query": "execsurface check", "exact_total": 0},
+    {"surface": "code", "query": "execsurface learn", "exact_total": 0},
+    {"surface": "code", "query": "execsurface-policy.json", "exact_total": 0},
+    {
+      "surface": "code",
+      "query": "ExecSurface",
+      "exact_total": 500,
+      "inspected_window": 20,
+      "result": "registry metadata and unrelated identifier/concept collisions only"
+    },
+    {"surface": "issues", "query": "ExecSurface excluding AETHERXGLOBAL/execsurface", "exact_total": 4},
+    {"surface": "pull_requests", "query": "ExecSurface excluding AETHERXGLOBAL/execsurface", "exact_total": 3}
+  ],
+  "classified_references": [
+    {"reference": "AETHERXGLOBAL/reprocert#17", "classification": "KILLED", "reason": "AETHER X controlled"},
+    {"reference": "neokapi/neokapi#1643", "classification": "KILLED", "reason": "unrelated project.ExecSurface concept"},
+    {"reference": "Drakon-Systems-Ltd/ShieldCortex#93", "classification": "KILLED", "reason": "unrelated action-guard security discussion"},
+    {"reference": "jckeen/agent-pack#119", "classification": "KILLED", "reason": "unrelated execSurfaces adapter concept"},
+    {"reference": "jckeen/agent-pack#152", "classification": "KILLED", "reason": "unrelated adapter execSurfaces PR"},
+    {"reference": "jckeen/agent-pack#169", "classification": "KILLED", "reason": "unrelated update re-consent execution-surface PR"},
+    {"reference": "neokapi/neokapi#1552", "classification": "KILLED", "reason": "unrelated execution-trust model"},
+    {"reference": "rust-lang/crates.io-index/ex/ec/execsurface*", "classification": "DISCOVERY_ONLY", "reason": "registry publication metadata, not third-party execution"},
+    {"reference": "neokapi/neokapi code hits", "classification": "KILLED", "reason": "name/concept collision"},
+    {"reference": "Alexmacapple/smolcoder-MTPLX code hit", "classification": "KILLED", "reason": "local TypeScript ExecSurface type"},
+    {"reference": "apexedgesystems/zenith code hit", "classification": "KILLED", "reason": "unrelated identifier"},
+    {"reference": "Juancho2706/gymappjp code hit", "classification": "KILLED", "reason": "unrelated identifier"},
+    {"reference": "to-agent/agent-exec code hit", "classification": "KILLED", "reason": "unrelated execution-surface identifier"},
+    {"reference": "thesongzhu/Friday code hit", "classification": "KILLED", "reason": "unrelated security/execution-surface identifier"},
+    {"reference": "openclaw/openclaw code hits", "classification": "KILLED", "reason": "unrelated internal tool/execution surface"},
+    {"reference": "CPME/trueform code hits", "classification": "KILLED", "reason": "unrelated internal modeling/execution surface"},
+    {"reference": "noctelvirei/marp-deckbuilder code hit", "classification": "KILLED", "reason": "unrelated rendering/execution naming"}
+  ],
+  "red_team_checks": {
+    "first_20_execsurface_code_hits_contain_AETHERXGLOBAL": false,
+    "first_20_execsurface_code_hits_contain_execsurface_lock_json": false,
+    "first_20_execsurface_code_hits_contain_cargo_install_execsurface": false,
+    "m9_1_zero_contact_relabelled_as_adoption": false,
+    "external_outreach_or_guided_execution_performed": false
+  },
+  "claims_boundary": "This result applies only to the preregistered Round 1 public GitHub search scope. It does not prove universal absence of independent users or demand."
+}
