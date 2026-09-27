@@ -1,0 +1,118 @@
+name: Post-M9 ptrace phase fast-path experiment
+
+on:
+  push:
+    branches:
+      - experiment/post-m9-ptrace-phase-fastpath
+    paths:
+      - .github/workflows/post-m9-ptrace-phase-fastpath-experiment.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  implement-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout experiment branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install frozen Rust toolchain
+        run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt,clippy
+
+      - name: Apply Candidate A and adversarial fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          path=Path('crates/execsurface-observe/src/linux_ptrace.rs')
+          text=path.read_text()
+
+          old='''    syscall_info_esrch_after_exit_group: bool,\n}'''
+          new='''    syscall_info_esrch_after_exit_group: bool,\n    skip_next_syscall_exit_info: bool,\n}'''
+          assert text.count(old)==1
+          text=text.replace(old,new,1)
+
+          old='''            syscall_info_esrch_after_exit_group: false,\n'''
+          assert text.count(old)==2
+          text=text.replace(old, old + '            skip_next_syscall_exit_info: false,\n', 2)
+
+          old='''        if stop_signal == libc::SIGTRAP && event != 0 {\n            handle_ptrace_event('''
+          new='''        if stop_signal == libc::SIGTRAP && event != 0 {\n            if let Some(state) = tracees.get_mut(&tid) {\n                state.skip_next_syscall_exit_info = false;\n            }\n            handle_ptrace_event('''
+          assert text.count(old)==1
+          text=text.replace(old,new,1)
+
+          old='''        if stop_signal == (libc::SIGTRAP | 0x80) {\n            let info = match syscall_info(tid) {'''
+          new='''        if stop_signal == (libc::SIGTRAP | 0x80) {\n            let fast_exit = tracees\n                .get(&tid)\n                .map(|state| state.skip_next_syscall_exit_info)\n                .unwrap_or(false);\n            if fast_exit {\n                let state = tracees.get_mut(&tid).ok_or_else(|| {\n                    ObserveError::Protocol(format!(\n                        "fast exit-info path lost tracked tid {tid}"\n                    ))\n                })?;\n                state.skip_next_syscall_exit_info = false;\n                resume_after_observed_stop(root, tid, 0, &mut tracees, &mut root_outcome)?;\n                continue;\n            }\n\n            let info = match syscall_info(tid) {'''
+          assert text.count(old)==1
+          text=text.replace(old,new,1)
+
+          old='''            if let Some((nr, args)) = info.entry() {\n                handle_syscall_entry(tid, nr, args, &mut tracees, &mut collector);\n            } else if let Some(result) = info.exit() {\n                handle_syscall_exit(tid, result, &mut tracees, &mut fd_tables, &mut collector);\n            }'''
+          new='''            if let Some((nr, args)) = info.entry() {\n                handle_syscall_entry(tid, nr, args, &mut tracees, &mut collector);\n                let eligible = exit_info_fast_path_eligible(tid, nr, &tracees);\n                if let Some(state) = tracees.get_mut(&tid) {\n                    state.skip_next_syscall_exit_info = eligible;\n                }\n            } else if let Some(result) = info.exit() {\n                handle_syscall_exit(tid, result, &mut tracees, &mut fd_tables, &mut collector);\n                if let Some(state) = tracees.get_mut(&tid) {\n                    state.skip_next_syscall_exit_info = false;\n                }\n            }'''
+          assert text.count(old)==1
+          text=text.replace(old,new,1)
+
+          old='''        let suppress_signal = match tracees.get_mut(&tid) {'''
+          new='''        // Any non-syscall stop conservatively invalidates the optional fast-exit\n        // phase. The next syscall stop will therefore use authoritative\n        // PTRACE_GET_SYSCALL_INFO rather than guessing across an interruption.\n        if let Some(state) = tracees.get_mut(&tid) {\n            state.skip_next_syscall_exit_info = false;\n        }\n\n        let suppress_signal = match tracees.get_mut(&tid) {'''
+          assert text.count(old)==1
+          text=text.replace(old,new,1)
+
+          marker='''fn handle_syscall_entry(\n'''
+          helper='''fn exit_info_fast_path_eligible(\n    tid: libc::pid_t,\n    nr: u64,\n    tracees: &HashMap<libc::pid_t, TraceeState>,\n) -> bool {\n    let nr = nr as libc::c_long;\n    let phase_sensitive = [\n        libc::SYS_execve,\n        libc::SYS_execveat,\n        libc::SYS_exit,\n        libc::SYS_exit_group,\n        libc::SYS_fork,\n        libc::SYS_vfork,\n        libc::SYS_clone,\n        libc::SYS_clone3,\n        libc::SYS_rt_sigreturn,\n        libc::SYS_restart_syscall,\n    ]\n    .contains(&nr);\n    if phase_sensitive {\n        return false;\n    }\n\n    tracees\n        .get(&tid)\n        .map(|state| {\n            state.pending_syscall.is_none()\n                && !state.exit_group_pending\n                && !state.retired_by_exec\n                && state.exit_event_status.is_none()\n        })\n        .unwrap_or(false)\n}\n\n'''
+          assert text.count(marker)==1
+          text=text.replace(marker, helper+marker,1)
+          path.write_text(text)
+
+          fixture=Path('crates/execsurface-observe/src/bin/execsurface-fixture.rs')
+          f=fixture.read_text()
+          insert='''        Some("irrelevant-syscalls") => {\n            let count: usize = args.next().expect("count").parse().expect("count");\n            let mut accumulator = 0_i64;\n            for _ in 0..count {\n                accumulator ^= unsafe { libc::syscall(libc::SYS_getpid) } as i64;\n            }\n            assert_ne!(accumulator, -1);\n        }\n        Some("signal-nanosleep") => {\n            extern "C" fn handler(_: libc::c_int) {}\n            unsafe {\n                let mut action: libc::sigaction = std::mem::zeroed();\n                action.sa_sigaction = handler as usize;\n                action.sa_flags = 0;\n                libc::sigemptyset(&mut action.sa_mask);\n                assert_eq!(libc::sigaction(libc::SIGUSR1, &action, std::ptr::null_mut()), 0);\n            }\n            let parent = unsafe { libc::getpid() };\n            let child = unsafe { libc::fork() };\n            assert!(child >= 0);\n            if child == 0 {\n                unsafe {\n                    libc::usleep(20_000);\n                    libc::kill(parent, libc::SIGUSR1);\n                    libc::_exit(0);\n                }\n            }\n            let request = libc::timespec { tv_sec: 0, tv_nsec: 200_000_000 };\n            let mut remaining: libc::timespec = unsafe { std::mem::zeroed() };\n            let rc = unsafe { libc::nanosleep(&request, &mut remaining) };\n            assert_eq!(rc, -1);\n            assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EINTR));\n            let mut status = 0;\n            assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);\n            assert!(libc::WIFEXITED(status));\n            assert_eq!(libc::WEXITSTATUS(status), 0);\n            let _ = unsafe { libc::syscall(libc::SYS_getpid) };\n        }\n        Some("failed-exec") => {\n            let path = CString::new("/definitely/not/execsurface-present").expect("path");\n            let argv = [path.as_ptr(), std::ptr::null()];\n            let rc = unsafe { libc::execv(path.as_ptr(), argv.as_ptr()) };\n            assert_eq!(rc, -1);\n            let _ = unsafe { libc::syscall(libc::SYS_getpid) };\n        }\n'''
+          needle='''        Some("fault-path") => {'''
+          assert f.count(needle)==1
+          f=f.replace(needle,insert+needle,1)
+          fixture.write_text(f)
+
+          tests=Path('crates/execsurface-observe/tests/ptrace_linux.rs')
+          t=tests.read_text()
+          add='''\n#[test]\nfn phase_fast_path_handles_irrelevant_syscall_exit_pairs() {\n    let observation = observe_command(\n        &CommandSpec::new(fixture())\n            .arg("irrelevant-syscalls")\n            .arg("5000"),\n    )\n    .expect("observe");\n    assert!(observation.complete, "{:#?}", observation.warnings);\n    assert!(observation.warnings.is_empty());\n    assert_eq!(observation.outcome.exit_code, Some(0));\n    assert_eq!(observation.outcome.signal, None);\n}\n\n#[test]\nfn phase_fast_path_falls_back_cleanly_across_signal_interruption() {\n    let observation =\n        observe_command(&CommandSpec::new(fixture()).arg("signal-nanosleep")).expect("observe");\n    assert!(observation.complete, "{:#?}", observation.warnings);\n    assert!(observation.warnings.is_empty());\n    assert_eq!(observation.outcome.exit_code, Some(0));\n    assert_eq!(observation.outcome.signal, None);\n}\n\n#[test]\nfn phase_fast_path_survives_failed_exec_then_continued_syscalls() {\n    let observation =\n        observe_command(&CommandSpec::new(fixture()).arg("failed-exec")).expect("observe");\n    assert!(observation.complete, "{:#?}", observation.warnings);\n    assert!(observation.warnings.is_empty());\n    assert_eq!(observation.outcome.exit_code, Some(0));\n    assert_eq!(observation.outcome.signal, None);\n}\n'''
+          needle='''#[test]\nfn backend_declares_hardened_scope_and_limitations() {'''
+          assert t.count(needle)==1
+          t=t.replace(needle,add+'\n'+needle,1)
+          tests.write_text(t)
+          PY
+
+          cargo +1.90.0 fmt --all
+          git diff --check
+
+      - name: Candidate unit and integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.90.0 test --locked -p execsurface-observe --all-targets
+
+      - name: Full workspace regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.90.0 test --locked --workspace
+          cargo +1.90.0 clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Commit tested candidate to experiment branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git status --short
+          test -n "$(git status --porcelain)"
+          git config user.name "aether-x-evidence-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add crates/execsurface-observe/src/linux_ptrace.rs \
+                  crates/execsurface-observe/src/bin/execsurface-fixture.rs \
+                  crates/execsurface-observe/tests/ptrace_linux.rs
+          git commit -m "Experiment: phase-aware ptrace exit-info fast path"
+          git push origin HEAD:experiment/post-m9-ptrace-phase-fastpath
