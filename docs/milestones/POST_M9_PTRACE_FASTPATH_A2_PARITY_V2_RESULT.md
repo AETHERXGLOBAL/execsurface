@@ -1,7 +1,7 @@
 # Post-M9 — Ptrace Fast-Path A2 Parity v2 Result
 
 Date: 2026-09-27
-Status: **BLOCKED — REFERENCE NONDETERMINISM IN CONCURRENT RESTART FIXTURE**
+Status: **BLOCKED — COMPARATOR IMPLEMENTATION DEFECT; NO CANDIDATE CONCLUSION**
 Parent: GitHub issue #84
 Workflow run: `36288875048`
 Source SHA: `7abef67d917f01cd6c34925a50acdbffd8fbb10a`
@@ -12,13 +12,11 @@ Artifact digest: `sha256:526a7dc3f09bbdb5f3c1ac26cf2342d444c4847798e1374dac92e38
 
 Candidate A2 did **not** fail semantic parity in this run.
 
-The gate stopped before comparing A2 on the `restart` case because the frozen reference observer failed its own reference/reference determinism check for the concurrent restart fixture.
-
-Exact failure:
+The gate stopped before comparing A2 on the `restart` case because the reference/reference comparison reported:
 
 `reference nondeterminism under frozen raw comparator: restart`
 
-The strict raw comparator is retained unchanged. The failed run is retained unchanged. It is not relabeled as PASS and is not deleted.
+The failed run and its artifact remain preserved unchanged. It is not relabeled as PASS and is not deleted.
 
 ## What passed before the block
 
@@ -27,40 +25,46 @@ The strict raw comparator is retained unchanged. The failed run is retained unch
 - strict workspace Clippy passed;
 - `execsurface-observe` tests passed;
 - full workspace tests passed;
-- reference/reference raw parity passed for the deterministic cases reached before `restart`:
-  - `irrelevant`;
-  - `fileio`;
-  - `failed-open`;
-  - `signal`.
+- the comparator reached `restart` only after the earlier cases completed.
 
-The workflow then reached `restart` and stopped because the two reference runs differed under the TID-only raw projection.
+The activation diagnostic, bidirectional production baseline/diff parity, and all performance-value measurements were skipped by design.
 
-The activation diagnostic, bidirectional production baseline/diff parity, and all performance-value measurements were therefore skipped by design.
+## Subsequent comparator audit — correction
 
-## Interpretation
+A later audit found that the Python implementation did **not** implement the already-frozen TID-only comparator correctly for the actual flattened observation JSON.
 
-The v2 `restart` fixture uses a child process to deliver `SIGUSR1` and later write to the pipe while the parent blocks in a restartable read. This creates real parent/child scheduling and event-order freedom. The raw comparator intentionally preserves event order and sequence, so two valid reference executions can differ even before a candidate is involved.
+The observation schema emits process-spawn identity as flattened fields:
 
-This is a **comparator-fixture counterexample**, not evidence that A2 is semantically equivalent and not evidence that A2 is semantically different.
+- `event_type = "process_spawn"`
+- `tid = <parent tid>`
+- `child_tid = <child tid>`
 
-No product claim follows from it.
+The v2 projection remapped `event["tid"]` but attempted to find `child_tid` inside a nonexistent nested `kind.ProcessSpawn` object. Therefore `child_tid` remained as the raw kernel TID and naturally differed across independent reference launches.
 
-## Prospective correction rule
+Commit `a25a03a479bee38aee6c52b1853e892a5ee9e74f` subsequently corrected this implementation defect and added a projection self-test proving that parent TID, spawn `child_tid`, later child event TID, and warning TID all map through the same local token map.
 
-The next run may replace only the concurrent `restart` fixture with a prospectively frozen single-process deterministic restart fixture. The old fixture and v2 failure remain preserved.
+### Consequence
 
-The replacement must:
+The earlier statement that v2 proved reference **event-order** nondeterminism is superseded. The run proves only that the then-current comparator implementation reported inequality. Because an allowed TID identity was left unprojected, the run cannot distinguish scheduling/order variance from this harness defect.
 
-1. use one process only;
-2. install `SIGALRM` with `SA_RESTART`;
-3. block in `read` on a pipe;
-4. have the signal handler perform an async-signal-safe `write` of one byte to the same pipe;
-5. require the blocked `read` to complete with that byte after restart;
-6. execute a selected file operation afterward to verify that observer phase continues correctly;
-7. introduce no candidate-specific normalization;
-8. use the exact same frozen raw comparator semantics for every deterministic case.
+The correct classification is therefore:
 
-The old concurrent `restart` mode remains in the helper for provenance and may still be used for non-raw-order stress testing; it is not silently removed.
+**HARNESS / COMPARATOR IMPLEMENTATION DEFECT — NO A2 SEMANTIC CONCLUSION.**
+
+This correction does not rewrite the old run or artifact; it corrects the scientific interpretation in a later commit.
+
+## Prospective rule
+
+A rerun must:
+
+1. keep the frozen semantic rule unchanged: numeric runtime TID identity may be locally renamed; event order, sequence and all non-TID payloads remain exact;
+2. correctly project flattened `process_spawn.child_tid` through the same TID token map;
+3. execute a comparator self-test before any reference/candidate data are accepted;
+4. perform reference/reference determinism before reference/A2 comparison;
+5. preserve all previous failed runs and artifacts;
+6. continue blocking activation/value measurement on any genuine reference nondeterminism or candidate mismatch.
+
+Both the original concurrent `restart` fixture and the later single-process restart fixture may be tested prospectively after the comparator implementation is corrected; neither prior failure is silently converted into a pass.
 
 ## Authority boundary
 
