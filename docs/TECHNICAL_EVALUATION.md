@@ -17,10 +17,10 @@ The evaluator will:
 
 ## 1. Install the exact public evaluation release
 
-For a reproducible evaluation, pin the same public-alpha version whose zero-contact registry path is recorded in M7.1 evidence:
+For a reproducible evaluation, pin the current public alpha:
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.2" --locked
+cargo install execsurface --version "=0.1.0-alpha.3" --locked
 execsurface --version
 execsurface doctor
 ```
@@ -28,7 +28,7 @@ execsurface doctor
 Expected version:
 
 ```text
-execsurface 0.1.0-alpha.2
+execsurface 0.1.0-alpha.3
 ```
 
 The repository README may show the shorter normal-user install command. The evaluator path intentionally pins the version so that a later registry release cannot silently change the artifact under evaluation.
@@ -162,9 +162,9 @@ It does **not** establish:
 
 If you run this evaluation outside AETHER X and are willing to make the result public, preserve a link to the repository/CI run and the resulting evidence artifacts.
 
-Independent adoption evidence is counted only when it originates from or is confirmed by an external project or evaluator. Stars, impressions, private praise and AETHER X self-tests do not count.
+Independent external evidence is counted only when it originates from or is confirmed by an external project or evaluator. Stars, impressions, private praise and AETHER X self-tests do not count.
 
-For the shortest existing demo path, also see [`QUICKSTART_5_MIN.md`](./QUICKSTART_5_MIN.md). For the prior verified zero-contact registry installation evidence, see [`M7_1_EVIDENCE.md`](./milestones/M7_1_EVIDENCE.md).
+For the shortest controlled demo path, also see [`QUICKSTART_5_MIN.md`](./QUICKSTART_5_MIN.md). The current public release is `v0.1.0-alpha.3`.
 
 ---
 
