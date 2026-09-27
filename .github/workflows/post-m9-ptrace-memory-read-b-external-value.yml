@@ -1,0 +1,321 @@
+name: Post-M9 ptrace memory-read Candidate B external value
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/milestones/POST_M9_PTRACE_MEMORY_READ_BATCHING_PROTOCOL.md
+      - docs/milestones/POST_M9_PTRACE_MEMORY_READ_BATCHING_ACTIVATION_V2_RESULT.md
+      - experiments/post_m9_memory_read_batching/apply_candidate_b.py
+      - .github/workflows/post-m9-ptrace-memory-read-b-external-value.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  value:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: PTR-B-VALUE-RG-001
+            project: ripgrep
+            repository: BurntSushi/ripgrep
+            revision: 3fce3b5bb0236da2df6d99672afb8a719642eca7
+          - id: PTR-B-VALUE-FZF-001
+            project: fzf
+            repository: junegunn/fzf
+            revision: b1be3a8be1b833ce5b92fbbac11637643d60a046
+    env:
+      EXECSURFACE_RUST_TOOLCHAIN: 1.90.0
+      RIPGREP_RUST_TOOLCHAIN: 1.96.0
+      SAMPLE_TIMEOUT: 120
+      REF_BIN: /tmp/execsurface-b-value-reference
+      CAND_BIN: /tmp/execsurface-b-value-candidate
+      WORK_ROOT: /tmp/execsurface-b-value-external
+
+    steps:
+      - name: Checkout frozen ExecSurface source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pinned external target
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.revision }}
+          path: external/project
+          fetch-depth: ${{ matrix.project == 'fzf' && '0' || '1' }}
+          fetch-tags: ${{ matrix.project == 'fzf' }}
+          persist-credentials: false
+
+      - name: Freeze environment and target commands
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="post-m9-b-value/${{ matrix.id }}"
+          mkdir -p "$evidence"
+          test -f docs/milestones/POST_M9_PTRACE_MEMORY_READ_BATCHING_PROTOCOL.md
+          test -f docs/milestones/POST_M9_PTRACE_MEMORY_READ_BATCHING_ACTIVATION_V2_RESULT.md
+          test -f experiments/post_m9_memory_read_batching/apply_candidate_b.py
+          test "$(git -C external/project rev-parse HEAD)" = "${{ matrix.revision }}"
+          test -z "$(git -C external/project status --porcelain)"
+
+          rustup toolchain install "$EXECSURFACE_RUST_TOOLCHAIN" --profile minimal --component rustfmt
+          if [ "${{ matrix.project }}" = "ripgrep" ]; then
+            rustup toolchain install "$RIPGREP_RUST_TOOLCHAIN" --profile minimal
+          fi
+
+          rm -rf "$WORK_ROOT"
+          cp -a external/project "$WORK_ROOT"
+
+          if [ "${{ matrix.project }}" = "ripgrep" ]; then
+            printf '%s\n' "cd '$WORK_ROOT' && ./target/release/rg --no-heading --line-number 'ripgrep' README.md >/dev/null" > /tmp/b-value-runtime-command
+            printf '%s\n' "cargo +$RIPGREP_RUST_TOOLCHAIN build --locked --release" > /tmp/b-value-build-command
+          else
+            printf '%s\n' "cd '$WORK_ROOT' && printf 'alpha\\nbeta\\ngamma\\n' | ./target/fzf-linux_amd64 --filter=beta --select-1 --exit-0 >/dev/null" > /tmp/b-value-runtime-command
+            printf '%s\n' "make" > /tmp/b-value-build-command
+          fi
+
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'source_sha=%s\n' "$GITHUB_SHA"
+            printf 'candidate=B\n'
+            printf 'target=%s\n' '${{ matrix.repository }}'
+            printf 'revision=%s\n' '${{ matrix.revision }}'
+            printf 'kernel=%s\n' "$(uname -srmo)"
+            printf 'architecture=%s\n' "$(uname -m)"
+            printf 'cpu=%s\n' "$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)"
+            printf 'execsurface_rustc=%s\n' "$(rustc +$EXECSURFACE_RUST_TOOLCHAIN --version)"
+            printf 'external_rustc=%s\n' "$(rustc +$RIPGREP_RUST_TOOLCHAIN --version 2>/dev/null || echo NOT_APPLICABLE)"
+            printf 'go=%s\n' "$(go version 2>/dev/null || echo NOT_APPLICABLE)"
+            printf 'build_command=%s\n' "$(cat /tmp/b-value-build-command)"
+            printf 'runtime_command=%s\n' "$(cat /tmp/b-value-runtime-command)"
+            printf 'warmups_per_mode=3\n'
+            printf 'measured_samples_per_mode=15\n'
+            printf 'outlier_removal=none\n'
+            printf 'threshold_percent=10\n'
+            printf 'public_runtime_modified=false\n'
+          } > "$evidence/environment.txt"
+
+      - name: Build frozen external target
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="post-m9-b-value/${{ matrix.id }}"
+          if [ "${{ matrix.project }}" = "ripgrep" ]; then
+            (cd "$WORK_ROOT" && cargo "+$RIPGREP_RUST_TOOLCHAIN" build --locked --release) \
+              > "$evidence/target-build.stdout" 2> "$evidence/target-build.stderr"
+            test -x "$WORK_ROOT/target/release/rg"
+          else
+            (cd "$WORK_ROOT" && make) \
+              > "$evidence/target-build.stdout" 2> "$evidence/target-build.stderr"
+            test -x "$WORK_ROOT/target/fzf-linux_amd64"
+          fi
+          git -C "$WORK_ROOT" status --porcelain --untracked-files=no > "$evidence/target-tracked-status.txt"
+          test ! -s "$evidence/target-tracked-status.txt"
+          /bin/bash -lc "$(cat /tmp/b-value-runtime-command)"
+
+      - name: Build immutable reference binary before Candidate B
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="post-m9-b-value/${{ matrix.id }}"
+          cargo "+$EXECSURFACE_RUST_TOOLCHAIN" build --locked --release -p execsurface --bin execsurface
+          cp target/release/execsurface "$REF_BIN"
+          sha256sum "$REF_BIN" > "$evidence/reference-binary.sha256"
+
+      - name: Apply Candidate B and build candidate binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="post-m9-b-value/${{ matrix.id }}"
+          cp crates/execsurface-observe/src/linux_ptrace.rs "$evidence/linux_ptrace.reference.rs"
+          python3 experiments/post_m9_memory_read_batching/apply_candidate_b.py
+          cargo "+$EXECSURFACE_RUST_TOOLCHAIN" fmt --all
+          git diff --check
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs > "$evidence/candidate-b.patch"
+          test -s "$evidence/candidate-b.patch"
+          cargo "+$EXECSURFACE_RUST_TOOLCHAIN" build --locked --release -p execsurface --bin execsurface
+          cp target/release/execsurface "$CAND_BIN"
+          sha256sum "$CAND_BIN" > "$evidence/candidate-binary.sha256"
+          sha256sum experiments/post_m9_memory_read_batching/apply_candidate_b.py "$evidence/candidate-b.patch" \
+            > "$evidence/candidate-inputs.sha256"
+
+      - name: Frozen production semantic prerequisite
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="post-m9-b-value/${{ matrix.id }}"
+          cmd="$(cat /tmp/b-value-runtime-command)"
+          mkdir -p "$evidence/semantic"
+
+          run_observe() {
+            local exe="$1"; local name="$2"
+            "$exe" observe -- /bin/bash -lc "$cmd" > "$evidence/semantic/${name}.observe.json"
+          }
+          run_observe "$REF_BIN" reference
+          run_observe "$CAND_BIN" candidate
+
+          python3 - "$evidence/semantic/reference.observe.json" "$evidence/semantic/candidate.observe.json" <<'PY'
+          import json,sys
+          docs=[json.load(open(p)) for p in sys.argv[1:]]
+          for p,d in zip(sys.argv[1:],docs):
+              if d.get('complete') is not True or d.get('warnings') != []:
+                  raise SystemExit(f'health gate failed: {p}')
+              if d.get('outcome') != {'exit_code':0,'signal':None}:
+                  raise SystemExit(f'target outcome failed: {p}: {d.get("outcome")}')
+          if docs[0].get('backend') != docs[1].get('backend'):
+              raise SystemExit('backend metadata mismatch')
+          PY
+
+          "$REF_BIN" learn --output "$evidence/semantic/reference.lock.json" \
+            -- /bin/bash -lc "$cmd" > "$evidence/semantic/reference.learn.txt"
+          "$REF_BIN" check --baseline "$evidence/semantic/reference.lock.json" --diff-only --json \
+            -- /bin/bash -lc "$cmd" > "$evidence/semantic/reference-to-reference.json"
+          "$CAND_BIN" check --baseline "$evidence/semantic/reference.lock.json" --diff-only --json \
+            -- /bin/bash -lc "$cmd" > "$evidence/semantic/reference-to-candidate.json"
+
+          "$CAND_BIN" learn --output "$evidence/semantic/candidate.lock.json" \
+            -- /bin/bash -lc "$cmd" > "$evidence/semantic/candidate.learn.txt"
+          "$REF_BIN" check --baseline "$evidence/semantic/candidate.lock.json" --diff-only --json \
+            -- /bin/bash -lc "$cmd" > "$evidence/semantic/candidate-to-reference.json"
+
+          python3 - \
+            "$evidence/semantic/reference-to-reference.json" \
+            "$evidence/semantic/reference-to-candidate.json" \
+            "$evidence/semantic/candidate-to-reference.json" <<'PY'
+          import json,sys
+          summary=[]
+          for p in sys.argv[1:]:
+              d=json.load(open(p))
+              counts={k:len(d.get(k,[])) for k in ('added','removed','changed')}
+              if any(counts.values()):
+                  raise SystemExit(f'nonzero semantic drift: {p}: {counts}')
+              if d.get('target') != {'exit_code':0,'signal':None}:
+                  raise SystemExit(f'target mismatch: {p}: {d.get("target")}')
+              summary.append({'file':p,'counts':counts,'target':d.get('target')})
+          open(sys.argv[1].rsplit('/',1)[0]+'/semantic-summary.json','w').write(
+              json.dumps(summary,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(summary,indent=2,sort_keys=True))
+          PY
+
+      - name: Frozen 3 plus 15 paired reference/Candidate B measurements
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="post-m9-b-value/${{ matrix.id }}"
+          cmd="$(cat /tmp/b-value-runtime-command)"
+          mkdir -p "$evidence/samples"
+          : > "$evidence/warmup-reference-ms.txt"
+          : > "$evidence/warmup-candidate-ms.txt"
+          : > "$evidence/measured-reference-ms.txt"
+          : > "$evidence/measured-candidate-ms.txt"
+          : > "$evidence/sample-order.txt"
+
+          measure_observer() {
+            python3 - "$1" "$cmd" "$SAMPLE_TIMEOUT" "$2" "$3" "$4" <<'PY'
+          import json,subprocess,sys,time
+          exe,cmd,timeout_s,timing_file,json_file,stderr_file=sys.argv[1:]
+          t0=time.perf_counter_ns()
+          try:
+              with open(json_file,'w') as out, open(stderr_file,'w') as err:
+                  rc=subprocess.run([exe,'observe','--','/bin/bash','-lc',cmd],stdout=out,stderr=err,timeout=float(timeout_s)).returncode
+          except subprocess.TimeoutExpired:
+              rc=124
+          elapsed=(time.perf_counter_ns()-t0)/1_000_000
+          with open(timing_file,'a') as f: f.write(f'{elapsed:.6f}\n')
+          if rc != 0:
+              raise SystemExit(f'observer rc={rc}')
+          d=json.load(open(json_file))
+          if d.get('complete') is not True or d.get('warnings') != []:
+              raise SystemExit(f'observer health failed: {json_file}')
+          if d.get('outcome') != {'exit_code':0,'signal':None}:
+              raise SystemExit(f'target outcome failed: {json_file}: {d.get("outcome")}')
+          PY
+          }
+
+          run_sample() {
+            local mode="$1" phase="$2" index="$3"
+            if [ "$mode" = reference ]; then
+              exe="$REF_BIN"; timing="$evidence/${phase}-reference-ms.txt"
+            else
+              exe="$CAND_BIN"; timing="$evidence/${phase}-candidate-ms.txt"
+            fi
+            printf '%s,%s,%s\n' "$phase" "$index" "$mode" >> "$evidence/sample-order.txt"
+            measure_observer "$exe" "$timing" \
+              "$evidence/samples/${phase}-${index}-${mode}.json" \
+              "$evidence/samples/${phase}-${index}-${mode}.stderr"
+          }
+
+          run_sample reference warmup 1; run_sample candidate warmup 1
+          run_sample candidate warmup 2; run_sample reference warmup 2
+          run_sample reference warmup 3; run_sample candidate warmup 3
+
+          for i in $(seq 1 15); do
+            if [ $((i % 2)) -eq 1 ]; then
+              run_sample reference measured "$i"
+              run_sample candidate measured "$i"
+            else
+              run_sample candidate measured "$i"
+              run_sample reference measured "$i"
+            fi
+          done
+
+          test "$(wc -l < "$evidence/warmup-reference-ms.txt")" -eq 3
+          test "$(wc -l < "$evidence/warmup-candidate-ms.txt")" -eq 3
+          test "$(wc -l < "$evidence/measured-reference-ms.txt")" -eq 15
+          test "$(wc -l < "$evidence/measured-candidate-ms.txt")" -eq 15
+
+      - name: Evaluate frozen value gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="post-m9-b-value/${{ matrix.id }}"
+          python3 - "$evidence" <<'PY'
+          import json,statistics,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          ref=[float(x) for x in (root/'measured-reference-ms.txt').read_text().split()]
+          cand=[float(x) for x in (root/'measured-candidate-ms.txt').read_text().split()]
+          if len(ref)!=15 or len(cand)!=15:
+              raise SystemExit('sample count mismatch')
+          def med_mad(xs):
+              m=statistics.median(xs)
+              return m,statistics.median(abs(x-m) for x in xs)
+          rm,rmad=med_mad(ref); cm,cmad=med_mad(cand)
+          reduction_ms=rm-cm
+          reduction_pct=100.0*reduction_ms/rm
+          passed=cm < rm and reduction_pct >= 10.0
+          result={
+              'classification':'VALUE_ESTABLISHED' if passed else 'SEMANTICALLY_VALID_VALUE_NOT_ESTABLISHED',
+              'target':'${{ matrix.id }}',
+              'reference_ms':{'samples':ref,'median':rm,'mad':rmad},
+              'candidate_ms':{'samples':cand,'median':cm,'mad':cmad},
+              'median_reduction_ms':reduction_ms,
+              'median_reduction_percent':reduction_pct,
+              'threshold_percent':10.0,
+              'candidate_lower_than_reference':cm < rm,
+              'threshold_pass':passed,
+              'outlier_removal':'none'
+          }
+          (root/'value-result.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(result,indent=2,sort_keys=True))
+          if not passed:
+              raise SystemExit(1)
+          PY
+
+      - name: Upload value evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-m9-b-value-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-m9-b-value/${{ matrix.id }}
+          if-no-files-found: error
+          retention-days: 30
