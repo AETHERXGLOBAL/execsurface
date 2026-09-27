@@ -1,0 +1,243 @@
+name: Post-M9 eBPF E4 same-workload value
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/post-m9-ebpf-e4-same-workload-value.yml
+      - docs/milestones/POST_M9_EBPF_E4_SAME_WORKLOAD_VALUE_PROTOCOL.md
+      - experiments/post_m9_ebpf/e4_same_workload_value.py
+      - experiments/m8-ebpf/persistent-observer/**
+      - crates/execsurface-observe/**
+      - crates/execsurface-cli/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  value:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: E4-JUST
+            repository: casey/just
+            revision: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+            shell_script: cargo +1.90.0 test --all >/dev/null 2>&1
+          - id: E4-FZF
+            repository: junegunn/fzf
+            revision: b1be3a8be1b833ce5b92fbbac11637643d60a046
+            shell_script: go test ./... >/dev/null 2>&1
+    env:
+      EVIDENCE: post-m9-ebpf-e4/${{ matrix.id }}
+      CLI: /tmp/execsurface-e4-cli
+      PERSISTENT: /tmp/execsurface-e4-persistent
+      ADAPTER: /tmp/execsurface-e4-barrier-adapter
+
+    steps:
+      - name: Checkout ExecSurface source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pinned workload
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.revision }}
+          path: external/workload
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Freeze environment and install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE/raw"
+          test -f docs/milestones/POST_M9_EBPF_E4_SAME_WORKLOAD_VALUE_PROTOCOL.md
+          test -f experiments/post_m9_ebpf/e4_same_workload_value.py
+          python3 -m py_compile experiments/post_m9_ebpf/e4_same_workload_value.py
+          test "$(git -C external/workload rev-parse HEAD)" = '${{ matrix.revision }}'
+          test -z "$(git -C external/workload status --porcelain)"
+
+          rm -rf "$RUNNER_TEMP/e4-workload"
+          cp -a external/workload "$RUNNER_TEMP/e4-workload"
+          echo "E4_WORKDIR=$RUNNER_TEMP/e4-workload" >> "$GITHUB_ENV"
+
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          rustup toolchain install 1.90.0 --profile minimal
+
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'source_sha=%s\n' "$GITHUB_SHA"
+            printf 'target=%s\n' '${{ matrix.repository }}'
+            printf 'revision=%s\n' '${{ matrix.revision }}'
+            printf 'command=%s\n' '${{ matrix.shell_script }}'
+            printf 'warmups=3\n'
+            printf 'samples=15\n'
+            printf 'threshold_percent=10\n'
+            printf 'persistent_sessions_per_invocation=2\n'
+            printf 'outlier_removal=none\n'
+            printf 'sample_replacement=none\n'
+            printf 'public_authority_changed=false\n'
+          } > "$EVIDENCE/environment.txt"
+
+      - name: Prime exact pinned workload
+        shell: bash
+        env:
+          WORKLOAD_SCRIPT: ${{ matrix.shell_script }}
+        run: |
+          set -euo pipefail
+          cd "$E4_WORKDIR"
+          /bin/bash -lc "$WORKLOAD_SCRIPT"
+          test "$(git rev-parse HEAD)" = '${{ matrix.revision }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Build public ptrace CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.90.0 build --locked --release -p execsurface --bin execsurface
+          cp target/release/execsurface "$CLI"
+          test -x "$CLI"
+          sha256sum "$CLI" > "$EVIDENCE/ptrace-cli.sha256"
+
+      - name: Build unchanged M8.7 persistent observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=experiments/m8-ebpf/persistent-observer/Cargo.toml
+          cargo +1.82.0 fmt --manifest-path "$manifest" -- --check
+          rm -f "$(dirname "$manifest")/Cargo.lock"
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile --manifest-path "$manifest"
+          cargo +1.82.0 build --manifest-path "$manifest" --release --locked \
+            2>&1 | tee "$EVIDENCE/persistent-build.log"
+          cp experiments/m8-ebpf/persistent-observer/target/release/execsurface-m8-persistent-observer "$PERSISTENT"
+          test -x "$PERSISTENT"
+          git diff --exit-code -- \
+            experiments/m8-ebpf/persistent-observer/src/main.rs \
+            experiments/m8-ebpf/persistent-observer/src/bpf/persistent.bpf.c
+          sha256sum \
+            "$PERSISTENT" \
+            experiments/m8-ebpf/persistent-observer/src/main.rs \
+            experiments/m8-ebpf/persistent-observer/src/bpf/persistent.bpf.c \
+            > "$EVIDENCE/persistent.sha256"
+
+      - name: Build runner-local barrier command adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$EVIDENCE/e4_adapter.c" <<'C'
+          #include <errno.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <unistd.h>
+
+          int main(int argc, char **argv) {
+              if (argc != 3 || strcmp(argv[1], "barrier") != 0) {
+                  fprintf(stderr, "adapter: expected barrier <fd>\n");
+                  return 64;
+              }
+              char *end = NULL;
+              errno = 0;
+              long value = strtol(argv[2], &end, 10);
+              if (errno != 0 || end == argv[2] || *end != '\0' || value < 0 || value > 1048576) {
+                  return 65;
+              }
+              int fd = (int)value;
+              unsigned char byte = 0;
+              ssize_t got;
+              do {
+                  got = read(fd, &byte, 1);
+              } while (got < 0 && errno == EINTR);
+              close(fd);
+              if (got != 1) return 66;
+
+              const char *script = getenv("EXECSURFACE_E4_COMMAND");
+              if (script == NULL || script[0] == '\0') return 67;
+              execl("/bin/bash", "bash", "-lc", script, (char *)NULL);
+              return 127;
+          }
+          C
+          clang -O2 -Wall -Wextra -Werror "$EVIDENCE/e4_adapter.c" -o "$ADAPTER"
+          test -x "$ADAPTER"
+          sha256sum "$EVIDENCE/e4_adapter.c" "$ADAPTER" > "$EVIDENCE/adapter.sha256"
+
+      - name: Execute frozen 3 plus 15 E4 value protocol
+        id: value
+        shell: bash
+        env:
+          WORKLOAD_SCRIPT: ${{ matrix.shell_script }}
+        run: |
+          set -uo pipefail
+          runner_home="$HOME"
+          go_cache="$(go env GOCACHE 2>/dev/null || true)"
+          go_path="$(go env GOPATH 2>/dev/null || true)"
+          set +e
+          sudo env \
+            HOME="$runner_home" \
+            RUSTUP_HOME="$runner_home/.rustup" \
+            CARGO_HOME="$runner_home/.cargo" \
+            GOCACHE="$go_cache" \
+            GOPATH="$go_path" \
+            PATH="$PATH" \
+            python3 "$GITHUB_WORKSPACE/experiments/post_m9_ebpf/e4_same_workload_value.py" \
+              --cli "$CLI" \
+              --persistent "$PERSISTENT" \
+              --adapter "$ADAPTER" \
+              --workdir "$E4_WORKDIR" \
+              --command "$WORKLOAD_SCRIPT" \
+              --target-id '${{ matrix.id }}' \
+              --revision '${{ matrix.revision }}' \
+              --source-sha "$GITHUB_SHA" \
+              --output "$GITHUB_WORKSPACE/$EVIDENCE/e4-result.json" \
+              --raw-dir "$GITHUB_WORKSPACE/$EVIDENCE/raw" \
+              --warmups 3 \
+              --samples 15 \
+              --timeout-seconds 180 \
+              > "$GITHUB_WORKSPACE/$EVIDENCE/harness.stdout" \
+              2> "$GITHUB_WORKSPACE/$EVIDENCE/harness.stderr"
+          rc=$?
+          set -e
+          printf '%s\n' "$rc" > "$EVIDENCE/harness.rc"
+          if [ -f "$EVIDENCE/e4-result.json" ]; then
+            cat "$EVIDENCE/e4-result.json"
+          fi
+          exit "$rc"
+
+      - name: Record evidence identity
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum \
+            "$EVIDENCE/environment.txt" \
+            "$EVIDENCE/e4_adapter.c" \
+            "$EVIDENCE/harness.rc" \
+            "$EVIDENCE/harness.stdout" \
+            "$EVIDENCE/harness.stderr" \
+            "$EVIDENCE/e4-result.json" \
+            > "$EVIDENCE/evidence.sha256" || true
+          find "$EVIDENCE/raw" -type f -print0 | sort -z | xargs -0 sha256sum \
+            > "$EVIDENCE/raw.sha256" || true
+          git status --short > "$EVIDENCE/working-tree-status.txt" || true
+
+      - name: Upload E4 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-m9-ebpf-e4-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-m9-ebpf-e4/${{ matrix.id }}
+          if-no-files-found: error
+          retention-days: 30
