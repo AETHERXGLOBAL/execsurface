@@ -6,6 +6,8 @@ Support: **Linux x86_64 public alpha**.
 
 ## 1. Install
 
+No Rust toolchain is required for this path.
+
 ```bash
 VERSION=v0.1.0-alpha.3
 TARGET=x86_64-unknown-linux-gnu
@@ -51,7 +53,7 @@ Use the exact Bash wrapper used by the GitHub Action:
 mkdir -p /tmp/execsurface-quickstart
 cd /tmp/execsurface-quickstart
 
-execsurface learn --   /bin/bash -lc 'true'
+execsurface learn -- /bin/bash -lc 'true'
 ```
 
 This creates `execsurface.lock.json`.
@@ -59,7 +61,7 @@ This creates `execsurface.lock.json`.
 ## 4. Prove no drift
 
 ```bash
-execsurface check --   /bin/bash -lc 'true'
+execsurface check -- /bin/bash -lc 'true'
 ```
 
 Expected result:
@@ -73,7 +75,7 @@ ExecSurface: PASS
 Keep the same executable and argument count, but change the shell behavior:
 
 ```bash
-execsurface check --   /bin/bash -lc 'true; /bin/echo controlled-drift >/dev/null'
+execsurface check -- /bin/bash -lc 'true; /bin/echo controlled-drift >/dev/null'
 ```
 
 The built-in policy reviews unmatched drift, so the expected result is:
@@ -93,9 +95,11 @@ For a Rust project, for example:
 ```bash
 execsurface init --command "cargo test --locked" --github-actions
 
-execsurface learn --   /bin/bash -lc 'cargo test --locked'
+execsurface learn -- /bin/bash -lc 'cargo test --locked'
 
-execsurface check   --policy execsurface-policy.json   -- /bin/bash -lc 'cargo test --locked'
+execsurface check \
+  --policy execsurface-policy.json \
+  -- /bin/bash -lc 'cargo test --locked'
 ```
 
 Review the generated policy, workflow and learned baseline before committing them.
