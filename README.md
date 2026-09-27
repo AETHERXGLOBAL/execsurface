@@ -21,6 +21,16 @@ It is designed for software, CI pipelines, dependencies, developer tools and AI 
 >
 > **Self-service:** no signup, API key, meeting, or AETHER X approval is required. Start with **[Self-Service Start](docs/SELF_SERVICE_START.md)** or run a fully independent evaluation with **[Independent Evaluation](docs/INDEPENDENT_EVALUATION.md)**.
 
+### Start in 60 seconds
+
+```bash
+cargo install execsurface --locked
+execsurface doctor
+execsurface init --command "cargo test --locked" --github-actions
+```
+
+Then follow **[Five-Minute Start](docs/QUICKSTART_5_MIN.md)** for a controlled PASS → REVIEW drift demonstration, or **[Independent Evaluation](docs/INDEPENDENT_EVALUATION.md)** to submit third-party evidence. No contact with AETHER X is required.
+
 ### The idea in 10 seconds
 
 Illustrative strict-policy output:
