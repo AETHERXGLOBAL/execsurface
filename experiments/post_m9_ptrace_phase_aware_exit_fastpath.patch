@@ -1,0 +1,162 @@
+diff --git a/crates/execsurface-observe/src/linux_ptrace.rs b/crates/execsurface-observe/src/linux_ptrace.rs
+index fea11f2..0000000 100644
+--- a/crates/execsurface-observe/src/linux_ptrace.rs
++++ b/crates/execsurface-observe/src/linux_ptrace.rs
+@@ -91,6 +91,14 @@ enum PendingSyscall {
+     },
+ }
+ 
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++enum SyscallPhase {
++    Unknown,
++    ExpectEntry,
++    ExpectExitResultRequired,
++    ExpectExitSkippable,
++}
++
+ #[derive(Debug, Clone)]
+ struct TraceeState {
+     pending_exec: Option<String>,
+@@ -103,6 +111,7 @@ struct TraceeState {
+     exit_event_status: Option<libc::c_int>,
+     exit_group_pending: bool,
+     syscall_info_esrch_after_exit_group: bool,
++    syscall_phase: SyscallPhase,
+ }
+ 
+ impl TraceeState {
+@@ -118,6 +127,7 @@ impl TraceeState {
+             exit_event_status: None,
+             exit_group_pending: false,
+             syscall_info_esrch_after_exit_group: false,
++            syscall_phase: SyscallPhase::Unknown,
+         }
+     }
+ 
+@@ -133,6 +143,7 @@ impl TraceeState {
+             exit_event_status: None,
+             exit_group_pending: false,
+             syscall_info_esrch_after_exit_group: false,
++            syscall_phase: SyscallPhase::Unknown,
+         }
+     }
+ }
+@@ -515,6 +526,18 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
+         }
+ 
+         if stop_signal == (libc::SIGTRAP | 0x80) {
++            let skip_exit_syscall_info = tracees
++                .get(&tid)
++                .map(|state| state.syscall_phase == SyscallPhase::ExpectExitSkippable)
++                .unwrap_or(false);
++            if skip_exit_syscall_info {
++                let state = tracees.get_mut(&tid).ok_or_else(|| {
++                    ObserveError::Protocol(format!("fast-path lost tracked tid {tid}"))
++                })?;
++                state.syscall_phase = SyscallPhase::ExpectEntry;
++                resume_after_observed_stop(root, tid, 0, &mut tracees, &mut root_outcome)?;
++                continue;
++            }
++
+             let info = match syscall_info(tid) {
+                 Ok(info) => info,
+                 Err(ObserveError::Os(error)) if error.raw_os_error() == Some(libc::ESRCH) => {
+@@ -540,6 +563,7 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
+                         ))
+                     })?;
+                     state.syscall_info_esrch_after_exit_group = true;
++                    state.syscall_phase = SyscallPhase::Unknown;
+                     /*
+                      * The kernel has already refused a ptrace read while the
+                      * same thread group is in an explicitly observed
+@@ -553,10 +577,51 @@ fn trace_parent(root: libc::pid_t, options: ObserveOptions) -> Result<Observatio
+                 Err(error) => return Err(error),
+             };
+             if let Some((nr, args)) = info.entry() {
++                let prior_phase = tracees
++                    .get(&tid)
++                    .map(|state| state.syscall_phase)
++                    .unwrap_or(SyscallPhase::Unknown);
++                if prior_phase == SyscallPhase::ExpectExitResultRequired {
++                    return Err(ObserveError::Protocol(format!(
++                        "fast-path phase mismatch for tid {tid}: expected result-bearing syscall exit, observed entry"
++                    )));
++                }
+                 handle_syscall_entry(tid, nr, args, &mut tracees, &mut collector);
++                let state = tracees.get_mut(&tid).ok_or_else(|| {
++                    ObserveError::Protocol(format!(
++                        "fast-path entry handling lost tracked tid {tid}"
++                    ))
++                })?;
++                state.syscall_phase = if state.pending_syscall.is_some()
++                    || state.exit_group_pending
++                {
++                    SyscallPhase::ExpectExitResultRequired
++                } else {
++                    SyscallPhase::ExpectExitSkippable
++                };
+             } else if let Some(result) = info.exit() {
++                let prior_phase = tracees
++                    .get(&tid)
++                    .map(|state| state.syscall_phase)
++                    .unwrap_or(SyscallPhase::Unknown);
++                if prior_phase == SyscallPhase::ExpectEntry {
++                    return Err(ObserveError::Protocol(format!(
++                        "fast-path phase mismatch for tid {tid}: expected syscall entry, observed exit"
++                    )));
++                }
+                 handle_syscall_exit(tid, result, &mut tracees, &mut fd_tables, &mut collector);
++                let state = tracees.get_mut(&tid).ok_or_else(|| {
++                    ObserveError::Protocol(format!(
++                        "fast-path exit handling lost tracked tid {tid}"
++                    ))
++                })?;
++                state.syscall_phase = SyscallPhase::ExpectEntry;
++            } else if let Some(state) = tracees.get_mut(&tid) {
++                state.syscall_phase = SyscallPhase::Unknown;
+             }
+             resume_after_observed_stop(root, tid, 0, &mut tracees, &mut root_outcome)?;
+             continue;
+@@ -639,6 +704,7 @@ fn resume_after_observed_stop(
+                 ObserveError::Protocol(format!("M9_RESTART_ESRCH_FOR_UNTRACKED_TID tid={tid}"))
+             })?;
+             state.restart_esrch_seen = true;
++            state.syscall_phase = SyscallPhase::Unknown;
+             Ok(())
+         }
+         Err(error) => Err(error),
+@@ -654,6 +720,10 @@ fn handle_ptrace_event(
+     fd_tables: &mut FdTables,
+     collector: &mut Collector,
+ ) -> Result<(), ObserveError> {
++    if let Some(state) = tracees.get_mut(&tid) {
++        state.syscall_phase = SyscallPhase::Unknown;
++    }
++
+     match event {
+         libc::PTRACE_EVENT_FORK | libc::PTRACE_EVENT_VFORK | libc::PTRACE_EVENT_CLONE => {
+             let child_tid = get_event_message(tid)? as libc::pid_t;
+@@ -755,6 +825,7 @@ fn handle_ptrace_event(
+                     other_state.retired_by_exec = true;
+                     other_state.pending_exec = None;
+                     other_state.pending_syscall = None;
++                    other_state.syscall_phase = SyscallPhase::Unknown;
+                     retired.push(*other_tid);
+                 }
+             }
+@@ -768,6 +839,7 @@ fn handle_ptrace_event(
+             state.exit_event_status = None;
+             state.exit_group_pending = false;
+             state.syscall_info_esrch_after_exit_group = false;
++            state.syscall_phase = SyscallPhase::Unknown;
+             tracees.insert(tid, state);
+ 
+             apply_exec_fd_semantics(tid, tracees, fd_tables);
+@@ -790,6 +862,7 @@ fn handle_ptrace_event(
+                 ObserveError::Protocol(format!("PTRACE_EVENT_EXIT arrived for untracked tid {tid}"))
+             })?;
+             state.exit_event_status = Some(exit_status);
++            state.syscall_phase = SyscallPhase::Unknown;
+         }
+         _ => {}
+     }
