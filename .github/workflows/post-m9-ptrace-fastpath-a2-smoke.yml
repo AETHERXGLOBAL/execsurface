@@ -1,0 +1,101 @@
+name: Post-M9 ptrace fast-path A2 smoke gate
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/post-m9-ptrace-fastpath-a2-smoke.yml
+      - experiments/post_m9_phase_aware/apply_candidate_a2.py
+      - docs/milestones/POST_M9_PTRACE_FASTPATH_A2_HARDENING.md
+      - docs/milestones/POST_M9_PTRACE_PHASE_AWARE_EXIT_FASTPATH_PROTOCOL.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate-a2-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+
+    steps:
+      - name: Checkout frozen source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install frozen Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          rustc "+$RUST_TOOLCHAIN" --version --verbose
+
+      - name: Apply Candidate A2 only inside runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f experiments/post_m9_phase_aware/apply_candidate_a2.py
+          cp crates/execsurface-observe/src/linux_ptrace.rs /tmp/linux_ptrace.reference.rs
+          python3 experiments/post_m9_phase_aware/apply_candidate_a2.py
+          cmp -s /tmp/linux_ptrace.reference.rs crates/execsurface-observe/src/linux_ptrace.rs && {
+            echo "Candidate A2 patcher made no change" >&2
+            exit 1
+          }
+          git diff --check
+
+      - name: Formatting gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" fmt --all -- --check
+
+      - name: Strict workspace Clippy gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Existing observer tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test --locked -p execsurface-observe --all-targets -- --nocapture
+
+      - name: Existing workspace tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test --locked --workspace
+
+      - name: Record isolated candidate evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p post-m9-fastpath-a2-smoke
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs > post-m9-fastpath-a2-smoke/candidate-a2.diff || true
+          sha256sum experiments/post_m9_phase_aware/apply_candidate_a2.py \
+            > post-m9-fastpath-a2-smoke/patcher.sha256
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'base_sha=%s\n' "$GITHUB_SHA"
+            printf 'candidate=A2\n'
+            printf 'public_runtime_modified=false\n'
+            printf 'performance_evaluated=false\n'
+            printf 'adversarial_parity_evaluated=false\n'
+          } > post-m9-fastpath-a2-smoke/identity.txt
+
+      - name: Upload A2 smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-m9-ptrace-fastpath-a2-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-m9-fastpath-a2-smoke
+          if-no-files-found: error
+          retention-days: 30
