@@ -211,7 +211,7 @@ jobs:
 
       - name: Prove immutable Action tag
         id: immutable
-        uses: AETHERXGLOBAL/execsurface@v0.1.0-alpha.2
+        uses: AETHERXGLOBAL/execsurface@v0.1.0-alpha.3
         with:
           command: "true"
           baseline: immutable.lock.json
@@ -238,7 +238,7 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           set -euo pipefail
-          test "$TAG" = "v0.1.0-alpha.2"
+          test "$TAG" = "v0.1.0-alpha.3"
           release_sha="$(git rev-list -n1 "$TAG")"
           test "$release_sha" = "$GITHUB_SHA"
           git config user.name "github-actions[bot]"
@@ -343,3 +343,23 @@ jobs:
           test "$BLOCK_OUTCOME" = "failure"
           test "$ERROR_VERDICT" = "error"
           test "$ERROR_OUTCOME" = "failure"
+
+  publish-crates:
+    name: Dispatch crates.io publication
+    needs: [release, stable-action-consumer]
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch immutable registry publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh workflow run publish-crates.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref main \
+            -f release_tag="$TAG"
+          echo "Dispatched crates.io publication for $TAG"

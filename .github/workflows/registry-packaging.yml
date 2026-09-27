@@ -59,7 +59,7 @@ jobs:
           from pathlib import Path
           import tomllib
 
-          version = "0.1.0-alpha.2"
+          version = "0.1.0-alpha.3"
           publishable = {
               "execsurface-model",
               "execsurface-observe",
