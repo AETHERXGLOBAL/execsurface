@@ -1,4 +1,13 @@
+import os
+import subprocess
 from pathlib import Path
+
+# Harness-only toolchain preparation. Candidate source transformation below is unchanged.
+toolchain = os.environ.get("RUST_TOOLCHAIN", "1.90.0")
+subprocess.run(
+    ["rustup", "component", "add", "--toolchain", toolchain, "rustfmt", "clippy"],
+    check=True,
+)
 
 p = Path("crates/execsurface-observe/src/linux_ptrace.rs")
 s = p.read_text()
