@@ -29,7 +29,7 @@ Preserve the repository URL and exact revision.
 ## 3. Install the pinned public evaluation release
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.2" --locked
+cargo install execsurface --version "=0.1.0-alpha.3" --locked
 execsurface --version
 execsurface doctor
 ```
@@ -37,7 +37,7 @@ execsurface doctor
 Expected version:
 
 ```text
-execsurface 0.1.0-alpha.2
+execsurface 0.1.0-alpha.3
 ```
 
 On the supported scope, `doctor` should report Linux, x86_64, ptrace availability, a writable workspace, and Ready.

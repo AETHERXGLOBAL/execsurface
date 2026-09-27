@@ -48,7 +48,7 @@ body:
     id: version
     attributes:
       label: ExecSurface version
-      placeholder: execsurface 0.1.0-alpha.2
+      placeholder: execsurface 0.1.0-alpha.3
     validations:
       required: true
 
@@ -56,7 +56,7 @@ body:
     id: install_path
     attributes:
       label: Installation path
-      placeholder: cargo install execsurface --version =0.1.0-alpha.2 --locked
+      placeholder: cargo install execsurface --version =0.1.0-alpha.3 --locked
     validations:
       required: true
 
