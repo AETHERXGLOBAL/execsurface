@@ -70,17 +70,50 @@ def projection(doc):
         return mapping[key]
 
     for event in d.get("events", []):
-        event["tid"] = token(event.get("tid"))
-        kind = event.get("kind")
-        if isinstance(kind, dict) and "ProcessSpawn" in kind:
-            payload = kind["ProcessSpawn"]
-            if isinstance(payload, dict) and "child_tid" in payload:
-                payload["child_tid"] = token(payload.get("child_tid"))
+        if "tid" not in event:
+            raise RuntimeError("raw event missing required tid")
+        if "event_type" not in event:
+            raise RuntimeError("raw event missing flattened event_type")
+        event["tid"] = token(event["tid"])
+        if event["event_type"] == "process_spawn":
+            if "child_tid" not in event:
+                raise RuntimeError("process_spawn event missing child_tid")
+            event["child_tid"] = token(event["child_tid"])
     for warning in d.get("warnings", []):
         if warning.get("tid") is not None:
             warning["tid"] = token(warning.get("tid"))
     return d
 
+
+def projection_self_test():
+    sample = {
+        "events": [
+            {
+                "sequence": 1,
+                "tid": 100,
+                "event_type": "process_spawn",
+                "child_tid": 200,
+                "mechanism": "fork",
+            },
+            {
+                "sequence": 2,
+                "tid": 200,
+                "event_type": "process_exec",
+                "path": "/bin/true",
+            },
+        ],
+        "warnings": [{"code": "sentinel", "tid": 200, "message": "sentinel"}],
+    }
+    projected = projection(sample)
+    assert projected["events"][0]["tid"] == "T1"
+    assert projected["events"][0]["child_tid"] == "T2"
+    assert projected["events"][1]["tid"] == "T2"
+    assert projected["warnings"][0]["tid"] == "T2"
+    assert projected["events"][0]["mechanism"] == "fork"
+    assert projected["events"][1]["path"] == "/bin/true"
+
+
+projection_self_test()
 
 summary = []
 for name, args, content in cases:
