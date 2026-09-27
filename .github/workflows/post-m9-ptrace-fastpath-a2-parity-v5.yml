@@ -1,0 +1,251 @@
+name: Post-M9 ptrace fast-path A2 parity v5
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - experiments/post_m9_phase_aware/a2_raw_parity_v5.py
+      - experiments/post_m9_phase_aware/a2_helper.c
+      - experiments/post_m9_phase_aware/apply_candidate_a2.py
+      - docs/milestones/POST_M9_PTRACE_FASTPATH_A2_PARITY_V5_PROTOCOL.md
+      - docs/milestones/POST_M9_PTRACE_FASTPATH_A2_PARITY_V4_RESULT.md
+      - .github/workflows/post-m9-ptrace-fastpath-a2-parity-v5.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  split-semantic-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      REF_BIN: /tmp/execsurface-a2-reference
+      CAND_BIN: /tmp/execsurface-a2-candidate
+      FIXTURE_BIN: /tmp/execsurface-a2-fixture
+      HELPER_BIN: /tmp/execsurface-a2-helper
+      EVIDENCE: post-m9-ptrace-a2-parity-v5
+
+    steps:
+      - name: Checkout frozen source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Freeze environment and evidence identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc strace
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'source_sha=%s\n' "$GITHUB_SHA"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+            printf 'arch=%s\n' "$(uname -m)"
+            printf 'cpu=%s\n' "$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)"
+            printf 'candidate=A2\n'
+            printf 'lane_a=corrected strict TID-only raw parity\n'
+            printf 'lane_b=unchanged production canonical baseline/diff parity\n'
+            printf 'v4_run=36289310640\n'
+            printf 'v4_artifact=10921513558\n'
+            printf 'public_runtime_modified=false\n'
+            printf 'external_value_evaluated=false\n'
+          } > "$EVIDENCE/environment.txt"
+
+      - name: Build reference binaries and helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" build --locked --release -p execsurface --bin execsurface
+          cp target/release/execsurface "$REF_BIN"
+          cargo "+$RUST_TOOLCHAIN" build --locked --release -p execsurface-observe --bin execsurface-fixture
+          cp target/release/execsurface-fixture "$FIXTURE_BIN"
+          gcc -O2 -Wall -Wextra -Werror -pthread \
+            experiments/post_m9_phase_aware/a2_helper.c -o "$HELPER_BIN"
+          sha256sum "$REF_BIN" "$FIXTURE_BIN" "$HELPER_BIN" \
+            experiments/post_m9_phase_aware/a2_raw_parity_v5.py \
+            experiments/post_m9_phase_aware/a2_helper.c \
+            > "$EVIDENCE/reference-inputs.sha256"
+
+      - name: Apply Candidate A2 only inside runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp crates/execsurface-observe/src/linux_ptrace.rs "$EVIDENCE/linux_ptrace.reference.rs"
+          python3 experiments/post_m9_phase_aware/apply_candidate_a2.py
+          cargo "+$RUST_TOOLCHAIN" fmt --all
+          git diff --check
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs > "$EVIDENCE/a2.patch"
+          test -s "$EVIDENCE/a2.patch"
+          sha256sum experiments/post_m9_phase_aware/apply_candidate_a2.py "$EVIDENCE/a2.patch" \
+            > "$EVIDENCE/candidate-inputs.sha256"
+
+      - name: Candidate regression gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" clippy --locked --workspace --all-targets -- -D warnings
+          cargo "+$RUST_TOOLCHAIN" test --locked -p execsurface-observe --all-targets
+          cargo "+$RUST_TOOLCHAIN" test --locked --workspace
+          cargo "+$RUST_TOOLCHAIN" build --locked --release -p execsurface --bin execsurface
+          cp target/release/execsurface "$CAND_BIN"
+          sha256sum "$CAND_BIN" >> "$EVIDENCE/candidate-inputs.sha256"
+
+      - name: Lane A strict raw parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 experiments/post_m9_phase_aware/a2_raw_parity_v5.py \
+            "$REF_BIN" "$CAND_BIN" "$HELPER_BIN" "$FIXTURE_BIN" "$EVIDENCE"
+
+      - name: Lane B concurrent health and production semantic parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE/concurrent-lane"
+          fixed=/tmp/execsurface-a2-thread-read-fixed
+          printf 'fixture' > "$fixed"
+
+          run_observe() {
+            local exe="$1"; local name="$2"
+            printf 'fixture' > "$fixed"
+            "$exe" observe -- "$FIXTURE_BIN" thread-read "$fixed" 8 \
+              > "$EVIDENCE/concurrent-lane/${name}.observe.json"
+          }
+
+          run_observe "$REF_BIN" reference1
+          run_observe "$REF_BIN" reference2
+          run_observe "$CAND_BIN" candidate
+
+          python3 - "$EVIDENCE/concurrent-lane/reference1.observe.json" \
+                    "$EVIDENCE/concurrent-lane/reference2.observe.json" \
+                    "$EVIDENCE/concurrent-lane/candidate.observe.json" <<'PY'
+          import json,sys
+          docs=[json.load(open(p)) for p in sys.argv[1:]]
+          for p,d in zip(sys.argv[1:],docs):
+              if d.get('complete') is not True:
+                  raise SystemExit(f'incomplete observation: {p}')
+              if d.get('warnings') != []:
+                  raise SystemExit(f'warning-bearing observation: {p}')
+              if d.get('outcome') != {'exit_code':0,'signal':None}:
+                  raise SystemExit(f'target outcome mismatch: {p}: {d.get("outcome")}')
+          backend0=docs[0].get('backend')
+          for p,d in zip(sys.argv[2:],docs[1:]):
+              if d.get('backend') != backend0:
+                  raise SystemExit(f'backend metadata mismatch: {p}')
+          print('concurrent health/outcome/backend parity: PASS')
+          PY
+
+          # Reference production stability: one learned baseline, two fresh checks.
+          printf 'fixture' > "$fixed"
+          "$REF_BIN" learn --output "$EVIDENCE/concurrent-lane/reference.lock.json" \
+            -- "$FIXTURE_BIN" thread-read "$fixed" 8 \
+            > "$EVIDENCE/concurrent-lane/reference.learn.txt"
+
+          for n in 1 2; do
+            printf 'fixture' > "$fixed"
+            "$REF_BIN" check --baseline "$EVIDENCE/concurrent-lane/reference.lock.json" \
+              --diff-only --json -- "$FIXTURE_BIN" thread-read "$fixed" 8 \
+              > "$EVIDENCE/concurrent-lane/reference.check${n}.json"
+          done
+
+          # Cross implementation: reference baseline -> candidate.
+          printf 'fixture' > "$fixed"
+          "$CAND_BIN" check --baseline "$EVIDENCE/concurrent-lane/reference.lock.json" \
+            --diff-only --json -- "$FIXTURE_BIN" thread-read "$fixed" 8 \
+            > "$EVIDENCE/concurrent-lane/reference-to-candidate.json"
+
+          # Reverse direction: candidate baseline -> reference.
+          printf 'fixture' > "$fixed"
+          "$CAND_BIN" learn --output "$EVIDENCE/concurrent-lane/candidate.lock.json" \
+            -- "$FIXTURE_BIN" thread-read "$fixed" 8 \
+            > "$EVIDENCE/concurrent-lane/candidate.learn.txt"
+          printf 'fixture' > "$fixed"
+          "$REF_BIN" check --baseline "$EVIDENCE/concurrent-lane/candidate.lock.json" \
+            --diff-only --json -- "$FIXTURE_BIN" thread-read "$fixed" 8 \
+            > "$EVIDENCE/concurrent-lane/candidate-to-reference.json"
+
+          python3 - \
+            "$EVIDENCE/concurrent-lane/reference.check1.json" \
+            "$EVIDENCE/concurrent-lane/reference.check2.json" \
+            "$EVIDENCE/concurrent-lane/reference-to-candidate.json" \
+            "$EVIDENCE/concurrent-lane/candidate-to-reference.json" <<'PY'
+          import json,sys
+          summary=[]
+          for p in sys.argv[1:]:
+              d=json.load(open(p))
+              counts={k:len(d.get(k,[])) for k in ('added','removed','changed')}
+              target=d.get('target')
+              summary.append({'file':p,'counts':counts,'target':target})
+              if any(counts.values()):
+                  raise SystemExit(f'nonzero production semantic drift: {p}: {counts}')
+              if target != {'exit_code':0,'signal':None}:
+                  raise SystemExit(f'unexpected target outcome: {p}: {target}')
+          print(json.dumps(summary,indent=2,sort_keys=True))
+          open('post-m9-ptrace-a2-parity-v5/concurrent-lane/diff-summary.json','w').write(
+              json.dumps(summary,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: A2 fast-path activation diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE/activation"
+          for mode in reference candidate; do
+            if [ "$mode" = reference ]; then exe="$REF_BIN"; else exe="$CAND_BIN"; fi
+            for n in 0 5000; do
+              strace -qq -s 128 \
+                -o "$EVIDENCE/activation/${mode}-${n}.strace" \
+                -e trace=ptrace,wait4,waitid,readlink,readlinkat \
+                "$exe" observe -- "$HELPER_BIN" getpid "$n" \
+                > "$EVIDENCE/activation/${mode}-${n}.json" \
+                2> "$EVIDENCE/activation/${mode}-${n}.stderr"
+            done
+          done
+          python3 - "$EVIDENCE/activation" <<'PY'
+          import json,re,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          def load_obs(mode,n): return json.load(open(root/f'{mode}-{n}.json'))
+          def count(mode,n):
+              text=(root/f'{mode}-{n}.strace').read_text(errors='replace')
+              return len(re.findall(r'\bptrace\(PTRACE_GET_SYSCALL_INFO,', text))
+          for mode in ('reference','candidate'):
+              for n in (0,5000):
+                  d=load_obs(mode,n)
+                  if d.get('complete') is not True or d.get('warnings') != [] or d.get('outcome') != {'exit_code':0,'signal':None}:
+                      raise SystemExit(f'activation health gate failed: {mode}-{n}')
+          counts={m:{n:count(m,n) for n in (0,5000)} for m in ('reference','candidate')}
+          rd=counts['reference'][5000]-counts['reference'][0]
+          cd=counts['candidate'][5000]-counts['candidate'][0]
+          result={'counts':counts,'reference_delta':rd,'candidate_delta':cd,
+                  'expected_reference_delta':10000,'expected_candidate_delta':5000,
+                  'classification':'DIAGNOSTIC_MECHANISM_EVIDENCE_ONLY'}
+          (root/'activation.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(result,indent=2,sort_keys=True))
+          if rd != 10000 or cd != 5000:
+              raise SystemExit('activation request-count gate failed')
+          PY
+
+      - name: Record v5 evidence identity
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git status --short > "$EVIDENCE/working-tree-status.txt" || true
+          sha256sum "$EVIDENCE/a2.patch" > "$EVIDENCE/a2.patch.sha256" || true
+
+      - name: Upload v5 semantic evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-m9-ptrace-a2-parity-v5-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-m9-ptrace-a2-parity-v5
+          if-no-files-found: error
+          retention-days: 30
