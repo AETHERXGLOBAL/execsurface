@@ -1,0 +1,245 @@
+name: Post-M9 eBPF E1 lifecycle attribution
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/post-m9-ebpf-e1-lifecycle-attribution.yml
+      - docs/milestones/POST_M9_EBPF_E1_FAILURE_ATTRIBUTION.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: E1-JUST
+            repository: casey/just
+            revision: 5d5742cbcc50f19c99c356bc7e085acaa5f4665d
+            shell_script: cargo +1.90.0 test --all >/dev/null 2>&1
+          - id: E1-FZF
+            repository: junegunn/fzf
+            revision: b1be3a8be1b833ce5b92fbbac11637643d60a046
+            shell_script: go test ./... >/dev/null 2>&1
+    env:
+      EVIDENCE: post-m9-ebpf-e1/${{ matrix.id }}
+
+    steps:
+      - name: Checkout ExecSurface source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout pinned workload
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.revision }}
+          path: external/workload
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Freeze inputs and install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          test "$(git -C external/workload rev-parse HEAD)" = '${{ matrix.revision }}'
+          test -z "$(git -C external/workload status --porcelain)"
+          cp -a external/workload "$RUNNER_TEMP/e1-workload"
+          echo "E1_WORKDIR=$RUNNER_TEMP/e1-workload" >> "$GITHUB_ENV"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends clang libelf-dev zlib1g-dev pkg-config
+          test -r /sys/kernel/btf/vmlinux
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          rustup toolchain install 1.90.0 --profile minimal
+          {
+            printf 'source_sha=%s\n' "$GITHUB_SHA"
+            printf 'target=%s\n' '${{ matrix.repository }}'
+            printf 'revision=%s\n' '${{ matrix.revision }}'
+            printf 'command=%s\n' '${{ matrix.shell_script }}'
+            printf 'lifecycle_timeout_ms=2000\n'
+            printf 'repetitions=3\n'
+            printf 'instrumentation=runner_only_metadata_diagnostic\n'
+            printf 'public_collector_modified=false\n'
+            printf 'performance_value_measurement=false\n'
+          } > "$EVIDENCE/environment.txt"
+          sha256sum experiments/m8-ebpf/libbpf-observer/src/main.rs \
+            experiments/m8-ebpf/libbpf-observer/src/bpf/observer.bpf.c \
+            > "$EVIDENCE/original-source.sha256"
+
+      - name: Prime exact workload
+        shell: bash
+        env:
+          WORKLOAD_SCRIPT: ${{ matrix.shell_script }}
+        run: |
+          set -euo pipefail
+          cd "$E1_WORKDIR"
+          /bin/bash -lc "$WORKLOAD_SCRIPT"
+          test "$(git rev-parse HEAD)" = '${{ matrix.revision }}'
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Apply runner-only lifecycle diagnostic instrumentation
+        shell: bash
+        run: |
+          set -euo pipefail
+          src=experiments/m8-ebpf/libbpf-observer/src/main.rs
+          cp "$src" "$EVIDENCE/main.rs.original"
+          python3 - "$src" <<'PY'
+          from pathlib import Path
+          import sys
+          p=Path(sys.argv[1])
+          s=p.read_text()
+          old='''        if drain_started.elapsed() >= drain_timeout {\n            let active_descendants = tracker.borrow().active_descendant_count();\n            tracker.borrow_mut().warning(\n'''
+          new='''        if drain_started.elapsed() >= drain_timeout {\n            let (active_descendants, active_ids, known_count, pending_count, diagnostic_root_pid) = {\n                let state = tracker.borrow();\n                (\n                    state.active_descendant_count(),\n                    state\n                        .active_pids\n                        .iter()\n                        .copied()\n                        .filter(|pid| *pid != state.root_pid)\n                        .collect::<Vec<_>>(),\n                    state.known_pids.len(),\n                    state.pending.len(),\n                    state.root_pid,\n                )\n            };\n            eprintln!(\n                "E1_TIMEOUT_SUMMARY_JSON {}",\n                serde_json::json!({\n                    "root_pid": diagnostic_root_pid,\n                    "active_descendants": active_descendants,\n                    "known_count": known_count,\n                    "pending_count": pending_count,\n                })\n            );\n            for tid in active_ids {\n                let status_path = format!("/proc/{tid}/status");\n                match fs::read_to_string(&status_path) {\n                    Ok(status) => {\n                        let field = |key: &str| -> String {\n                            status\n                                .lines()\n                                .find_map(|line| line.strip_prefix(key))\n                                .map(str::trim)\n                                .unwrap_or("?")\n                                .to_owned()\n                        };\n                        eprintln!(\n                            "E1_ACTIVE_JSON {}",\n                            serde_json::json!({\n                                "tid": tid,\n                                "proc_exists": true,\n                                "pid": field("Pid:"),\n                                "tgid": field("Tgid:"),\n                                "ppid": field("PPid:"),\n                                "state": field("State:"),\n                            })\n                        );\n                    }\n                    Err(_) => {\n                        eprintln!(\n                            "E1_ACTIVE_JSON {}",\n                            serde_json::json!({\n                                "tid": tid,\n                                "proc_exists": false,\n                            })\n                        );\n                    }\n                }\n            }\n            tracker.borrow_mut().warning(\n'''
+          if old not in s:
+              raise SystemExit('expected lifecycle timeout block not found')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+          cargo +1.82.0 fmt --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml -- --check || \
+            cargo +1.82.0 fmt --manifest-path experiments/m8-ebpf/libbpf-observer/Cargo.toml
+          git diff -- experiments/m8-ebpf/libbpf-observer/src/main.rs > "$EVIDENCE/runner-only-diagnostic.patch"
+          test -s "$EVIDENCE/runner-only-diagnostic.patch"
+          # The committed working tree source is changed only inside this ephemeral runner.
+          # Preserve the exact patch as evidence and never commit this instrumentation into collector semantics.
+
+      - name: Build diagnostic collector
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=experiments/m8-ebpf/libbpf-observer/Cargo.toml
+          rm -f "$(dirname "$manifest")/Cargo.lock"
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile --manifest-path "$manifest"
+          cargo +1.82.0 build --manifest-path "$manifest" --release --locked \
+            2>&1 | tee "$EVIDENCE/collector-build.log"
+          collector="$PWD/experiments/m8-ebpf/libbpf-observer/target/release/execsurface-m8-libbpf-observer"
+          test -x "$collector"
+          echo "E1_COLLECTOR=$collector" >> "$GITHUB_ENV"
+          sha256sum "$collector" > "$EVIDENCE/diagnostic-collector.sha256"
+
+      - name: Run three frozen lifecycle repetitions
+        shell: bash
+        env:
+          WORKLOAD_SCRIPT: ${{ matrix.shell_script }}
+        run: |
+          set -euo pipefail
+          runner_home="$HOME"
+          go_cache="$(go env GOCACHE 2>/dev/null || true)"
+          go_path="$(go env GOPATH 2>/dev/null || true)"
+          for i in 1 2 3; do
+            report="$GITHUB_WORKSPACE/$EVIDENCE/run-${i}.report.json"
+            stderr="$GITHUB_WORKSPACE/$EVIDENCE/run-${i}.stderr"
+            stdout="$GITHUB_WORKSPACE/$EVIDENCE/run-${i}.stdout"
+            cd "$E1_WORKDIR"
+            set +e
+            sudo env \
+              HOME="$runner_home" \
+              RUSTUP_HOME="$runner_home/.rustup" \
+              CARGO_HOME="$runner_home/.cargo" \
+              GOCACHE="$go_cache" \
+              GOPATH="$go_path" \
+              PATH="$PATH" \
+              "$E1_COLLECTOR" --report "$report" -- /bin/bash -lc "$WORKLOAD_SCRIPT" \
+              >"$stdout" 2>"$stderr"
+            rc=$?
+            set -e
+            cd "$GITHUB_WORKSPACE"
+            printf '%s\n' "$rc" > "$EVIDENCE/run-${i}.rc"
+            test -f "$report"
+            python3 -m json.tool "$report" >/dev/null
+
+            python3 - "$report" "$stderr" "$EVIDENCE/run-${i}.diagnostic.json" <<'PY'
+          import json,sys
+          from pathlib import Path
+          report=json.load(open(sys.argv[1]))
+          stderr=Path(sys.argv[2]).read_text(errors='replace').splitlines()
+          active=[]; summary=None
+          for line in stderr:
+              if line.startswith('E1_ACTIVE_JSON '):
+                  active.append(json.loads(line.split(' ',1)[1]))
+              elif line.startswith('E1_TIMEOUT_SUMMARY_JSON '):
+                  summary=json.loads(line.split(' ',1)[1])
+          absent=sum(1 for x in active if not x.get('proc_exists'))
+          zombie=sum(1 for x in active if x.get('proc_exists') and str(x.get('state','')).startswith('Z'))
+          present_non_zombie=sum(1 for x in active if x.get('proc_exists') and not str(x.get('state','')).startswith('Z'))
+          out={
+              'completeness':report.get('completeness'),
+              'lifecycle_drain_complete':report.get('lifecycle_drain_complete'),
+              'dropped_events':report.get('dropped_events'),
+              'outcome':report.get('outcome'),
+              'event_count':len(report.get('events',[])),
+              'timeout_summary':summary,
+              'active':active,
+              'active_absent_from_proc':absent,
+              'active_zombie':zombie,
+              'active_present_non_zombie':present_non_zombie,
+          }
+          Path(sys.argv[3]).write_text(json.dumps(out,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(out,sort_keys=True))
+          PY
+
+            # Post-evidence hygiene only: after the report and timeout snapshot are durable,
+            # terminate any surviving process group so one repetition cannot contaminate the next.
+            root="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("root_pid") or "")' "$report")"
+            cleanup_rc=0
+            if [ -n "$root" ]; then
+              set +e
+              sudo kill -KILL -- "-$root" 2>/dev/null
+              cleanup_rc=$?
+              set -e
+            fi
+            printf '%s\n' "$cleanup_rc" > "$EVIDENCE/run-${i}.post-evidence-cleanup.rc"
+            sleep 1
+          done
+
+      - name: Aggregate E1 attribution evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$EVIDENCE" <<'PY'
+          import json,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          rows=[json.load(open(root/f'run-{i}.diagnostic.json')) for i in (1,2,3)]
+          lifecycle=[x for x in rows if x['completeness']=='incomplete_lifecycle']
+          result={
+              'target':'${{ matrix.id }}',
+              'repetitions':3,
+              'incomplete_lifecycle_runs':len(lifecycle),
+              'clean_lifecycle_runs':sum(1 for x in rows if x['lifecycle_drain_complete'] is True),
+              'timeout_active_absent_from_proc':sum(x['active_absent_from_proc'] for x in lifecycle),
+              'timeout_active_zombie':sum(x['active_zombie'] for x in lifecycle),
+              'timeout_active_present_non_zombie':sum(x['active_present_non_zombie'] for x in lifecycle),
+              'rows':rows,
+              'classification':(
+                  'NO_TIMEOUT_REPRODUCED' if not lifecycle else
+                  'STALE_OR_EXITED_MEMBERSHIP_PRESENT' if any(x['active_absent_from_proc'] or x['active_zombie'] for x in lifecycle) else
+                  'LIVE_DESCENDANTS_ONLY_AT_TIMEOUT'
+              ),
+              'performance_value_claim_authorized':False,
+              'public_backend_authority_changed':False,
+          }
+          (root/'aggregate.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(result,indent=2,sort_keys=True))
+          PY
+          sha256sum "$EVIDENCE"/*.json "$EVIDENCE"/*.stderr "$EVIDENCE/runner-only-diagnostic.patch" \
+            > "$EVIDENCE/evidence.sha256"
+
+      - name: Upload E1 diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-m9-ebpf-e1-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-m9-ebpf-e1/${{ matrix.id }}
+          if-no-files-found: error
+          retention-days: 30
