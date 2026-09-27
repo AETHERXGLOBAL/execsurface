@@ -182,13 +182,13 @@ jobs:
           exe="$INSTALL_ROOT/bin/execsurface"
           cmd="$(cat /tmp/post-m9-runtime-command)"
           timeout --signal=TERM --kill-after=5s "${SAMPLE_TIMEOUT}s" \
-            strace -qq -s 256 -o "$evidence/observer-strace.log" \
+            strace -qq -T -s 256 -o "$evidence/observer-strace.log" \
             -e trace=ptrace,wait4,waitid,readlink,readlinkat \
             "$exe" observe -- /bin/bash -lc "$cmd" \
             > "$evidence/diagnostic-observe.json" 2> "$evidence/diagnostic-observe.stderr"
 
           python3 - "$evidence" <<'PY'
-          import json,re,statistics,sys
+          import collections,json,re,statistics,sys
           from pathlib import Path
           root=Path(sys.argv[1])
           d=json.loads((root/'diagnostic-observe.json').read_text())
@@ -197,14 +197,15 @@ jobs:
           assert o.get('exit_code') == 0 and o.get('signal') is None, o
 
           text=(root/'observer-strace.log').read_text(errors='replace')
-          def count(token): return text.count(token)
+          ptrace_requests=re.findall(r'\bptrace\((PTRACE_[A-Z0-9_]+)',text)
+          ptrace_counts=collections.Counter(ptrace_requests)
           counters={
-              'ptrace_total': len(re.findall(r'\bptrace\(',text)),
-              'ptrace_get_syscall_info': count('PTRACE_GET_SYSCALL_INFO'),
-              'ptrace_syscall_resume': count('PTRACE_SYSCALL'),
-              'ptrace_geteventmsg': count('PTRACE_GETEVENTMSG'),
-              'ptrace_setoptions': count('PTRACE_SETOPTIONS'),
-              'ptrace_peekdata': count('PTRACE_PEEKDATA'),
+              'ptrace_total': len(ptrace_requests),
+              'ptrace_get_syscall_info': ptrace_counts['PTRACE_GET_SYSCALL_INFO'],
+              'ptrace_syscall_resume': ptrace_counts['PTRACE_SYSCALL'],
+              'ptrace_geteventmsg': ptrace_counts['PTRACE_GETEVENTMSG'],
+              'ptrace_setoptions': ptrace_counts['PTRACE_SETOPTIONS'],
+              'ptrace_peekdata': ptrace_counts['PTRACE_PEEKDATA'],
               'wait4_total': len(re.findall(r'\bwait4\(',text)),
               'waitid_total': len(re.findall(r'\bwaitid\(',text)),
               'readlink_total': len(re.findall(r'\breadlink\(',text)),
@@ -212,6 +213,24 @@ jobs:
               'raw_event_count': len(d.get('events',[])),
               'warning_count': len(d.get('warnings',[])),
           }
+
+          duration_ms=collections.defaultdict(float)
+          duration_calls=collections.Counter()
+          for line in text.splitlines():
+              dm=re.search(r'<([0-9]+(?:\.[0-9]+)?)>$',line)
+              fm=re.search(r'\b(ptrace|wait4|waitid|readlink|readlinkat)\(',line)
+              if not dm or not fm:
+                  continue
+              func=fm.group(1)
+              key=func
+              if func == 'ptrace':
+                  rm=re.search(r'\bptrace\((PTRACE_[A-Z0-9_]+)',line)
+                  if not rm:
+                      continue
+                  key=f'ptrace:{rm.group(1)}'
+              duration_ms[key] += float(dm.group(1))*1000.0
+              duration_calls[key] += 1
+
           direct=[float(x) for x in (root/'measured-direct-ms.txt').read_text().split()]
           ptrace=[float(x) for x in (root/'measured-ptrace-ms.txt').read_text().split()]
           def median_mad(xs):
@@ -227,11 +246,14 @@ jobs:
               'median_absolute_overhead_ms':pm-dm,
               'slowdown_ratio':pm/dm,
               'observer_syscall_counters':counters,
+              'diagnostic_syscall_duration_ms':dict(sorted(duration_ms.items())),
+              'diagnostic_syscall_duration_calls':dict(sorted(duration_calls.items())),
               'attribution_status':{
                   'ptrace_request_counts':'MEASURED',
                   'wait_syscall_counts':'MEASURED',
                   'proc_path_readlink_counts':'SUPPORTED_CORRELATION',
-                  'per-request causal wall_cost':'OPEN'
+                  'strace_request_durations':'DIAGNOSTIC_PERTURBED',
+                  'production_causal_wall_cost':'OPEN'
               }
           }
           (root/'attribution.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
