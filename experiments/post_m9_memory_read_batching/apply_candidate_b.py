@@ -10,11 +10,7 @@ assert s.count(end_marker) == 1
 start = s.index(start_marker)
 end = s.index(end_marker, start)
 
-replacement = r'''fn process_vm_read_exact(
-    tid: libc::pid_t,
-    address: u64,
-    len: usize,
-) -> Option<Vec<u8>> {
+replacement = r'''fn process_vm_read_exact(tid: libc::pid_t, address: u64, len: usize) -> Option<Vec<u8>> {
     if len == 0 {
         return Some(Vec::new());
     }
