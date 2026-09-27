@@ -29,9 +29,17 @@ For each reference/candidate observation, compare:
 2. `complete`: exact equality;
 3. command outcome: exact equality;
 4. warnings: exact multiset of `{code, message}`; warning `tid` is excluded as run-local identity;
-5. events: exact multiset of each `RawEventKind` JSON payload; raw `tid` and `sequence` are excluded as run-local identity.
+5. events: exact multiset of each `RawEventKind` semantic payload after replacing only run-local kernel TID identities with a fixed placeholder.
 
-No event kind, path, fd, operation, endpoint, flag, resolve value, child relationship payload, warning code/message, completeness state or command outcome may be normalized away.
+Run-local identities excluded from equality are limited to:
+
+- `RawEvent.sequence`;
+- `RawEvent.tid`;
+- `ProcessSpawn.child_tid`.
+
+The `ProcessSpawn` event itself is not dropped: its occurrence count and `mechanism` remain exact-match requirements. This correction was committed **before Candidate A was executed** because independent reference/candidate runs necessarily receive different kernel child TIDs.
+
+No event kind, path, fd, operation, endpoint, flag, resolve value, spawn mechanism, warning code/message, completeness state or command outcome may be normalized away.
 
 Multiset comparison is used because independent executions, especially threaded/forking fixtures, may interleave event order differently even when semantic evidence is equivalent. Candidate A is not allowed to rely on ordering normalization to hide a missing or added payload.
 
