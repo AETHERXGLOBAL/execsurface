@@ -136,7 +136,7 @@ Gate status:
 6. **M8.5 — CLOSED / ACCEPTED:** bounded cross-backend parity was proved for selected process/exec and focused successful-open propositions, including counterexamples and fail-closed incomplete-state handling. Full-surface equivalence was not established.
 7. **M8.6 — CLOSED / ACCEPTED — MEASUREMENT GATE:** exact-host work showed per-invocation libbpf teardown dominated measured lifecycle cost and motivated persistent attachment rather than timing shortcuts.
 8. **M8.7 — CLOSED / ACCEPTED — BOUNDED PERSISTENT SESSION ARCHITECTURE FEASIBLE:** persistent attachment, session epochs, root-registration barrier, task-creation propagation, descendant drain, reset checks, crash/restart isolation, routing failure, producer loss, event-budget exhaustion and live stale-epoch rejection were proved for the tested single-active-session architecture. M8.7c reduced the conservative two-session amortized libbpf cost by about 16.7% on the exact host, but remained about 50.5x the ptrace median.
-9. **M8.8 — CLOSED / DEFER:** public eBPF exposure is not justified by current product evidence. The original M6.5 external-workload value trigger has not been met, the current eBPF path remains slower end-to-end on the measured workload, its semantic surface is narrower, and persistent privilege/service boundaries remain open. The research asset is retained with explicit reopen conditions.
+9. **M8.8 — CLOSED / DEFER:** public eBPF exposure was not justified by evidence available at M8 closure. The research asset was retained with explicit reopen conditions.
 
 ### M8 authority boundary at closure
 
@@ -151,8 +151,6 @@ Gate status:
 - production persistent daemon/service: **NOT AUTHORIZED**;
 - default public install path: **UNCHANGED**.
 
-The eBPF path may be reopened only when a real external workload crosses the predeclared ptrace cost trigger or a concrete external workflow requires a capability that eBPF can uniquely provide, followed by all required safety/product gates.
-
 Architecture: `docs/milestones/M8_EBPF_ARCHITECTURE.md`.
 M8.2 decision: `docs/milestones/M8_2_STACK_DECISION.md`.
 M8.4 evidence: `docs/milestones/M8_4_LOSS_SEMANTICS.md`.
@@ -164,18 +162,51 @@ Tracking: GitHub Issues #34, #37, #40, #42, #44, #46 and #49.
 
 ## M9 — Independent Adoption & Real-Workload Evidence
 
+**OPEN — M9.0 CLOSED / PROVED; M9.1 CLOSED; M9.2 CLOSED / KILLED IN DECLARED SEARCH SCOPE; M9.3 NEXT**
+
+M9 evaluates the existing public product using real external workloads while keeping compatibility evidence, independent adoption, performance evidence and backend authority distinct.
+
+### M9.0 — Protocol & Intake Freeze
+
+**CLOSED / PROVED**
+
+The canonical evidence schema, independence classes, privacy/failure-preservation rules, 3+15 performance protocol and predeclared M6.5 trigger were frozen before accepted M9 evidence.
+
+Protocol: `docs/milestones/M9_PROTOCOL.md`.
+Schema: `docs/milestones/M9_EVIDENCE_SCHEMA.json`.
+
+### M9.1 — Zero-Contact External Workload Expansion
+
+**CLOSED — EXTERNAL COMPATIBILITY/PERFORMANCE EVIDENCE, NOT ADOPTION**
+
+Pinned unmodified external workloads were exercised under `ZERO_CONTACT_EXTERNAL_REPRO`. Accepted runtime-oriented cases produced repeated unchanged PASS results and controlled-drift REVIEW results while preserved negative evidence exposed process-lifecycle and build/test-variance friction.
+
+The ptrace lifecycle blocker was hardened without blanket ESRCH ignoring, sleeps, threshold weakening or semantic relaxation. Later real-workload performance evidence crossed the predeclared trigger and therefore permitted a bounded same-workload eBPF value screen.
+
+That eBPF value screen did **not** establish a value claim: the current per-invocation libbpf path failed completeness/health gates (`incomplete_lifecycle` and, on one warmup, `incomplete_capability`) before accepted measured samples could begin. Result: **KILLED FOR VALUE CLAIM / PARTIAL_NO_VALUE_CLAIM**. Ptrace remains the public correctness reference; eBPF remains research-only.
+
+Closeout/evidence includes `docs/milestones/M9_1_EBPF_TRIGGER_VALUE_SCREEN_RESULT.md` and the preserved M9.1 evidence tree.
+
+### M9.2 — Independent Adoption Evidence
+
+**CLOSED / KILLED — NO ACCEPTED INDEPENDENT EVIDENCE IN DECLARED SEARCH SCOPE (2026-09-27)**
+
+M9.2 froze provenance, intake, countability and close-gate rules before discovery. Positive closure required at least two countable `INDEPENDENT_USER` records from two distinct external repositories/references, with successful install/doctor/baseline/unchanged checks and at least one comparable complete drift case.
+
+The preregistered S1–S7 public GitHub discovery scope was then executed. It found registry/distribution metadata and unrelated `ExecSurface`/`execSurfaces` name collisions, but **0 accepted independent adoption records**, **0 countable positive-close records**, and **0 accepted independent drift records**.
+
+This is a bounded negative result for the declared public GitHub scope only. It does not claim that no private, local, unindexed, off-GitHub or otherwise undiscovered use exists.
+
+Gate: `docs/milestones/M9_2_INDEPENDENT_ADOPTION_GATE.md`.
+Protocol: `docs/milestones/M9_2_INDEPENDENT_ADOPTION_PROTOCOL.md`.
+Discovery scope: `docs/milestones/M9_2_DISCOVERY_SCOPE.md`.
+Discovery ledger: `docs/milestones/M9_2_DISCOVERY_LEDGER.md`.
+Closeout: `docs/milestones/M9_2_CLOSEOUT.md`.
+
+### M9.3 — Evidence Synthesis / Product Decision
+
 **NEXT**
 
-The next highest-value milestone is not another speculative observer feature. It is independent use of the existing public product on real developer/CI workloads.
+Synthesize M9.1 compatibility/performance/drift evidence, preserved failure/friction evidence, the negative eBPF value-screen result, and the bounded M9.2 adoption result into one product decision.
 
-M9 should seek machine-readable evidence for:
-
-- zero-contact installation and first successful use by independent users/projects;
-- real baseline → rerun → drift workflows outside AETHER X-controlled fixtures;
-- false-positive / false-negative reports and usability friction;
-- real command runtimes and ptrace overhead on workloads with direct median >=100 ms;
-- whether any external workload crosses the predeclared M6.5 eBPF trigger;
-- whether users require an observation capability not available under the ptrace product;
-- retention of privacy, completeness, comparability and verdict semantics under external use.
-
-M9 evidence may validate continued ptrace productization or provide the first justified trigger to reopen the eBPF path. It must not manufacture an eBPF need in advance.
+M9.3 must state exactly what can be claimed publicly, identify only evidence-backed product changes, decide the appropriate public-alpha/release posture, and preserve the current ptrace/eBPF authority boundary unless a new gate supplies contrary evidence.
