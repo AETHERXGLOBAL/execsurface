@@ -1,0 +1,462 @@
+name: Post-M9 phase-aware fast-path semantic gate
+
+on:
+  push:
+    branches:
+      - experiment/post-m9-ptrace-phase-aware-exit-fastpath
+    paths:
+      - .github/workflows/post-m9-phase-aware-fastpath-semantic-gate.yml
+      - docs/milestones/POST_M9_PTRACE_PHASE_AWARE_SEMANTIC_COMPARATOR.md
+      - docs/milestones/POST_M9_PTRACE_PHASE_AWARE_EXIT_FASTPATH_PROTOCOL.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      REF_BIN: /tmp/execsurface-reference
+      CAND_BIN: /tmp/execsurface-candidate
+      FIXTURE_BIN: /tmp/execsurface-fixture-reference
+      HELPER_BIN: /tmp/execsurface-phase-helper
+      EVIDENCE: post-m9-phase-aware-semantic
+
+    steps:
+      - name: Checkout experiment branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Freeze environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f docs/milestones/POST_M9_PTRACE_PHASE_AWARE_EXIT_FASTPATH_PROTOCOL.md
+          test -f docs/milestones/POST_M9_PTRACE_PHASE_AWARE_SEMANTIC_COMPARATOR.md
+          mkdir -p "$EVIDENCE"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc strace
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'branch_source_sha=%s\n' "$GITHUB_SHA"
+            printf 'reference_runtime_sha=%s\n' 'fdf668af61ba08a11f0bc7d3dac44cdc484bbcf2'
+            printf 'kernel=%s\n' "$(uname -srmo)"
+            printf 'arch=%s\n' "$(uname -m)"
+            printf 'cpu=%s\n' "$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)"
+            printf 'rustc=%s\n' "$(rustc +$RUST_TOOLCHAIN --version)"
+            printf 'gcc=%s\n' "$(gcc --version | head -1)"
+            printf 'strace=%s\n' "$(strace -V | head -1)"
+          } > "$EVIDENCE/environment.txt"
+
+      - name: Build frozen reference binaries before patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git merge-base HEAD fdf668af61ba08a11f0bc7d3dac44cdc484bbcf2)" = 'fdf668af61ba08a11f0bc7d3dac44cdc484bbcf2'
+          cargo "+$RUST_TOOLCHAIN" build --locked --release -p execsurface-cli --bin execsurface
+          cp target/release/execsurface "$REF_BIN"
+          cargo "+$RUST_TOOLCHAIN" build --locked --release -p execsurface-observe --bin execsurface-fixture
+          cp target/release/execsurface-fixture "$FIXTURE_BIN"
+          sha256sum "$REF_BIN" "$FIXTURE_BIN" > "$EVIDENCE/reference-binaries.sha256"
+
+      - name: Apply Candidate A experiment-only patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          p=Path('crates/execsurface-observe/src/linux_ptrace.rs')
+          s=p.read_text()
+
+          marker='#[derive(Debug, Clone)]\nstruct TraceeState {'
+          assert marker in s
+          enum='''#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          enum SyscallPhase {
+              Unknown,
+              ExpectEntry,
+              ExpectExit { skip_info: bool },
+          }
+
+          '''
+          s=s.replace(marker, enum+marker, 1)
+
+          field='    pending_syscall: Option<PendingSyscall>,\n'
+          assert s.count(field)==1
+          s=s.replace(field, field+'    syscall_phase: SyscallPhase,\n', 1)
+
+          init='            pending_syscall: None,\n            newborn:'
+          assert s.count(init)==2
+          s=s.replace(init, '            pending_syscall: None,\n            syscall_phase: SyscallPhase::Unknown,\n            newborn:')
+
+          start=s.index('        if stop_signal == (libc::SIGTRAP | 0x80) {')
+          end=s.index('\n        let suppress_signal =', start)
+          new_block=r'''        if stop_signal == (libc::SIGTRAP | 0x80) {
+              let can_skip_exit_info = tracees
+                  .get(&tid)
+                  .map(|state| {
+                      matches!(
+                          state.syscall_phase,
+                          SyscallPhase::ExpectExit { skip_info: true }
+                      )
+                  })
+                  .unwrap_or(false);
+
+              if can_skip_exit_info {
+                  let state = tracees.get_mut(&tid).ok_or_else(|| {
+                      ObserveError::Protocol(format!(
+                          "phase-aware exit fast path lost tracked tid {tid}"
+                      ))
+                  })?;
+                  if state.pending_syscall.is_some()
+                      || state.pending_exec.is_some()
+                      || state.exit_group_pending
+                      || state.retired_by_exec
+                      || state.exit_event_status.is_some()
+                      || state.newborn
+                  {
+                      return Err(ObserveError::Protocol(format!(
+                          "phase-aware exit fast path reached unsafe state for tid {tid}"
+                      )));
+                  }
+                  state.syscall_phase = SyscallPhase::ExpectEntry;
+                  resume_after_observed_stop(root, tid, 0, &mut tracees, &mut root_outcome)?;
+                  continue;
+              }
+
+              let info = match syscall_info(tid) {
+                  Ok(info) => info,
+                  Err(ObserveError::Os(error)) if error.raw_os_error() == Some(libc::ESRCH) => {
+                      let recoverable = tracees
+                          .get(&tid)
+                          .map(|state| {
+                              state.exit_group_pending
+                                  && state.pending_syscall.is_none()
+                                  && !state.retired_by_exec
+                                  && state.exit_event_status.is_none()
+                          })
+                          .unwrap_or(false);
+                      if !recoverable {
+                          return Err(ObserveError::Protocol(format!(
+                              "PTRACE_GET_SYSCALL_INFO returned ESRCH for tid {tid} without bounded exit-group lifecycle evidence"
+                          )));
+                      }
+                      let state = tracees.get_mut(&tid).ok_or_else(|| {
+                          ObserveError::Protocol(format!(
+                              "bounded GET_SYSCALL_INFO ESRCH recovery lost tracked tid {tid}"
+                          ))
+                      })?;
+                      state.syscall_info_esrch_after_exit_group = true;
+                      state.syscall_phase = SyscallPhase::Unknown;
+                      continue;
+                  }
+                  Err(error) => return Err(error),
+              };
+
+              if let Some((nr, args)) = info.entry() {
+                  if let Some(state) = tracees.get_mut(&tid) {
+                      state.syscall_phase = SyscallPhase::Unknown;
+                  }
+                  handle_syscall_entry(tid, nr, args, &mut tracees, &mut collector);
+                  let skip_info = tracees
+                      .get(&tid)
+                      .map(|state| {
+                          state.pending_syscall.is_none()
+                              && state.pending_exec.is_none()
+                              && !state.exit_group_pending
+                              && !state.retired_by_exec
+                              && state.exit_event_status.is_none()
+                              && !state.newborn
+                      })
+                      .unwrap_or(false);
+                  if let Some(state) = tracees.get_mut(&tid) {
+                      state.syscall_phase = SyscallPhase::ExpectExit { skip_info };
+                  }
+              } else if let Some(result) = info.exit() {
+                  handle_syscall_exit(tid, result, &mut tracees, &mut fd_tables, &mut collector);
+                  if let Some(state) = tracees.get_mut(&tid) {
+                      state.syscall_phase = SyscallPhase::ExpectEntry;
+                  }
+              } else if let Some(state) = tracees.get_mut(&tid) {
+                  state.syscall_phase = SyscallPhase::Unknown;
+              }
+
+              resume_after_observed_stop(root, tid, 0, &mut tracees, &mut root_outcome)?;
+              continue;
+          }
+          '''
+          s=s[:start]+new_block+s[end:]
+
+          restart='            state.restart_esrch_seen = true;\n            Ok(())'
+          assert s.count(restart)==1
+          s=s.replace(restart, '            state.restart_esrch_seen = true;\n            state.syscall_phase = SyscallPhase::Unknown;\n            Ok(())', 1)
+
+          hstart=s.index('fn handle_ptrace_event(')
+          matchpos=s.index('    match event {', hstart)
+          s=s[:matchpos]+'    if let Some(state) = tracees.get_mut(&tid) {\n        state.syscall_phase = SyscallPhase::Unknown;\n    }\n\n'+s[matchpos:]
+
+          retired='                    other_state.pending_syscall = None;\n                    retired.push(*other_tid);'
+          assert s.count(retired)==1
+          s=s.replace(retired, '                    other_state.pending_syscall = None;\n                    other_state.syscall_phase = SyscallPhase::Unknown;\n                    retired.push(*other_tid);', 1)
+
+          execreset='            state.syscall_info_esrch_after_exit_group = false;\n            tracees.insert(tid, state);'
+          assert s.count(execreset)==1
+          s=s.replace(execreset, '            state.syscall_info_esrch_after_exit_group = false;\n            state.syscall_phase = SyscallPhase::Unknown;\n            tracees.insert(tid, state);', 1)
+
+          p.write_text(s)
+          PY
+
+          cargo "+$RUST_TOOLCHAIN" fmt --all
+          git diff --check
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs > "$EVIDENCE/candidate.patch"
+          test -s "$EVIDENCE/candidate.patch"
+
+      - name: Candidate compile and repository semantic tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" clippy --locked -p execsurface-observe --all-targets -- -D warnings
+          cargo "+$RUST_TOOLCHAIN" test --locked -p execsurface-observe
+          cargo "+$RUST_TOOLCHAIN" test --locked --workspace
+          cargo "+$RUST_TOOLCHAIN" build --locked --release -p execsurface-cli --bin execsurface
+          cp target/release/execsurface "$CAND_BIN"
+          sha256sum "$CAND_BIN" > "$EVIDENCE/candidate-binary.sha256"
+
+      - name: Build frozen adversarial helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$EVIDENCE/phase_helper.c" <<'C'
+          #define _GNU_SOURCE
+          #include <errno.h>
+          #include <fcntl.h>
+          #include <pthread.h>
+          #include <signal.h>
+          #include <stdint.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <sys/syscall.h>
+          #include <sys/types.h>
+          #include <sys/wait.h>
+          #include <time.h>
+          #include <unistd.h>
+
+          static void alarm_handler(int sig) { (void)sig; }
+
+          static int do_fileio(const char *path) {
+              int fd=open(path,O_CREAT|O_TRUNC|O_RDWR,0600);
+              if(fd<0) return 11;
+              if(write(fd,"abc",3)!=3) return 12;
+              if(lseek(fd,0,SEEK_SET)<0) return 13;
+              char b[4]={0};
+              if(read(fd,b,3)!=3) return 14;
+              if(close(fd)!=0) return 15;
+              return 0;
+          }
+
+          static void *thread_exec(void *arg) {
+              (void)arg;
+              execl("/bin/true","true",(char*)0);
+              _exit(91);
+          }
+
+          static void *thread_exit_group(void *arg) {
+              (void)arg;
+              syscall(SYS_exit_group,0);
+              return 0;
+          }
+
+          int main(int argc,char **argv) {
+              if(argc<2) return 64;
+              const char *mode=argv[1];
+              const char *path=argc>2?argv[2]:"/tmp/execsurface-phase-file";
+              if(!strcmp(mode,"getpid")) {
+                  unsigned long n=argc>2?strtoul(argv[2],0,10):0;
+                  volatile long x=0;
+                  for(unsigned long i=0;i<n;i++) x^=syscall(SYS_getpid);
+                  return x==-1?70:0;
+              }
+              if(!strcmp(mode,"fileio")) return do_fileio(path);
+              if(!strcmp(mode,"failed-open")) {
+                  int fd=open("/definitely/not/execsurface-phase-aware",O_RDONLY);
+                  if(fd>=0) { close(fd); return 21; }
+                  return errno==ENOENT?0:22;
+              }
+              if(!strcmp(mode,"signal")) {
+                  struct sigaction sa={0}; sa.sa_handler=alarm_handler; sigemptyset(&sa.sa_mask);
+                  if(sigaction(SIGALRM,&sa,0)!=0) return 31;
+                  ualarm(1000,0);
+                  struct timespec ts={.tv_sec=0,.tv_nsec=100000000}, rem={0};
+                  syscall(SYS_nanosleep,&ts,&rem);
+                  int fd=open("/dev/null",O_RDONLY); if(fd<0) return 32;
+                  char b=0; (void)read(fd,&b,1); close(fd); return 0;
+              }
+              if(!strcmp(mode,"fork")) {
+                  int fd=open(path,O_RDONLY); if(fd<0) return 41;
+                  pid_t p=fork(); if(p<0) return 42;
+                  if(p==0) { char b=0; (void)read(fd,&b,1); _exit(0); }
+                  int st=0; if(waitpid(p,&st,0)!=p) return 43; close(fd);
+                  return WIFEXITED(st)&&WEXITSTATUS(st)==0?0:44;
+              }
+              if(!strcmp(mode,"vfork")) {
+                  pid_t p=vfork(); if(p<0) return 51;
+                  if(p==0) _exit(0);
+                  int st=0; if(waitpid(p,&st,0)!=p) return 52;
+                  return WIFEXITED(st)&&WEXITSTATUS(st)==0?0:53;
+              }
+              if(!strcmp(mode,"exec")) { execl("/bin/true","true",(char*)0); return 61; }
+              if(!strcmp(mode,"failed-exec")) {
+                  execl("/definitely/not/execsurface-phase-aware","missing",(char*)0);
+                  if(errno!=ENOENT) return 62;
+                  int fd=open("/dev/null",O_RDONLY); if(fd<0) return 63; close(fd); return 0;
+              }
+              if(!strcmp(mode,"thread-exec")) {
+                  pthread_t t; if(pthread_create(&t,0,thread_exec,0)!=0) return 71;
+                  void *r=0; if(pthread_join(t,&r)!=0) return 72; return 73;
+              }
+              if(!strcmp(mode,"exit-group")) {
+                  pthread_t t; if(pthread_create(&t,0,thread_exit_group,0)!=0) return 81;
+                  for(;;) pause();
+              }
+              return 65;
+          }
+          C
+          gcc -O2 -Wall -Wextra -Werror -pthread "$EVIDENCE/phase_helper.c" -o "$HELPER_BIN"
+          test -x "$HELPER_BIN"
+          sha256sum "$HELPER_BIN" > "$EVIDENCE/helper.sha256"
+
+      - name: Differential semantic parity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$REF_BIN" "$CAND_BIN" "$HELPER_BIN" "$FIXTURE_BIN" "$EVIDENCE" <<'PY'
+          import copy,json,os,subprocess,sys
+          from collections import Counter
+          from pathlib import Path
+
+          ref,cand,helper,fixture,evidence=sys.argv[1:]
+          out=Path(evidence)/'differential'
+          out.mkdir(parents=True,exist_ok=True)
+          fixed='/tmp/execsurface-phase-fixed-file'
+
+          cases=[
+              ('irrelevant',[helper,'getpid','5000'],None),
+              ('fileio',[helper,'fileio',fixed],b'fixture'),
+              ('failed-open',[helper,'failed-open'],None),
+              ('signal',[helper,'signal'],None),
+              ('fork',[helper,'fork',fixed],b'fixture'),
+              ('vfork',[helper,'vfork'],None),
+              ('exec',[helper,'exec'],None),
+              ('failed-exec',[helper,'failed-exec'],None),
+              ('thread-exec',[helper,'thread-exec'],None),
+              ('exit-group',[helper,'exit-group'],None),
+              ('fixture-thread-read',[fixture,'thread-read',fixed,'8'],b'fixture'),
+              ('fixture-spawn',[fixture,'spawn','phase-aware-sentinel'],None),
+          ]
+
+          def reset_file(content):
+              try: os.unlink(fixed)
+              except FileNotFoundError: pass
+              if content is not None:
+                  Path(fixed).write_bytes(content)
+
+          def run(binary,args,path):
+              with open(path,'w') as f:
+                  p=subprocess.run([binary,'observe','--',*args],stdout=f,stderr=subprocess.PIPE,text=True,timeout=30)
+              Path(str(path)+'.stderr').write_text(p.stderr)
+              if p.returncode!=0:
+                  raise RuntimeError(f'{binary} {args} rc={p.returncode}: {p.stderr}')
+              return json.loads(Path(path).read_text())
+
+          def normalize_child_ids(value):
+              if isinstance(value,dict):
+                  return {k:(0 if k=='child_tid' else normalize_child_ids(v)) for k,v in value.items()}
+              if isinstance(value,list): return [normalize_child_ids(v) for v in value]
+              return value
+
+          def projection(d):
+              warnings=Counter(json.dumps({'code':w.get('code'),'message':w.get('message')},sort_keys=True) for w in d.get('warnings',[]))
+              events=Counter(json.dumps(normalize_child_ids(e.get('kind')),sort_keys=True,separators=(',',':')) for e in d.get('events',[]))
+              return {
+                  'backend':d.get('backend'),
+                  'complete':d.get('complete'),
+                  'outcome':d.get('outcome'),
+                  'warnings':dict(sorted(warnings.items())),
+                  'events':dict(sorted(events.items())),
+              }
+
+          summary=[]
+          for name,args,content in cases:
+              reset_file(content)
+              rd=run(ref,args,out/f'{name}.reference.json')
+              reset_file(content)
+              cd=run(cand,args,out/f'{name}.candidate.json')
+              rp,cp=projection(rd),projection(cd)
+              ok=rp==cp
+              (out/f'{name}.reference.projection.json').write_text(json.dumps(rp,indent=2,sort_keys=True)+'\n')
+              (out/f'{name}.candidate.projection.json').write_text(json.dumps(cp,indent=2,sort_keys=True)+'\n')
+              summary.append({'case':name,'equal':ok,'reference_events':sum(rp['events'].values()),'candidate_events':sum(cp['events'].values()),'reference_complete':rp['complete'],'candidate_complete':cp['complete']})
+              if not ok:
+                  print(json.dumps({'case':name,'reference':rp,'candidate':cp},indent=2,sort_keys=True))
+                  (out/'summary.json').write_text(json.dumps(summary,indent=2,sort_keys=True)+'\n')
+                  raise SystemExit(1)
+          (out/'summary.json').write_text(json.dumps(summary,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(summary,indent=2,sort_keys=True))
+          PY
+
+      - name: Fast-path activation diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE/diagnostic"
+          for mode in reference candidate; do
+            if [ "$mode" = reference ]; then exe="$REF_BIN"; else exe="$CAND_BIN"; fi
+            for n in 0 5000; do
+              strace -qq -s 128 -o "$EVIDENCE/diagnostic/${mode}-${n}.strace" \
+                -e trace=ptrace,wait4,waitid,readlink,readlinkat \
+                "$exe" observe -- "$HELPER_BIN" getpid "$n" \
+                > "$EVIDENCE/diagnostic/${mode}-${n}.json" \
+                2> "$EVIDENCE/diagnostic/${mode}-${n}.stderr"
+            done
+          done
+
+          python3 - "$EVIDENCE/diagnostic" <<'PY'
+          import json,re,sys
+          from pathlib import Path
+          root=Path(sys.argv[1])
+          def count(mode,n):
+              text=(root/f'{mode}-{n}.strace').read_text(errors='replace')
+              return len(re.findall(r'\bptrace\(PTRACE_GET_SYSCALL_INFO,',text))
+          counts={m:{n:count(m,n) for n in (0,5000)} for m in ('reference','candidate')}
+          rd=counts['reference'][5000]-counts['reference'][0]
+          cd=counts['candidate'][5000]-counts['candidate'][0]
+          result={'counts':counts,'reference_delta':rd,'candidate_delta':cd,'expected_reference_delta':10000,'expected_candidate_delta':5000}
+          (root/'activation.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(result,indent=2,sort_keys=True))
+          if rd!=10000 or cd!=5000:
+              raise SystemExit(1)
+          PY
+
+      - name: Record experiment branch diff
+        if: always()
+        shell: bash
+        run: |
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs > "$EVIDENCE/final-candidate.patch" || true
+          git status --short > "$EVIDENCE/working-tree-status.txt" || true
+
+      - name: Upload semantic-gate evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-m9-phase-aware-semantic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-m9-phase-aware-semantic
+          if-no-files-found: error
+          retention-days: 30
