@@ -1,6 +1,6 @@
 # crates.io Publishing
 
-ExecSurface uses GitHub Releases as its signed binary distribution channel and crates.io as the primary Rust-native installation channel.
+ExecSurface uses GitHub Releases as its checksum-verified, provenance-attested binary distribution channel and crates.io as the primary Rust-native installation channel.
 
 ## Public install
 
@@ -18,7 +18,11 @@ execsurface
 
 The first verified registry release is `0.1.0-alpha.2`.
 
-A fresh Ubuntu 24.04 runner successfully installed the package from crates.io and then passed:
+The current verified registry release is `0.1.0-alpha.3`.
+
+A fresh public-consumer release workflow verified the corresponding immutable source and distribution paths, and the registry index records `execsurface 0.1.0-alpha.3` with exact `0.1.0-alpha.3` dependencies across the published ExecSurface runtime crate chain.
+
+The verified consumer path includes:
 
 ```text
 execsurface --version
@@ -27,7 +31,7 @@ execsurface learn -- /bin/bash -lc true
 execsurface check -- /bin/bash -lc true
 ```
 
-The final no-drift check returned `PASS` with zero findings.
+The no-drift check returns `PASS` with zero findings on the accepted smoke workload.
 
 ## Why several crates are published
 
@@ -60,6 +64,8 @@ The normal release workflow:
 4. publishes the workspace crates in dependency order;
 5. skips versions already present in crates.io so interrupted chains can resume safely;
 6. proves a fresh `cargo install execsurface` consumer from the registry.
+
+For `0.1.0-alpha.3`, registry publication is dispatched only after the GitHub Release binary, immutable Action, stable `v0.1` channel, and stable PASS / REVIEW / BLOCK / ERROR consumer gates succeed.
 
 ## Preserved first-publication failures
 

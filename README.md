@@ -17,7 +17,7 @@ ExecSurface is a Linux-first developer tool that learns an accepted **runtime ex
 
 It is designed for software, CI pipelines, dependencies, developer tools and AI tooling where code review alone does not show every runtime effect.
 
-> **Public Alpha:** Linux x86_64 only. Current product version: **0.1.0-alpha.2**.
+> **Public Alpha:** Linux x86_64 only. Current product version: **0.1.0-alpha.3**.
 
 ### The idea in 10 seconds
 
@@ -44,7 +44,7 @@ cargo install execsurface --locked
 execsurface --version
 ```
 
-The current public alpha is also available as a signed GitHub Release binary for Linux x86_64.
+The current public alpha is also available as a checksum-verified, GitHub provenance-attested Release binary for Linux x86_64.
 
 ### 2. Check environment readiness
 
@@ -61,7 +61,7 @@ ExecSurface Doctor
 [PASS] x86_64
 [PASS] ptrace observer available
 [PASS] workspace writable
-[PASS] ExecSurface 0.1.0-alpha.2
+[PASS] ExecSurface 0.1.0-alpha.3
 
 Ready.
 ```
@@ -106,7 +106,7 @@ For independent evaluation with machine-readable PASS/REVIEW evidence, use the *
 ### GitHub Release binary
 
 ```bash
-VERSION=v0.1.0-alpha.2
+VERSION=v0.1.0-alpha.3
 TARGET=x86_64-unknown-linux-gnu
 ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
 
@@ -134,7 +134,7 @@ A valid attestation links the artifact to its GitHub build provenance. It does *
 ```bash
 cargo install \
   --git https://github.com/AETHERXGLOBAL/execsurface.git \
-  --tag v0.1.0-alpha.2 \
+  --tag v0.1.0-alpha.3 \
   execsurface \
   --locked
 ```
