@@ -13,7 +13,20 @@
 #include <time.h>
 #include <unistd.h>
 
+static int restart_write_fd = -1;
+
 static void noop_handler(int sig) { (void)sig; }
+
+static void restart_write_handler(int sig) {
+    (void)sig;
+    int saved_errno = errno;
+    if (restart_write_fd >= 0) {
+        const char byte = 'r';
+        ssize_t wrote = write(restart_write_fd, &byte, 1);
+        (void)wrote;
+    }
+    errno = saved_errno;
+}
 
 static int do_fileio(const char *path) {
     int fd = open(path, O_CREAT | O_TRUNC | O_RDWR, 0600);
@@ -85,6 +98,11 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    /*
+     * Preserved v2 concurrent restart fixture. This mode remains for provenance
+     * and stress testing. It is intentionally not used by the v3 strict raw
+     * parity gate because v2 proved reference/reference event-order variance.
+     */
     if (!strcmp(mode, "restart")) {
         int p[2];
         if (pipe(p) != 0) return 35;
@@ -114,6 +132,42 @@ int main(int argc, char **argv) {
         if (waitpid(c, &st, 0) != c) return 40;
         if (got != 1 || x != 'x') return 41;
         return WIFEXITED(st) && WEXITSTATUS(st) == 0 ? 0 : 42;
+    }
+
+    /*
+     * v3 deterministic restart fixture: one process only. SIGALRM interrupts a
+     * blocking pipe read, the SA_RESTART handler writes one byte, and the read
+     * resumes and consumes it. A selected /dev/null open/read/close follows so
+     * observer phase recovery is checked after the restarted syscall.
+     */
+    if (!strcmp(mode, "restart-single")) {
+        int p[2];
+        if (pipe(p) != 0) return 66;
+        restart_write_fd = p[1];
+        struct sigaction sa = {0};
+        sa.sa_handler = restart_write_handler;
+        sa.sa_flags = SA_RESTART;
+        sigemptyset(&sa.sa_mask);
+        if (sigaction(SIGALRM, &sa, 0) != 0) return 67;
+        ualarm(10000, 0);
+        char x = 0;
+        ssize_t got = read(p[0], &x, 1);
+        ualarm(0, 0);
+        restart_write_fd = -1;
+        if (got != 1 || x != 'r') return 68;
+        if (close(p[0]) != 0) return 69;
+        if (close(p[1]) != 0) return 71;
+
+        int fd = open("/dev/null", O_RDONLY);
+        if (fd < 0) return 72;
+        char b = 0;
+        ssize_t read_result = read(fd, &b, 1);
+        if (read_result < 0) {
+            close(fd);
+            return 73;
+        }
+        if (close(fd) != 0) return 74;
+        return 0;
     }
 
     if (!strcmp(mode, "fork")) {
