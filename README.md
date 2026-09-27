@@ -8,32 +8,101 @@
   <a href="https://github.com/AETHERXGLOBAL/execsurface/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/AETHERXGLOBAL/execsurface/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://github.com/AETHERXGLOBAL/execsurface/releases"><img alt="Release" src="https://img.shields.io/github/v/release/AETHERXGLOBAL/execsurface?include_prereleases&label=release"></a>
   <img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue">
-  <img alt="Rust 1.82+" src="https://img.shields.io/badge/Rust-1.82%2B-orange">
   <img alt="Linux x86_64" src="https://img.shields.io/badge/platform-Linux%20x86__64-informational">
   <img alt="Public Alpha" src="https://img.shields.io/badge/status-Public%20Alpha-yellow">
 </p>
 
-ExecSurface is a Linux-first developer tool that learns an accepted **runtime execution surface**, runs the same command later, and reports what execution behavior appeared, disappeared, or changed.
+ExecSurface learns an accepted **runtime execution surface**, runs the same command later, and reports execution behavior that appeared, disappeared, or changed.
 
-It is designed for software, CI pipelines, dependencies, developer tools and AI tooling where code review alone does not show every runtime effect.
+It is intended for CI pipelines, dependencies, developer tools and AI-assisted workflows where source review alone does not show every runtime effect.
 
 > **Public Alpha:** Linux x86_64 only. Current product version: **0.1.0-alpha.3**.
 >
-> **Self-service:** no signup, API key, meeting, or AETHER X approval is required. Start with **[Self-Service Start](docs/SELF_SERVICE_START.md)** or run a fully independent evaluation with **[Independent Evaluation](docs/INDEPENDENT_EVALUATION.md)**.
+> **Self-service:** no signup, API key, meeting, or AETHER X approval is required.
 
-### Start in 60 seconds
+## Start here
+
+Choose the path that matches your environment.
+
+### A. Linux x86_64 — no Rust required (recommended first run)
+
+Download the published release, verify its checksum, and install it in your user path:
+
+```bash
+VERSION=v0.1.0-alpha.3
+TARGET=x86_64-unknown-linux-gnu
+ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
+
+curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}"
+curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}.sha256"
+sha256sum -c "${ASSET}.sha256"
+tar -xzf "${ASSET}"
+
+mkdir -p "$HOME/.local/bin"
+install -m 0755 "execsurface-${VERSION}-${TARGET}/execsurface" "$HOME/.local/bin/execsurface"
+export PATH="$HOME/.local/bin:$PATH"
+
+execsurface --version
+execsurface doctor
+```
+
+Then run the controlled **PASS → REVIEW** walkthrough in **[Five-Minute Start](docs/QUICKSTART_5_MIN.md)**.
+
+### B. Rust already installed
 
 ```bash
 cargo install execsurface --locked
+execsurface --version
 execsurface doctor
+```
+
+The current verified registry release is `0.1.0-alpha.3`. See [crates.io Publishing](docs/CRATES_IO_PUBLISHING.md).
+
+### C. Add it to a GitHub Actions project
+
+First generate conservative starter files from your project directory:
+
+```bash
 execsurface init --command "cargo test --locked" --github-actions
 ```
 
-Then follow **[Five-Minute Start](docs/QUICKSTART_5_MIN.md)** for a controlled PASS → REVIEW drift demonstration, or **[Independent Evaluation](docs/INDEPENDENT_EVALUATION.md)** to submit third-party evidence. No contact with AETHER X is required.
+`init` creates a starter policy and workflow. It **does not run your target command** and does not create a baseline automatically.
 
-### The idea in 10 seconds
+The generated workflow uses the stable public-alpha Action channel:
 
-Illustrative strict-policy output:
+```text
+AETHERXGLOBAL/execsurface@v0.1
+```
+
+Do not use `@main` as the normal consumer path. See the **[GitHub Action guide](docs/GITHUB_ACTION.md)**.
+
+## First real project
+
+Replace the example command with the command you actually want to monitor.
+
+```bash
+# 1. Diagnose this host first
+execsurface doctor
+
+# 2. Generate a policy and optional GitHub Actions workflow
+execsurface init --command "cargo test --locked" --github-actions
+
+# 3. Learn the accepted baseline using the same wrapper as the Action
+execsurface learn -- /bin/bash -lc 'cargo test --locked'
+
+# 4. Run the same command later and compare it
+execsurface check \
+  --policy execsurface-policy.json \
+  -- /bin/bash -lc 'cargo test --locked'
+```
+
+Review `execsurface-policy.json`, `.github/workflows/execsurface.yml`, and `execsurface.lock.json` before committing them.
+
+If `doctor` fails, follow the action it prints and see **[Troubleshooting](docs/TROUBLESHOOTING.md)**. `doctor` never elevates privileges, changes ptrace settings, or weakens host security settings.
+
+## What a result means
+
+Example of drift under a strict policy:
 
 ```text
 Tests: PASS
@@ -45,170 +114,18 @@ ExecSurface: BLOCK
 + READ     $HOME/.ssh/config
 ```
 
-ExecSurface does **not** infer that this is malicious. It reports observed drift and applies the policy you chose.
+ExecSurface does **not** infer that the behavior is malicious. It reports observed drift and evaluates the explicit policy you selected.
 
-## Quickstart
-
-### 1. Install from crates.io
-
-```bash
-cargo install execsurface --locked
-execsurface --version
-```
-
-The current public alpha is also available as a checksum-verified, GitHub provenance-attested Release binary for Linux x86_64.
-
-### 2. Check environment readiness
-
-```bash
-execsurface doctor
-```
-
-Expected on a supported environment:
-
-```text
-ExecSurface Doctor
-
-[PASS] Linux
-[PASS] x86_64
-[PASS] ptrace observer available
-[PASS] workspace writable
-[PASS] ExecSurface 0.1.0-alpha.3
-
-Ready.
-```
-
-`doctor` is diagnostic only. It does not elevate privileges, change sysctls, or weaken host security settings.
-
-### 3. Create conservative starter files
-
-Replace the command with your real project command:
-
-```bash
-execsurface init --command "cargo test --locked" --github-actions
-```
-
-This creates a starter policy and GitHub Actions workflow. It **does not run your command** and does not create a baseline automatically.
-
-### 4. Learn an explicit baseline
-
-The GitHub Action executes its input as `/bin/bash -lc <command>`. Learn locally with the same wrapper:
-
-```bash
-execsurface learn -- \
-  /bin/bash -lc 'cargo test --locked'
-```
-
-Review `execsurface.lock.json` before committing it.
-
-### 5. Check the same command
-
-```bash
-execsurface check \
-  --policy execsurface-policy.json \
-  -- /bin/bash -lc 'cargo test --locked'
-```
-
-For independent evaluation with machine-readable PASS/REVIEW evidence, use the **[Independent Evaluation guide](docs/INDEPENDENT_EVALUATION.md)** or the **[Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md)**. For the shortest controlled drift demonstration, see **[Five-Minute Start](docs/QUICKSTART_5_MIN.md)**.
-
-`SELF-EVALUATION PASS ≠ INDEPENDENT ADOPTION`
-
-## Alternative installation paths
-
-### GitHub Release binary
-
-```bash
-VERSION=v0.1.0-alpha.3
-TARGET=x86_64-unknown-linux-gnu
-ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
-
-curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}"
-curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}.sha256"
-
-sha256sum -c "${ASSET}.sha256"
-tar -xzf "${ASSET}"
-
-mkdir -p "$HOME/.local/bin"
-install -m 0755 "execsurface-${VERSION}-${TARGET}/execsurface" "$HOME/.local/bin/execsurface"
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Optional provenance verification with GitHub CLI:
-
-```bash
-gh attestation verify "$ASSET" -R AETHERXGLOBAL/execsurface
-```
-
-A valid attestation links the artifact to its build source/workflow. It does **not** prove the binary is safe.
-
-### Immutable Git tag fallback
-
-```bash
-cargo install \
-  --git https://github.com/AETHERXGLOBAL/execsurface.git \
-  --tag v0.1.0-alpha.3 \
-  execsurface \
-  --locked
-```
-
-See [crates.io Publishing](docs/CRATES_IO_PUBLISHING.md).
-
-## GitHub Actions
-
-Use the stable **v0.1** channel, not `@main`:
-
-```yaml
-permissions:
-  contents: read
-
-steps:
-  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-  - name: ExecSurface
-    uses: AETHERXGLOBAL/execsurface@v0.1
-    with:
-      command: cargo test --locked
-      baseline: execsurface.lock.json
-      policy: execsurface-policy.json
-```
-
-The public Action downloads the pinned ExecSurface release binary and verifies its SHA-256 checksum. Local `uses: ./` development continues to build from source.
-
-See **[GitHub Action guide](docs/GITHUB_ACTION.md)**.
-
-## Why runtime drift?
-
-A source diff can tell you that a dependency version changed. It cannot by itself tell you whether the new runtime now:
-
-- spawns another executable;
-- reads another file;
-- writes to a new location;
-- connects to another destination;
-- changes the process chain that produced an effect.
-
-ExecSurface records selected metadata-only runtime effects, canonicalizes unstable machine details, locks an accepted baseline, compares a later run, and evaluates an independent policy.
-
-```text
-OBSERVE
-  ↓
-CANONICALIZE
-  ↓
-LOCK
-  ↓
-RUN AGAIN
-  ↓
-DIFF
-  ↓
-POLICY
-  ↓
-PASS / REVIEW / BLOCK / ERROR
-  ↓
-JSON + Markdown evidence
-```
+| Result | Exit code | Meaning |
+|---|---:|---|
+| PASS | 0 | comparison/evaluation completed with no review/block finding |
+| ERROR | 2 | evidence/comparison/policy could not be established |
+| REVIEW | 10 | one or more findings require review |
+| BLOCK | 20 | one or more findings matched blocking policy |
 
 ## What is observed
 
-The current Linux x86_64 ptrace reference backend can produce evidence for:
+The current Linux x86_64 native `ptrace` reference backend can produce evidence for:
 
 - descendant process spawn/exec;
 - pathname access attempts;
@@ -220,19 +137,21 @@ The current Linux x86_64 ptrace reference backend can produce evidence for:
 - causal executable chains;
 - explicit observer incompleteness.
 
-M6.5 added fail-closed event-budget truncation and fault-injection coverage. Incomplete evidence cannot silently become PASS.
+Incomplete evidence cannot silently become PASS.
 
 ## Security boundary
 
-ExecSurface is **not**:
+ExecSurface detects **observed execution-surface drift under its recorded observer and policy**.
 
-- an antivirus;
-- an EDR;
-- a malware detector;
+It is **not**:
+
+- antivirus;
+- EDR;
+- malware detection;
 - a sandbox;
-- a proof of program safety.
+- a proof that a program is safe.
 
-The governing statements remain:
+The governing boundaries are:
 
 - **NO EXECUTION-SURFACE DRIFT ≠ PROGRAM IS SAFE**
 - **OBSERVED BEHAVIOR ≠ ALL POSSIBLE BEHAVIOR**
@@ -241,11 +160,13 @@ The governing statements remain:
 
 The default evidence boundary excludes file contents, environment values, stdin, network payloads and full child argv values.
 
+The public correctness-reference backend is native `ptrace`. eBPF work remains research-only and is not the public PASS/learn/check backend.
+
 See **[Security Policy](SECURITY.md)** and **[Troubleshooting](docs/TROUBLESHOOTING.md)**.
 
 ## Baseline is not policy
 
-ExecSurface deliberately keeps these separate.
+ExecSurface keeps these separate deliberately.
 
 The baseline answers:
 
@@ -257,45 +178,47 @@ The policy answers:
 
 A new baseline is not automatically an approval decision.
 
-## Exit codes
+## Independent evaluation
 
-| Result | Exit code | Meaning |
-|---|---:|---|
-| PASS | 0 | comparison/evaluation completed with no review/block finding |
-| ERROR | 2 | evidence/comparison/policy could not be established |
-| REVIEW | 10 | one or more findings require review |
-| BLOCK | 20 | one or more findings matched blocking policy |
+You can evaluate the public alpha without contacting AETHER X.
 
-## Looking for independent evaluators
+Use:
 
-ExecSurface public alpha is most relevant to teams experimenting with:
+- **[Self-Service Start](docs/SELF_SERVICE_START.md)** — installation and project setup;
+- **[Five-Minute Start](docs/QUICKSTART_5_MIN.md)** — controlled PASS → REVIEW demonstration;
+- **[Independent Evaluation](docs/INDEPENDENT_EVALUATION.md)** — third-party evaluation protocol;
+- **[Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md)** — machine-readable evidence workflow.
 
-- dependency-update CI;
-- build and test pipelines;
-- developer tools;
-- AI tooling that launches subprocesses;
-- security-sensitive automation.
+Negative, partial, unsupported-environment, usability and performance-problem results are welcome. A self-evaluation PASS is not evidence of independent adoption.
 
-We are looking for compatibility evidence and workflow feedback, not testimonials.
+## Distribution and verification
 
-No prior contact is required. Follow the **[Independent Evaluation guide](docs/INDEPENDENT_EVALUATION.md)** and submit the observed result through the **[Independent Evaluation issue form](https://github.com/AETHERXGLOBAL/execsurface/issues/new/choose)**. Negative, partial, unsupported-environment, usability, and performance-problem results are explicitly welcome.
+The public alpha is available through:
 
-ExecSurface detects **observed execution-surface drift under its recorded observer and policy**. It does not prove that a program is safe.
+- checksum-verified GitHub Release binary for Linux x86_64;
+- `cargo install execsurface --locked` for Rust users;
+- GitHub Action `AETHERXGLOBAL/execsurface@v0.1`.
 
-You can also read the public adopter call in [Issue #28](https://github.com/AETHERXGLOBAL/execsurface/issues/28).
+The release process gates the immutable binary and Action consumer paths before promoting the stable `v0.1` channel. For maximum Action pinning, use `AETHERXGLOBAL/execsurface@v0.1.0-alpha.3`.
+
+Optional GitHub build provenance verification for the downloaded release archive:
+
+```bash
+gh attestation verify "$ASSET" -R AETHERXGLOBAL/execsurface
+```
+
+A valid attestation links the artifact to its build source/workflow. It does **not** prove the binary is safe.
 
 ## Documentation
 
 - [Self-Service Start](docs/SELF_SERVICE_START.md)
-- [Independent Evaluation](docs/INDEPENDENT_EVALUATION.md)
 - [Five-Minute Start](docs/QUICKSTART_5_MIN.md)
-- [Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md)
-- [GitHub Discovery and Marketplace Readiness](docs/GITHUB_DISCOVERY.md)
-- [Troubleshooting](docs/TROUBLESHOOTING.md)
-- [Command examples](docs/EXAMPLES.md)
 - [GitHub Action](docs/GITHUB_ACTION.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Independent Evaluation](docs/INDEPENDENT_EVALUATION.md)
+- [Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md)
+- [Command examples](docs/EXAMPLES.md)
 - [crates.io Publishing](docs/CRATES_IO_PUBLISHING.md)
-- [M6.6 distribution architecture](docs/milestones/M6_6_DISTRIBUTION_ARCHITECTURE.md)
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 - [Support](SUPPORT.md)
