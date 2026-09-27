@@ -1,5 +1,14 @@
 blank_issues_enabled: true
 contact_links:
+  - name: Independent Evaluation Guide
+    url: https://github.com/AETHERXGLOBAL/execsurface/blob/main/docs/INDEPENDENT_EVALUATION.md
+    about: Evaluate ExecSurface independently without prior contact with AETHER X.
+  - name: Self-Service Start
+    url: https://github.com/AETHERXGLOBAL/execsurface/blob/main/docs/SELF_SERVICE_START.md
+    about: Install and start using ExecSurface without signup, API keys, meetings, or approval.
+  - name: Five-Minute Start
+    url: https://github.com/AETHERXGLOBAL/execsurface/blob/main/docs/QUICKSTART_5_MIN.md
+    about: Run the shortest controlled-drift demonstration.
   - name: Troubleshooting
     url: https://github.com/AETHERXGLOBAL/execsurface/blob/main/docs/TROUBLESHOOTING.md
     about: Check actionable installation, ptrace, baseline, policy and CI guidance first.
