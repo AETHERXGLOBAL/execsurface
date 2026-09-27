@@ -1,0 +1,169 @@
+name: Post-M9 ptrace memory-read Candidate B activation v2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/post-m9-ptrace-memory-read-b-activation-v2.yml
+      - experiments/post_m9_memory_read_batching/apply_candidate_b.py
+      - experiments/post_m9_memory_read_batching/b_helper.c
+      - docs/milestones/POST_M9_PTRACE_MEMORY_READ_BATCHING_PARITY_ATTEMPT1_RESULT.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  activation-and-privacy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      REF_BIN: /tmp/execsurface-b-reference
+      CAND_BIN: /tmp/execsurface-b-candidate
+      B_HELPER: /tmp/execsurface-b-helper
+      EVIDENCE: post-m9-ptrace-memory-read-b-activation-v2
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Freeze environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc strace
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'source_sha=%s\n' "$GITHUB_SHA"
+            printf 'candidate=B\n'
+            printf 'scope=activation_and_privacy_diagnostic_only\n'
+            printf 'descendant_strace_follow=false\n'
+            printf 'public_runtime_modified=false\n'
+            printf 'performance_evaluated=false\n'
+          } > "$EVIDENCE/environment.txt"
+
+      - name: Build frozen reference and helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" build --locked --release -p execsurface --bin execsurface
+          cp target/release/execsurface "$REF_BIN"
+          gcc -O2 -Wall -Wextra -Werror -pthread \
+            experiments/post_m9_memory_read_batching/b_helper.c -o "$B_HELPER"
+          sha256sum "$REF_BIN" "$B_HELPER" \
+            experiments/post_m9_memory_read_batching/b_helper.c \
+            experiments/post_m9_memory_read_batching/apply_candidate_b.py \
+            > "$EVIDENCE/reference-inputs.sha256"
+
+      - name: Apply Candidate B only inside runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp crates/execsurface-observe/src/linux_ptrace.rs "$EVIDENCE/linux_ptrace.reference.rs"
+          python3 experiments/post_m9_memory_read_batching/apply_candidate_b.py
+          cargo "+$RUST_TOOLCHAIN" fmt --all
+          git diff --check
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs > "$EVIDENCE/candidate-b.patch"
+          test -s "$EVIDENCE/candidate-b.patch"
+          cargo "+$RUST_TOOLCHAIN" build --locked --release -p execsurface --bin execsurface
+          cp target/release/execsurface "$CAND_BIN"
+          sha256sum "$CAND_BIN" "$EVIDENCE/candidate-b.patch" > "$EVIDENCE/candidate-inputs.sha256"
+
+      - name: Corrected activation and privacy diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$EVIDENCE/activation"
+          mkdir -p "$root"
+          for mode in reference candidate; do
+            if [ "$mode" = reference ]; then exe="$REF_BIN"; else exe="$CAND_BIN"; fi
+            for case in string-short fixed-openat2-normal; do
+              # Deliberately do NOT use strace -f. Following the tracee child would
+              # seize it before PTRACE_TRACEME and corrupt the observer protocol.
+              strace -qq -s 256 -o "$root/${mode}-${case}.strace" \
+                -e trace=ptrace,process_vm_readv \
+                "$exe" observe -- "$B_HELPER" "$case" \
+                > "$root/${mode}-${case}.json" \
+                2> "$root/${mode}-${case}.stderr"
+            done
+          done
+
+          python3 - "$root" <<'PY'
+          import json,re,sys
+          from pathlib import Path
+
+          root=Path(sys.argv[1])
+          cases=('string-short','fixed-openat2-normal')
+          result={}
+
+          for mode in ('reference','candidate'):
+              result[mode]={}
+              for case in cases:
+                  d=json.load(open(root/f'{mode}-{case}.json'))
+                  if d.get('complete') is not True:
+                      raise SystemExit(f'incomplete activation observation: {mode}-{case}: {d.get("warnings")}')
+                  if d.get('warnings') != []:
+                      raise SystemExit(f'activation warnings: {mode}-{case}: {d.get("warnings")}')
+                  if d.get('outcome') != {'exit_code':0,'signal':None}:
+                      raise SystemExit(f'activation outcome mismatch: {mode}-{case}: {d.get("outcome")}')
+                  text=(root/f'{mode}-{case}.strace').read_text(errors='replace')
+                  result[mode][case]={
+                      'peekdata':len(re.findall(r'ptrace\(PTRACE_PEEKDATA,',text)),
+                      'process_vm_readv':len(re.findall(r'\bprocess_vm_readv\(',text)),
+                  }
+
+          for case in cases:
+              r=result['reference'][case]
+              c=result['candidate'][case]
+              if r['process_vm_readv'] != 0:
+                  raise SystemExit(f'reference unexpectedly used process_vm_readv: {case}: {r}')
+              if c['process_vm_readv'] <= 0:
+                  raise SystemExit(f'candidate process_vm_readv not activated: {case}: {c}')
+              if c['peekdata'] >= r['peekdata']:
+                  raise SystemExit(f'candidate did not reduce PEEKDATA: {case}: ref={r} cand={c}')
+
+          string_text=(root/'candidate-string-short.strace').read_text(errors='replace')
+          string_lens=[int(x) for x in re.findall(r'iov_len=(\d+)',string_text)]
+          if not string_lens or max(string_lens) > 8:
+              raise SystemExit(f'C-string request footprint exceeded c_long: {string_lens[:40]}')
+
+          fixed_text=(root/'candidate-fixed-openat2-normal.strace').read_text(errors='replace')
+          fixed_lens=[int(x) for x in re.findall(r'iov_len=(\d+)',fixed_text)]
+          if 24 not in fixed_lens:
+              raise SystemExit(f'24-byte fixed metadata batch not observed: {fixed_lens[:80]}')
+
+          result['privacy']={
+              'string_iov_max':max(string_lens),
+              'required_max':8,
+              'pass':True,
+          }
+          result['fixed_batch_24_observed']=True
+          result['classification']='ACTIVATION_AND_PRIVACY_DIAGNOSTIC_PASS'
+          (root/'summary.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(result,indent=2,sort_keys=True))
+          PY
+
+      - name: Record evidence identity
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git status --short > "$EVIDENCE/working-tree-status.txt" || true
+          sha256sum "$EVIDENCE/candidate-b.patch" > "$EVIDENCE/candidate-b.patch.sha256" || true
+
+      - name: Upload Candidate B activation evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-m9-ptrace-memory-read-b-activation-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-m9-ptrace-memory-read-b-activation-v2
+          if-no-files-found: error
+          retention-days: 30
