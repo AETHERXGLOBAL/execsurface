@@ -1,0 +1,90 @@
+name: Post-M9 ptrace fast-path semantic gate
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - experiments/post_m9_ptrace_phase_aware_exit_fastpath.patch
+      - .github/workflows/post-m9-ptrace-fastpath-semantic.yml
+      - docs/milestones/POST_M9_PTRACE_PHASE_AWARE_EXIT_FASTPATH_PROTOCOL.md
+      - docs/milestones/POST_M9_PTRACE_FASTPATH_TEST_MATRIX.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate-existing-suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+
+    steps:
+      - name: Checkout frozen candidate source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+
+      - name: Apply Candidate A only inside this job
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch=experiments/post_m9_ptrace_phase_aware_exit_fastpath.patch
+          test -f "$patch"
+          git apply --check "$patch"
+          git apply "$patch"
+          git diff --check
+          test -n "$(git diff -- crates/execsurface-observe/src/linux_ptrace.rs)"
+
+      - name: Formatting and lint gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" fmt --all -- --check
+          cargo "+$RUST_TOOLCHAIN" clippy --locked -p execsurface-observe --all-targets -- -D warnings
+
+      - name: Existing ptrace semantic fixture suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test --locked -p execsurface-observe --test ptrace_linux -- --nocapture
+
+      - name: Observer crate tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo "+$RUST_TOOLCHAIN" test --locked -p execsurface-observe
+
+      - name: Record candidate diff
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p post-m9-fastpath-semantic
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs > post-m9-fastpath-semantic/candidate.diff || true
+          {
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'base_sha=%s\n' "$GITHUB_SHA"
+            printf 'candidate_patch=%s\n' 'experiments/post_m9_ptrace_phase_aware_exit_fastpath.patch'
+            printf 'public_runtime_modified=false\n'
+            printf 'performance_evaluated=false\n'
+          } > post-m9-fastpath-semantic/identity.txt
+
+      - name: Upload semantic smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-m9-ptrace-fastpath-semantic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: post-m9-fastpath-semantic
+          if-no-files-found: error
+          retention-days: 30
