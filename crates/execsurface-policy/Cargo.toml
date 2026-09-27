@@ -9,6 +9,6 @@ description = "Deterministic policy and verdict engine for AETHER X ExecSurface"
 readme.workspace = true
 
 [dependencies]
-execsurface-diff = { path = "../execsurface-diff", version = "=0.1.0-alpha.2" }
-execsurface-model = { path = "../execsurface-model", version = "=0.1.0-alpha.2" }
+execsurface-diff = { path = "../execsurface-diff", version = "=0.1.0-alpha.3" }
+execsurface-model = { path = "../execsurface-model", version = "=0.1.0-alpha.3" }
 serde.workspace = true
