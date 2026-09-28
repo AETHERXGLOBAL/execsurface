@@ -358,11 +358,15 @@ mod tests {
         let contract = ptrace_contract_v1();
         assert_eq!(
             contract.support_for(EvidenceProposition::ProcessExecAttemptPath),
-            Some(PropositionSupport::Supported(EvidenceAuthority::ArgumentObserved))
+            Some(PropositionSupport::Supported(
+                EvidenceAuthority::ArgumentObserved
+            ))
         );
         assert_eq!(
             contract.support_for(EvidenceProposition::FilePathAccessIntent),
-            Some(PropositionSupport::Supported(EvidenceAuthority::ArgumentObserved))
+            Some(PropositionSupport::Supported(
+                EvidenceAuthority::ArgumentObserved
+            ))
         );
         assert_eq!(
             contract.support_for(EvidenceProposition::ProcessExecObjectIdentity),
@@ -399,7 +403,9 @@ mod tests {
         let contract = ptrace_contract_v1();
         assert_eq!(
             contract.support_for(EvidenceProposition::NetworkConnectAttemptDestination),
-            Some(PropositionSupport::Supported(EvidenceAuthority::ArgumentObserved))
+            Some(PropositionSupport::Supported(
+                EvidenceAuthority::ArgumentObserved
+            ))
         );
         assert_eq!(
             contract.support_for(EvidenceProposition::NetworkConnectSuccess),
@@ -433,8 +439,9 @@ mod tests {
 
     #[test]
     fn only_explicit_equivalence_allows_symmetric_baseline_reuse() {
-        assert!(PropositionComparability::EquivalentForProposition
-            .permits_symmetric_baseline_reuse());
+        assert!(
+            PropositionComparability::EquivalentForProposition.permits_symmetric_baseline_reuse()
+        );
         assert!(!PropositionComparability::OneWayRefinement.permits_symmetric_baseline_reuse());
         assert!(!PropositionComparability::NotComparable.permits_symmetric_baseline_reuse());
         assert!(!PropositionComparability::Unknown.permits_symmetric_baseline_reuse());
