@@ -48,9 +48,6 @@ jobs:
           CONFIG="/boot/config-${VERSION}"
           test -r "$CONFIG"
 
-          # The hosted runner may deliberately protect files under /boot.  Copy the
-          # intentionally installed generic kernel into this disposable workspace;
-          # do not relax host permissions or modify the host kernel configuration.
           GUEST_KERNEL="$GITHUB_WORKSPACE/m10-3b-artifacts/vmlinuz-${VERSION}"
           sudo cp "$SOURCE_KERNEL" "$GUEST_KERNEL"
           sudo chown "$(id -u):$(id -g)" "$GUEST_KERNEL"
@@ -65,7 +62,6 @@ jobs:
           python3 - "$CONFIG" <<'PY'
           import json, sys
           from pathlib import Path
-
           cfg = Path(sys.argv[1]).read_text().splitlines()
           values = {}
           for line in cfg:
@@ -75,12 +71,10 @@ jobs:
           required = ['CONFIG_BPF', 'CONFIG_BPF_SYSCALL', 'CONFIG_BPF_LSM']
           present = {k: values.get(k, '<unset>') for k in required}
           capable = all(present[k] == 'y' for k in required)
-          result = {
+          Path('m10-3b-artifacts/kernel-config-gate.json').write_text(json.dumps({
               'required_config': present,
               'kernel_config_capable': capable,
-          }
-          Path('m10-3b-artifacts/kernel-config-gate.json').write_text(json.dumps(result, indent=2) + '\n')
-          print(json.dumps(result, indent=2))
+          }, indent=2) + '\n')
           PY
 
           if python3 - <<'PY'
@@ -118,11 +112,11 @@ jobs:
           mount -t securityfs securityfs /sys/kernel/security || true
 
           echo 'M10_3B_PROBE_BEGIN'
-          echo -n 'M10_3B_CMDLINE='
-          cat /proc/cmdline || true
+          CMDLINE="$(cat /proc/cmdline 2>/dev/null || true)"
+          echo "M10_3B_CMDLINE=$CMDLINE"
           if [ -r /sys/kernel/security/lsm ]; then
-            echo -n 'M10_3B_LSM_LIST='
-            cat /sys/kernel/security/lsm
+            LSM_LIST="$(cat /sys/kernel/security/lsm)"
+            echo "M10_3B_LSM_LIST=$LSM_LIST"
           else
             echo 'M10_3B_LSM_LIST=<unreadable>'
           fi
@@ -188,7 +182,6 @@ jobs:
           python3 - <<'PY'
           import json, re
           from pathlib import Path
-
           artifacts = Path('m10-3b-artifacts')
           cfg_path = artifacts / 'kernel-config-gate.json'
           cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {
