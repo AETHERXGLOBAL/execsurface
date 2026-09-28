@@ -1,0 +1,107 @@
+name: OpenSSF zero-assistance self-service rehearsal
+
+on:
+  push:
+    branches:
+      - external/openssf-engagement-alpha4
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-docs-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Record clean environment
+        run: |
+          set -euo pipefail
+          uname -a | tee environment.txt
+          uname -m | tee -a environment.txt
+          cat /etc/os-release | tee -a environment.txt
+
+      - name: Install exact public alpha.4 release without repository source
+        run: |
+          set -euo pipefail
+          VERSION=v0.1.0-alpha.4
+          TARGET=x86_64-unknown-linux-gnu
+          ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
+          curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}"
+          curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}.sha256"
+          sha256sum -c "${ASSET}.sha256" | tee checksum.txt
+          tar -xzf "${ASSET}"
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 "execsurface-${VERSION}-${TARGET}/execsurface" "$HOME/.local/bin/execsurface"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Version and doctor from public binary
+        run: |
+          set -euo pipefail
+          execsurface --version | tee version.txt
+          test "$(execsurface --version)" = "execsurface 0.1.0-alpha.4"
+          execsurface doctor | tee doctor.txt
+
+      - name: Learn accepted surface exactly as public pack states
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/execsurface-openssf-review
+          mkdir -p /tmp/execsurface-openssf-review
+          cd /tmp/execsurface-openssf-review
+          /usr/bin/time -f 'learn_elapsed_seconds=%e' -o learn-time.txt \
+            execsurface learn -- /bin/bash -lc 'true' | tee learn.txt
+          test -s execsurface.lock.json
+
+      - name: Unchanged check must PASS
+        run: |
+          set -euo pipefail
+          cd /tmp/execsurface-openssf-review
+          /usr/bin/time -f 'pass_elapsed_seconds=%e' -o pass-time.txt \
+            execsurface check \
+              --json-output pass-report.json \
+              --markdown-output pass-report.md \
+              -- /bin/bash -lc 'true' | tee pass.txt
+          grep -F 'ExecSurface: PASS' pass.txt
+          test -s pass-report.json
+          test -s pass-report.md
+
+      - name: Controlled runtime drift must REVIEW with exit 10
+        run: |
+          set -euo pipefail
+          cd /tmp/execsurface-openssf-review
+          set +e
+          /usr/bin/time -f 'drift_elapsed_seconds=%e' -o drift-time.txt \
+            execsurface check \
+              --json-output drift-report.json \
+              --markdown-output drift-report.md \
+              -- /bin/bash -lc 'true; /bin/echo controlled-drift >/dev/null' > drift.txt 2>&1
+          rc=$?
+          set -e
+          cat drift.txt
+          printf 'drift_exit=%s\n' "$rc" | tee drift-exit.txt
+          test "$rc" -eq 10
+          grep -F 'ExecSurface: REVIEW' drift.txt
+          test -s drift-report.json
+          test -s drift-report.md
+
+      - name: Preserve evaluator evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p openssf-rehearsal-evidence
+          cp -f environment.txt openssf-rehearsal-evidence/ 2>/dev/null || true
+          cp -f checksum.txt version.txt doctor.txt openssf-rehearsal-evidence/ 2>/dev/null || true
+          if [ -d /tmp/execsurface-openssf-review ]; then
+            cp -f /tmp/execsurface-openssf-review/*.txt openssf-rehearsal-evidence/ 2>/dev/null || true
+            cp -f /tmp/execsurface-openssf-review/*.json openssf-rehearsal-evidence/ 2>/dev/null || true
+            cp -f /tmp/execsurface-openssf-review/*.md openssf-rehearsal-evidence/ 2>/dev/null || true
+          fi
+          sha256sum openssf-rehearsal-evidence/* > openssf-rehearsal-evidence/SHA256SUMS.txt 2>/dev/null || true
+
+      - name: Upload rehearsal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openssf-zero-assistance-alpha4-${{ github.run_id }}
+          path: openssf-rehearsal-evidence
+          if-no-files-found: error

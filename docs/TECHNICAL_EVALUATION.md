@@ -1,26 +1,42 @@
-# ExecSurface — Technical Evaluation Pack v1
+# ExecSurface — Technical Evaluation Pack
 
-**Purpose:** let an external engineer independently reproduce one unchanged-runtime PASS and one controlled runtime-drift REVIEW in roughly 5–10 minutes, with machine-readable evidence.
+**Purpose:** let an external engineer independently reproduce one unchanged-runtime PASS and one controlled runtime-drift REVIEW in roughly 5–10 minutes, with machine-readable evidence and without AETHER X assistance.
 
-**Current boundary:** Linux x86_64 Public Alpha. This evaluation is not a malware test, sandbox, EDR assessment, or proof of program safety.
+**Current public release:** `v0.1.0-alpha.4`
+
+**Current boundary:** Linux x86_64 Public Alpha. Native `ptrace` is the public default/reference observer. This evaluation is not a malware test, sandbox, EDR assessment, enforcement-system test, or proof of program safety.
 
 ## What this evaluation demonstrates
 
 The evaluator will:
 
-1. install the exact published crates.io evaluation release;
+1. install the exact published alpha.4 binary and verify its checksum;
 2. verify environment readiness;
 3. learn an explicit tiny baseline;
 4. re-run the same command and obtain `PASS`;
-5. change runtime behavior while keeping the same shell wrapper shape and obtain `REVIEW`;
+5. change runtime behavior and obtain `REVIEW`;
 6. preserve JSON and Markdown verdict reports for inspection.
+
+A failure, unsupported environment, incomplete observation or unexpected result is valid evaluation evidence. Do not weaken host security settings, policy, or baseline to manufacture PASS.
 
 ## 1. Install the exact public evaluation release
 
-For a reproducible evaluation, pin the current public alpha:
+No Rust toolchain is required for the primary evaluation path.
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.3" --locked
+VERSION=v0.1.0-alpha.4
+TARGET=x86_64-unknown-linux-gnu
+ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
+
+curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}"
+curl -fLO "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${VERSION}/${ASSET}.sha256"
+sha256sum -c "${ASSET}.sha256"
+tar -xzf "${ASSET}"
+
+mkdir -p "$HOME/.local/bin"
+install -m 0755 "execsurface-${VERSION}-${TARGET}/execsurface" "$HOME/.local/bin/execsurface"
+export PATH="$HOME/.local/bin:$PATH"
+
 execsurface --version
 execsurface doctor
 ```
@@ -28,27 +44,43 @@ execsurface doctor
 Expected version:
 
 ```text
-execsurface 0.1.0-alpha.3
+execsurface 0.1.0-alpha.4
 ```
 
-The repository README may show the shorter normal-user install command. The evaluator path intentionally pins the version so that a later registry release cannot silently change the artifact under evaluation.
+Optional build-provenance verification when GitHub CLI attestation support is available:
 
-`doctor` is diagnostic only. It does not elevate privileges or weaken host security settings.
+```bash
+gh attestation verify "$ASSET" -R AETHERXGLOBAL/execsurface
+```
+
+A valid build attestation binds an artifact to a build source/workflow. It does not establish that the artifact is safe.
+
+### Rust-native alternative
+
+If Rust/Cargo is already installed:
+
+```bash
+cargo install execsurface --version "=0.1.0-alpha.4" --locked
+execsurface --version
+execsurface doctor
+```
+
+If either public installation path fails, retain that failure rather than substituting an internal build.
 
 ## 2. Create an isolated evaluation workspace
 
 ```bash
+rm -rf /tmp/execsurface-technical-evaluation
 mkdir -p /tmp/execsurface-technical-evaluation
 cd /tmp/execsurface-technical-evaluation
 ```
 
 ## 3. Learn the accepted baseline
 
-Use the same `/bin/bash -lc` wrapper used by the GitHub Action:
+Use the same `/bin/bash -lc` wrapper used by the public GitHub Action:
 
 ```bash
-execsurface learn -- \
-  /bin/bash -lc 'true'
+execsurface learn -- /bin/bash -lc 'true'
 ```
 
 Expected artifact:
@@ -76,9 +108,9 @@ ExecSurface: PASS
 
 Expected process exit status: `0`.
 
-## 5. Introduce deterministic controlled drift
+If observation is incomplete, `ERROR`/non-PASS is the correct conservative outcome and should be reported.
 
-The executable and argument count remain comparable, but the shell now performs an additional execution effect:
+## 5. Introduce deterministic controlled drift
 
 ```bash
 set +e
@@ -91,15 +123,14 @@ set -e
 printf 'ExecSurface exit status: %s\n' "$status"
 ```
 
-With the built-in unmatched-drift review policy, the expected verdict is:
+With the built-in unmatched-drift review policy, the expected result in the supported evaluation environment is:
 
 ```text
 ExecSurface: REVIEW
+ExecSurface exit status: 10
 ```
 
-Expected process exit status: `10`.
-
-`REVIEW` means the observed execution surface differs from the accepted baseline and requires review under the selected policy. It does not mean the command is malicious.
+`REVIEW` means the observed execution surface differs from the accepted baseline under the declared policy. It does not mean the command is malicious.
 
 ## 6. Evidence to retain
 
@@ -121,31 +152,51 @@ uname -a
 sha256sum execsurface.lock.json pass-report.json drift-report.json
 ```
 
-The JSON verdict reports are the primary machine-readable evaluation evidence. The Markdown files are human-readable summaries of the same bounded verdict surface.
+Record whether the evidence reports observation as complete or incomplete and retain any warning/error text.
 
 ## 7. What to inspect
 
-An evaluator should inspect at least:
+Inspect at least:
 
-- the installed version identity;
-- the baseline digest;
-- the declared command identity;
-- added / removed / changed effects;
+- installed version identity;
+- declared command identity;
+- baseline digest;
+- observer identity/capabilities/limitations;
+- added / removed / changed observed effects;
 - matched policy rules or default action;
 - target exit status;
-- observer identity, capabilities and limitations represented in the evidence surface.
+- observation completeness/health;
+- usability friction and runtime overhead noticeable to the evaluator.
 
-## 8. What a successful evaluation establishes
+## 8. Current authority and limitation notes
+
+The public alpha.4 reference backend is native `ptrace`.
+
+Important boundaries:
+
+- pathname copied at syscall entry is pathname access-attempt metadata, not kernel-object identity;
+- known pathname-pointer TOCTOU remains an architectural limitation;
+- shared-FD concurrency is conservatively fail-closed when attribution cannot be justified; this prevents the known false-completeness class but can create false incompleteness;
+- this is not an exact shared-FD attribution repair;
+- incomplete evidence cannot silently become PASS;
+- BPF-LSM/kernel-hook work remains research/managed and non-default;
+- no automatic hybrid selection or ptrace↔hybrid baseline interchangeability is authorized;
+- Linux x86_64 is the current public support scope.
+
+See `docs/architecture/PTRACE_VS_LSM_ARCHITECTURE_REVIEW.md` and `docs/releases/v0.1.0-alpha.4.md`.
+
+## 9. What a successful evaluation establishes
 
 A successful run supports only a bounded statement such as:
 
-> The evaluator installed the exact public ExecSurface evaluation release, learned an accepted runtime surface, reproduced an unchanged PASS, introduced controlled runtime drift, and obtained a machine-readable REVIEW under the declared policy.
+> The evaluator installed the exact public ExecSurface alpha.4 release, learned an accepted runtime surface, reproduced an unchanged PASS, introduced controlled runtime drift, and obtained a machine-readable REVIEW under the declared policy in the recorded environment.
 
 It does **not** establish:
 
 - that the changed command is malicious;
 - that the unchanged command is safe;
 - that all possible runtime behavior was observed;
+- universal Linux/container compatibility;
 - production readiness;
 - third-party adoption;
 - endorsement of AETHER X.
@@ -158,14 +209,10 @@ It does **not** establish:
 
 `SELF-EVALUATION PASS ≠ INDEPENDENT ADOPTION`
 
-## 9. Independent external evidence
+## 10. Independent external evidence
 
-If you run this evaluation outside AETHER X and are willing to make the result public, preserve a link to the repository/CI run and the resulting evidence artifacts.
+If you run this evaluation outside AETHER X and are willing to share the result, preserve the environment, commands, verdict reports, failures/friction and enough reproduction detail for another developer to repeat it.
 
-Independent external evidence is counted only when it originates from or is confirmed by an external project or evaluator. Stars, impressions, private praise and AETHER X self-tests do not count.
+Independent external evidence is counted only when it originates from or is confirmed by an external evaluator. Stars, impressions, private praise and AETHER X self-tests do not count.
 
-For the shortest controlled demo path, also see [`QUICKSTART_5_MIN.md`](./QUICKSTART_5_MIN.md). The current public release is `v0.1.0-alpha.3`.
-
----
-
-**Related tracking:** Issue #32 — Technical Evaluation Pack v1.
+For the shortest controlled demo path, see [`QUICKSTART_5_MIN.md`](./QUICKSTART_5_MIN.md).
