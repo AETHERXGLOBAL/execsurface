@@ -1,0 +1,162 @@
+name: M10.4 hybrid exec authority
+
+on:
+  push:
+    branches: [research/m10-hybrid-observer-m104]
+    paths:
+      - '.github/workflows/m10-4-hybrid-exec-authority.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exec-authority:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install frozen dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p m10-4-artifacts
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 busybox-static cpio clang llvm \
+            linux-tools-generic gcc pkg-config libbpf-dev libelf-dev zlib1g-dev libc6-dev
+          BPFTOOL="$(find /usr/lib -type f -name bpftool -perm -111 -print | sort -V | tail -n1)"
+          test -n "$BPFTOOL"
+          echo "BPFTOOL=$BPFTOOL" >> "$GITHUB_ENV"
+          "$BPFTOOL" version | tee m10-4-artifacts/bpftool-version.txt
+          qemu-system-x86_64 --version | tee m10-4-artifacts/qemu-version.txt
+
+      - name: Build hybrid exec probe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          DIR="$GITHUB_WORKSPACE/experiments/m10/bpf-lsm-exec"
+          "$BPFTOOL" btf dump file /sys/kernel/btf/vmlinux format c > "$DIR/vmlinux.h"
+          clang -g -O2 -target bpf -D__TARGET_ARCH_x86 \
+            -I"$DIR" -I/usr/include/$(uname -m)-linux-gnu \
+            -c "$DIR/bpf_lsm_exec.bpf.c" -o "$DIR/bpf_lsm_exec.bpf.o"
+          "$BPFTOOL" gen skeleton "$DIR/bpf_lsm_exec.bpf.o" > "$DIR/bpf_lsm_exec.skel.h"
+          STATIC_LIBS="$(pkg-config --static --libs libbpf)"
+          gcc -O2 -g -Wall -Wextra -Werror -static \
+            -I"$DIR" "$DIR/loader.c" -o "$DIR/m10_bpf_lsm_exec" \
+            $STATIC_LIBS -pthread
+          file "$DIR/m10_bpf_lsm_exec" | tee m10-4-artifacts/loader-file.txt
+          file "$DIR/m10_bpf_lsm_exec" | grep -q 'statically linked'
+          sha256sum "$DIR/bpf_lsm_exec.bpf.c" "$DIR/loader.c" \
+            "$DIR/bpf_lsm_exec.bpf.o" "$DIR/m10_bpf_lsm_exec" \
+            | tee m10-4-artifacts/build-sha256.txt
+
+      - name: Acquire BPF-LSM-capable guest kernel
+        id: kernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          KERNEL_PKG="$(apt-cache show linux-image-generic | sed -n 's/^Depends: \(linux-image-[^, ]*-generic\).*/\1/p' | head -n1)"
+          test -n "$KERNEL_PKG"
+          KDIR="$RUNNER_TEMP/kernel"; KX="$RUNNER_TEMP/kernel-x"
+          BDIR="$RUNNER_TEMP/buildinfo"; BX="$RUNNER_TEMP/buildinfo-x"
+          mkdir -p "$KDIR" "$KX" "$BDIR" "$BX"
+          (cd "$KDIR" && apt-get download "$KERNEL_PKG")
+          KDEB="$(find "$KDIR" -name '*.deb' -print -quit)"
+          dpkg-deb -x "$KDEB" "$KX"
+          SOURCE_KERNEL="$(find "$KX/boot" -name 'vmlinuz-*-generic' | sort -V | tail -n1)"
+          VERSION="${SOURCE_KERNEL##*/vmlinuz-}"
+          (cd "$BDIR" && apt-get download "linux-buildinfo-${VERSION}")
+          BDEB="$(find "$BDIR" -name '*.deb' -print -quit)"
+          dpkg-deb -x "$BDEB" "$BX"
+          CONFIG="$(find "$BX" -type f \( -name config -o -name "config-${VERSION}" \) -print -quit)"
+          test -n "$SOURCE_KERNEL"; test -n "$CONFIG"
+          for x in CONFIG_BPF=y CONFIG_BPF_SYSCALL=y CONFIG_BPF_LSM=y; do grep -qx "$x" "$CONFIG"; done
+          GUEST_KERNEL="$GITHUB_WORKSPACE/m10-4-artifacts/vmlinuz-${VERSION}"
+          cp "$SOURCE_KERNEL" "$GUEST_KERNEL"; chmod 0644 "$GUEST_KERNEL"
+          cp "$CONFIG" m10-4-artifacts/guest-kernel-config.txt
+          echo "$VERSION" | tee m10-4-artifacts/guest-kernel-version.txt
+          echo "kernel=$GUEST_KERNEL" >> "$GITHUB_OUTPUT"
+
+      - name: Build isolated initramfs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$RUNNER_TEMP/root"
+          mkdir -p "$ROOT"/{bin,dev,proc,sys,sys/kernel/security,tmp}
+          chmod 1777 "$ROOT/tmp"
+          cp /bin/busybox "$ROOT/bin/busybox"
+          for a in sh mount cat echo reboot sync; do ln -s busybox "$ROOT/bin/$a"; done
+          cp experiments/m10/bpf-lsm-exec/m10_bpf_lsm_exec "$ROOT/bin/m10_bpf_lsm_exec"
+          cat > "$ROOT/init" <<'EOF'
+          #!/bin/sh
+          set -eu
+          export PATH=/bin
+          mount -t proc proc /proc
+          mount -t sysfs sysfs /sys
+          mkdir -p /sys/kernel/security
+          mount -t securityfs securityfs /sys/kernel/security || true
+          mount -t devtmpfs devtmpfs /dev || true
+          echo M10_4_PROBE_BEGIN
+          echo "M10_4_LSM_LIST=$(cat /sys/kernel/security/lsm 2>/dev/null || echo '<unreadable>')"
+          if [ -r /sys/kernel/btf/vmlinux ]; then echo M10_4_BTF_READABLE=true; else echo M10_4_BTF_READABLE=false; fi
+          set +e
+          /bin/m10_bpf_lsm_exec
+          RC=$?
+          set -e
+          echo "M10_4_LOADER_RC=$RC"
+          echo M10_4_PROBE_COMPLETE
+          sync
+          reboot -f
+          EOF
+          chmod 0755 "$ROOT/init"
+          (cd "$ROOT" && find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip -9 > "$GITHUB_WORKSPACE/m10-4-artifacts/initramfs.cpio.gz")
+          sha256sum m10-4-artifacts/initramfs.cpio.gz | tee m10-4-artifacts/initramfs.sha256
+
+      - name: Execute frozen proposition
+        shell: bash
+        run: |
+          set -uo pipefail
+          LOG=m10-4-artifacts/guest-serial.log
+          set +e
+          timeout 180s qemu-system-x86_64 -machine accel=tcg -cpu max -m 768M -nographic -no-reboot \
+            -kernel '${{ steps.kernel.outputs.kernel }}' \
+            -initrd m10-4-artifacts/initramfs.cpio.gz \
+            -append 'console=ttyS0 panic=-1 lsm=bpf' > "$LOG" 2>&1
+          echo $? > m10-4-artifacts/qemu-exit-code.txt
+          set -e
+          cat "$LOG"
+
+      - name: Frozen evaluator
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          A=Path('m10-4-artifacts'); log=(A/'guest-serial.log').read_text(errors='replace') if (A/'guest-serial.log').exists() else ''
+          def one(p):
+              m=re.search(p,log,re.M); return m.group(1) if m else None
+          lsm=one(r'^M10_4_LSM_LIST=(.*)$') or '<missing>'
+          bpf='bpf' in [x.strip() for x in lsm.split(',')]
+          btf='M10_4_BTF_READABLE=true' in log; complete='M10_4_PROBE_COMPLETE' in log
+          cand=one(r'^classification_candidate=(\S+)$')
+          rc=one(r'^M10_4_LOADER_RC=(\d+)$'); rc=int(rc) if rc else None
+          allowed={'M10_4_HYBRID_EXEC_MATCH','M10_4_EXEC_OBJECT_MISMATCH','M10_4_FAILED_EXEC_FALSE_PROMOTION','M10_4_EVIDENCE_INCOMPLETE'}
+          if bpf and btf and complete and cand in allowed: cls=cand
+          elif complete and not bpf: cls='M10_4_ENVIRONMENT_BLOCKED'
+          elif rc==42: cls='M10_4_ENVIRONMENT_BLOCKED'
+          else: cls='M10_4_INFRA_FAILURE'
+          r={'classification':cls,'active_lsms':lsm,'bpf_lsm_active':bpf,'btf_readable':btf,'probe_complete':complete,'loader_rc':rc,'public_authority':False,'product_integration_authorized':False}
+          (A/'result.json').write_text(json.dumps(r,indent=2)+'\n'); print(json.dumps(r,indent=2))
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m10-4-hybrid-exec-authority-evidence
+          path: m10-4-artifacts/
+          if-no-files-found: error
