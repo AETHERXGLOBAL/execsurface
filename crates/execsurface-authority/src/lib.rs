@@ -89,6 +89,21 @@ pub enum PropositionSupport {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorityRequirementError {
+    UnsupportedProposition {
+        proposition: EvidenceProposition,
+    },
+    AuthorityMismatch {
+        proposition: EvidenceProposition,
+        required: EvidenceAuthority,
+        actual: EvidenceAuthority,
+    },
+    MissingProposition {
+        proposition: EvidenceProposition,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PropositionAuthority {
     pub proposition: EvidenceProposition,
     pub support: PropositionSupport,
@@ -177,6 +192,32 @@ impl BackendEvidenceContract {
             .iter()
             .find(|entry| entry.proposition == proposition)
             .map(|entry| entry.support)
+    }
+
+    /// Require one exact proposition/authority pair.
+    ///
+    /// M11 intentionally does not define a global authority ranking. A caller
+    /// that needs kernel-object-bound evidence must request that exact class;
+    /// weaker or merely different evidence does not satisfy it implicitly.
+    pub fn require_exact_authority(
+        &self,
+        proposition: EvidenceProposition,
+        required: EvidenceAuthority,
+    ) -> Result<(), AuthorityRequirementError> {
+        match self.support_for(proposition) {
+            Some(PropositionSupport::Supported(actual)) if actual == required => Ok(()),
+            Some(PropositionSupport::Supported(actual)) => {
+                Err(AuthorityRequirementError::AuthorityMismatch {
+                    proposition,
+                    required,
+                    actual,
+                })
+            }
+            Some(PropositionSupport::Unsupported) => {
+                Err(AuthorityRequirementError::UnsupportedProposition { proposition })
+            }
+            None => Err(AuthorityRequirementError::MissingProposition { proposition }),
+        }
     }
 }
 
@@ -378,6 +419,31 @@ mod tests {
                 EvidenceAuthority::KernelObjectSuccessBound
             ))
         );
+    }
+
+    #[test]
+    fn exact_authority_guard_blocks_path_toctou_promotion() {
+        let contract = ptrace_contract_v1();
+        assert!(contract
+            .require_exact_authority(
+                EvidenceProposition::FilePathAccessIntent,
+                EvidenceAuthority::ArgumentObserved,
+            )
+            .is_ok());
+        assert!(matches!(
+            contract.require_exact_authority(
+                EvidenceProposition::FilePathAccessIntent,
+                EvidenceAuthority::KernelObjectSuccessBound,
+            ),
+            Err(AuthorityRequirementError::AuthorityMismatch { .. })
+        ));
+        assert!(matches!(
+            contract.require_exact_authority(
+                EvidenceProposition::ProcessExecObjectIdentity,
+                EvidenceAuthority::KernelObjectSuccessBound,
+            ),
+            Err(AuthorityRequirementError::UnsupportedProposition { .. })
+        ));
     }
 
     #[test]
