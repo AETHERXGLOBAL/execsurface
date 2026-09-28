@@ -125,7 +125,9 @@ fn main() {
         }
         Some("thread-exec-fd") => {
             let path = args.next().expect("file path");
-            let fd = File::open(path).expect("open exec-shared file").into_raw_fd();
+            let fd = File::open(path)
+                .expect("open exec-shared file")
+                .into_raw_fd();
             let fd_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
             assert!(fd_flags >= 0, "F_GETFD");
             assert_eq!(
@@ -139,7 +141,12 @@ fn main() {
                 let exe = CString::new(exe.as_os_str().as_bytes()).expect("executable cstring");
                 let mode = CString::new("read-fd").expect("mode cstring");
                 let fd_arg = CString::new(fd.to_string()).expect("fd cstring");
-                let argv = [exe.as_ptr(), mode.as_ptr(), fd_arg.as_ptr(), std::ptr::null()];
+                let argv = [
+                    exe.as_ptr(),
+                    mode.as_ptr(),
+                    fd_arg.as_ptr(),
+                    std::ptr::null(),
+                ];
                 unsafe {
                     libc::execv(exe.as_ptr(), argv.as_ptr());
                     libc::_exit(127);
