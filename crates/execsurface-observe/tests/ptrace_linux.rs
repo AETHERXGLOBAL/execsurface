@@ -145,7 +145,21 @@ fn tracks_clone_files_shared_fd_reads() {
     .expect("observe");
 
     let expected = path.to_string_lossy();
-    assert!(observation.complete, "{:#?}", observation.warnings);
+    assert!(
+        !observation.complete,
+        "clone-based fd attribution must fail closed after M10.2: {:#?}",
+        observation.warnings
+    );
+    assert_eq!(
+        observation
+            .warnings
+            .iter()
+            .filter(|warning| warning.code == "shared_fd_table_ambiguity")
+            .count(),
+        1,
+        "expected one shared-fd ambiguity warning: {:#?}",
+        observation.warnings
+    );
     let reads = observation
         .events
         .iter()

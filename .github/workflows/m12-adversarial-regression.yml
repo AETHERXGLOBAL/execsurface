@@ -1,0 +1,111 @@
+name: M12 adversarial regression
+
+on:
+  push:
+    branches:
+      - integration/m12-portable-clean
+    paths:
+      - '.github/m12-fixtures/**'
+      - '.github/workflows/m12-adversarial-regression.yml'
+      - 'crates/execsurface-observe/**'
+      - 'README.md'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/m12-fixtures/**'
+      - '.github/workflows/m12-adversarial-regression.yml'
+      - 'crates/execsurface-observe/**'
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  adversarial:
+    name: Adversarial / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v6
+
+      - name: Toolchain and kernel evidence
+        run: |
+          set -euo pipefail
+          uname -a
+          rustc --version --verbose
+          cargo --version
+          cc --version
+
+      - name: Compile bounded adversarial fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -O2 -std=c11 -pthread \
+            .github/m12-fixtures/path_toctou_target.c \
+            -o "$RUNNER_TEMP/m12-path-toctou"
+          cc -O2 -std=c11 -pthread \
+            .github/m12-fixtures/fd_share_race_target.c \
+            -o "$RUNNER_TEMP/m12-fd-share-race"
+          test -x "$RUNNER_TEMP/m12-path-toctou"
+          test -x "$RUNNER_TEMP/m12-fd-share-race"
+
+      - name: Claim-boundary sentinels
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'pathname access attempts;' README.md
+          grep -F 'observed execution-surface drift under its recorded observer and policy' README.md
+          grep -F 'Incomplete evidence cannot silently become PASS.' README.md
+
+      - name: Format adversarial test
+        run: rustfmt --edition 2021 --check crates/execsurface-observe/tests/m12_adversarial.rs
+
+      - name: Clippy observer all targets
+        run: cargo clippy --locked -p execsurface-observe --all-targets -- -D warnings
+
+      - name: Run M12.4 adversarial suite
+        shell: bash
+        env:
+          M12_PATH_TOCTOU_BIN: ${{ runner.temp }}/m12-path-toctou
+          M12_FD_SHARE_BIN: ${{ runner.temp }}/m12-fd-share-race
+          M12_PATH_RUNS: '300'
+          M12_RESULT_DIR: ${{ runner.temp }}/m12-adversarial-results
+        run: |
+          set -euo pipefail
+          mkdir -p "$M12_RESULT_DIR"
+          cargo test --locked -p execsurface-observe --test m12_adversarial -- \
+            --test-threads=1 --nocapture
+          test -s "$M12_RESULT_DIR/path-toctou.json"
+          test -s "$M12_RESULT_DIR/shared-fd.json"
+          cat "$M12_RESULT_DIR/path-toctou.json"
+          cat "$M12_RESULT_DIR/shared-fd.json"
+
+      - name: Existing ptrace regression suite
+        run: cargo test --locked -p execsurface-observe --test ptrace_linux
+
+      - name: Full workspace regression
+        run: cargo test --locked --workspace --all-targets
+
+      - name: Lockfile integrity
+        run: |
+          git diff --exit-code -- Cargo.lock
+          test -z "$(git status --porcelain -- Cargo.lock)"
+
+      - name: Upload adversarial evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m12-adversarial-${{ matrix.os }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/m12-adversarial-results
+          if-no-files-found: warn
+          retention-days: 30

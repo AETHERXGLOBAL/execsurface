@@ -1,0 +1,156 @@
+name: M12 public install and Marketplace compatibility
+
+on:
+  push:
+    branches:
+      - integration/m12-portable-clean
+    paths:
+      - '.github/workflows/m12-public-compatibility.yml'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'action/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate-crates-path:
+    name: Candidate crates/path install
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v6
+
+      - name: Package candidate CLI
+        run: cargo package --locked -p execsurface --allow-dirty
+
+      - name: Install candidate from workspace path
+        run: cargo install --locked --path crates/execsurface-cli --root "$RUNNER_TEMP/m12-candidate"
+
+      - name: Candidate doctor and self-service behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/m12-candidate/bin/execsurface"
+          "$bin" doctor
+          work="$RUNNER_TEMP/m12-candidate-smoke"
+          mkdir -p "$work"
+          cd "$work"
+          "$bin" learn -- /bin/bash -lc true
+          "$bin" check -- /bin/bash -lc true
+          set +e
+          output="$("$bin" check -- /bin/bash -lc 'true; /bin/echo controlled-drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 10
+          grep -F "ExecSurface: REVIEW" <<<"$output"
+
+  current-public-release:
+    name: Current published release remains healthy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout candidate release pointer
+        uses: actions/checkout@v6
+
+      - name: Install checksum-verified current public release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < action/release-tag.txt)"
+          test "$version" = "v0.1.0-alpha.3"
+          target="x86_64-unknown-linux-gnu"
+          asset="execsurface-${version}-${target}.tar.gz"
+          install_dir="$RUNNER_TEMP/m12-public-release"
+          mkdir -p "$install_dir"
+          cd "$install_dir"
+          curl --fail --location --silent --show-error --output "$asset" \
+            "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${version}/${asset}"
+          curl --fail --location --silent --show-error --output "$asset.sha256" \
+            "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${version}/${asset}.sha256"
+          sha256sum -c "$asset.sha256"
+          tar -xzf "$asset"
+          binary="$install_dir/execsurface-${version}-${target}/execsurface"
+          test -x "$binary"
+          test "$("$binary" --version)" = "execsurface ${version#v}"
+          echo "EXECSURFACE_PUBLIC_BIN=$binary" >> "$GITHUB_ENV"
+
+      - name: Public release PASS and controlled REVIEW
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/m12-public-consumer"
+          mkdir -p "$work"
+          cd "$work"
+          "$EXECSURFACE_PUBLIC_BIN" doctor
+          "$EXECSURFACE_PUBLIC_BIN" learn -- /bin/bash -lc true
+          "$EXECSURFACE_PUBLIC_BIN" check -- /bin/bash -lc true
+          set +e
+          output="$("$EXECSURFACE_PUBLIC_BIN" check -- /bin/bash -lc 'true; /bin/echo controlled-drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 10
+          grep -F "ExecSurface: REVIEW" <<<"$output"
+
+  stable-marketplace-action:
+    name: Stable Marketplace Action v0.1 remains compatible
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout consumer workspace
+        uses: actions/checkout@v6
+
+      - name: Prepare baseline with current public release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < action/release-tag.txt)"
+          target="x86_64-unknown-linux-gnu"
+          asset="execsurface-${version}-${target}.tar.gz"
+          install_dir="$RUNNER_TEMP/m12-action-baseline"
+          mkdir -p "$install_dir"
+          cd "$install_dir"
+          curl --fail --location --silent --show-error --output "$asset" \
+            "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${version}/${asset}"
+          curl --fail --location --silent --show-error --output "$asset.sha256" \
+            "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${version}/${asset}.sha256"
+          sha256sum -c "$asset.sha256"
+          tar -xzf "$asset"
+          binary="$install_dir/execsurface-${version}-${target}/execsurface"
+          cd "$GITHUB_WORKSPACE"
+          "$binary" learn --output m12-public-action.lock.json -- /bin/bash -lc true
+
+      - name: Stable Action PASS
+        id: pass
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: 'true'
+          baseline: m12-public-action.lock.json
+          upload-artifact: 'false'
+
+      - name: Assert stable PASS
+        env:
+          VERDICT: ${{ steps.pass.outputs.verdict }}
+          EXIT_CODE: ${{ steps.pass.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = "pass"
+          test "$EXIT_CODE" = "0"
+
+      - name: Stable Action controlled REVIEW
+        id: review
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: 'true; /bin/echo controlled-drift >/dev/null'
+          baseline: m12-public-action.lock.json
+          upload-artifact: 'false'
+
+      - name: Assert stable REVIEW
+        env:
+          VERDICT: ${{ steps.review.outputs.verdict }}
+          EXIT_CODE: ${{ steps.review.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = "review"
+          test "$EXIT_CODE" = "10"

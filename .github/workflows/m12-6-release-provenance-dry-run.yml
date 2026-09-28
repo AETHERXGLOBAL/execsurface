@@ -1,0 +1,365 @@
+name: M12.6 Release Artifact and Provenance Dry Run
+
+on:
+  push:
+    branches:
+      - integration/m12-portable-clean
+    paths:
+      - '.github/workflows/m12-6-release-provenance-dry-run.yml'
+      - 'docs/milestones/M12_6_RELEASE_PROVENANCE_DRY_RUN_PROTOCOL.md'
+      - 'docs/milestones/M12_6_FAILURE_001_DOWNSTREAM_PACKAGE_REGISTRY_VISIBILITY.md'
+      - 'docs/releases/v0.1.0-alpha.4.DRAFT.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-dry-run:
+    name: Staged next-alpha artifact/provenance rehearsal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      PUBLIC_MAIN_SHA: db11761e2d75ebca7d4458dc39094f4aed6a26bb
+      SOURCE_CANDIDATE_SHA: 16ff98b205f951cf463b6ae5f811f164f4ba4572
+      CURRENT_VERSION: 0.1.0-alpha.3
+      CURRENT_TAG: v0.1.0-alpha.3
+      NEXT_VERSION: 0.1.0-alpha.4
+      NEXT_TAG: v0.1.0-alpha.4
+      TARGET_TRIPLE: x86_64-unknown-linux-gnu
+    steps:
+      - name: Checkout workflow driver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: driver
+          fetch-depth: 0
+
+      - name: Checkout frozen portable source candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_CANDIDATE_SHA }}
+          path: source
+          fetch-depth: 0
+
+      - name: Record and freeze public-line state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git -C driver ls-remote origin \
+            refs/heads/main \
+            refs/tags/v0.1 \
+            refs/tags/v0.1.0-alpha.3 \
+            refs/tags/v0.1.0-alpha.4 | sort > evidence/public-refs-before.txt
+          grep -F "$PUBLIC_MAIN_SHA" evidence/public-refs-before.txt | grep -F $'refs/heads/main'
+          if grep -F $'refs/tags/v0.1.0-alpha.4' evidence/public-refs-before.txt; then
+            echo '::error::prospective tag already exists; dry run cannot prove non-publication'
+            exit 1
+          fi
+          test "$(tr -d '[:space:]' < driver/action/release-tag.txt)" = "$CURRENT_TAG"
+          test "$(tr -d '[:space:]' < source/action/release-tag.txt)" = "$CURRENT_TAG"
+          test "$(git -C source rev-parse HEAD)" = "$SOURCE_CANDIDATE_SHA"
+          test "$(git -C driver show "$PUBLIC_MAIN_SHA":action/release-tag.txt | tr -d '[:space:]')" = "$CURRENT_TAG"
+
+      - name: Environment and toolchain evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a | tee evidence/uname.txt
+          rustc --version --verbose | tee evidence/rustc.txt
+          cargo --version | tee evidence/cargo.txt
+          git -C driver rev-parse HEAD | tee evidence/driver-sha.txt
+          git -C source rev-parse HEAD | tee evidence/source-candidate-sha.txt
+          printf '%s\n' "$PUBLIC_MAIN_SHA" > evidence/public-main-sha.txt
+          sha256sum source/Cargo.lock | tee evidence/source-cargo-lock.sha256
+          sha256sum driver/docs/releases/v0.1.0-alpha.4.DRAFT.md | tee evidence/release-notes-draft.sha256
+
+      - name: Materialize isolated prospective alpha.4 staging tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a source stage
+          cp driver/docs/releases/v0.1.0-alpha.4.DRAFT.md stage/docs/releases/v0.1.0-alpha.4.md
+          printf '%s\n' "$NEXT_TAG" > stage/action/release-tag.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          old = '0.1.0-alpha.3'
+          new = '0.1.0-alpha.4'
+          root = Path('stage')
+          for manifest in root.rglob('Cargo.toml'):
+              text = manifest.read_text()
+              text = text.replace(f'version = "{old}"', f'version = "{new}"')
+              text = text.replace(f'version = "={old}"', f'version = "={new}"')
+              manifest.write_text(text)
+          lock = root / 'Cargo.lock'
+          chunks = lock.read_text().split('[[package]]')
+          out = [chunks[0]]
+          for chunk in chunks[1:]:
+              lines = chunk.splitlines()
+              name = next((line.split('=',1)[1].strip().strip('"') for line in lines if line.startswith('name = ')), None)
+              if name and name.startswith('execsurface'):
+                  lines = [(f'version = "{new}"' if line == f'version = "{old}"' else line) for line in lines]
+              out.append('\n'.join(lines))
+          lock.write_text('[[package]]'.join(out))
+          PY
+          test "$(tr -d '[:space:]' < stage/action/release-tag.txt)" = "$NEXT_TAG"
+          test -f stage/docs/releases/v0.1.0-alpha.4.md
+          diff -u source/Cargo.lock stage/Cargo.lock > evidence/staged-cargo-lock.patch || true
+          diff -u source/Cargo.toml stage/Cargo.toml > evidence/staged-root-version.patch || true
+          sha256sum stage/Cargo.lock | tee evidence/staged-cargo-lock.sha256
+          sha256sum stage/docs/releases/v0.1.0-alpha.4.md | tee evidence/staged-release-notes.sha256
+
+      - name: Audit staged version identity and dependency topology
+        shell: bash
+        working-directory: stage
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 > ../evidence/staged-cargo-metadata.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('../evidence/staged-cargo-metadata.json').read_text())
+          publishable = {
+              'execsurface-model','execsurface-observe','execsurface-normalize','execsurface-baseline',
+              'execsurface-diff','execsurface-policy','execsurface-report','execsurface'
+          }
+          packages = {p['name']: p for p in data['packages'] if p['name'].startswith('execsurface')}
+          missing = sorted(publishable - packages.keys())
+          assert not missing, f'missing publishable packages: {missing}'
+          bad_versions = sorted((n, packages[n]['version']) for n in publishable if packages[n]['version'] != '0.1.0-alpha.4')
+          assert not bad_versions, f'stale package versions: {bad_versions}'
+          edges = []
+          bad_reqs = []
+          for name in sorted(publishable):
+              for dep in packages[name]['dependencies']:
+                  if dep['name'].startswith('execsurface') and dep['name'] in publishable:
+                      edges.append({'package': name, 'dependency': dep['name'], 'req': dep['req'], 'path': dep.get('path')})
+                      if dep['req'] != '=0.1.0-alpha.4':
+                          bad_reqs.append((name, dep['name'], dep['req']))
+          assert not bad_reqs, f'stale internal exact requirements: {bad_reqs}'
+          Path('../evidence/prospective-internal-dependency-topology.json').write_text(json.dumps(edges, indent=2, sort_keys=True) + '\n')
+          print(json.dumps({'publishable_versions': {n: packages[n]['version'] for n in sorted(publishable)}, 'internal_edges': edges}, indent=2))
+          PY
+          if grep -R --include='Cargo.toml' -F '=0.1.0-alpha.3' .; then
+            echo '::error::stale exact internal alpha.3 dependency pin remains in staged manifests'
+            exit 1
+          fi
+
+      - name: Full staged source gates
+        shell: bash
+        working-directory: stage
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace --all-targets
+
+      - name: Audit publishable package file sets
+        shell: bash
+        working-directory: stage
+        run: |
+          set -euo pipefail
+          crates=(execsurface-model execsurface-observe execsurface-normalize execsurface-baseline execsurface-diff execsurface-policy execsurface-report execsurface)
+          mkdir -p ../evidence/package-file-lists
+          for crate in "${crates[@]}"; do
+            cargo package --allow-dirty --list -p "$crate" | tee "../evidence/package-file-lists/$crate.txt"
+            test -s "../evidence/package-file-lists/$crate.txt"
+            ! grep -E '(^|/)(target|\.git)(/|$)' "../evidence/package-file-lists/$crate.txt"
+          done
+
+      - name: Build and dry-run the registry-front package
+        shell: bash
+        working-directory: stage
+        run: |
+          set -euo pipefail
+          mkdir -p ../evidence/package-archives
+          cargo package --locked --allow-dirty --no-verify -p execsurface-model |& tee ../evidence/model-package.txt
+          cp target/package/execsurface-model-${NEXT_VERSION}.crate ../evidence/package-archives/
+          sha256sum ../evidence/package-archives/execsurface-model-${NEXT_VERSION}.crate | tee ../evidence/model-package.sha256
+          cargo publish -p execsurface-model --locked --dry-run --allow-dirty |& tee ../evidence/model-publish-dry-run.txt
+
+      - name: Prove downstream registry visibility constraint is the expected one
+        shell: bash
+        working-directory: stage
+        run: |
+          set -euo pipefail
+          set +e
+          cargo package --locked --allow-dirty --no-verify -p execsurface-observe > ../evidence/observe-package-expected-failure.txt 2>&1
+          rc=$?
+          set -e
+          test "$rc" -ne 0
+          grep -F 'failed to select a version for the requirement `execsurface-model = "=0.1.0-alpha.4"`' ../evidence/observe-package-expected-failure.txt
+          grep -F 'candidate versions found which didn' ../evidence/observe-package-expected-failure.txt
+          printf '%s\n' "$rc" > ../evidence/observe-package-expected-failure-exit-code.txt
+
+      - name: Build staged release binary and exact-format bundle
+        id: bundle
+        shell: bash
+        working-directory: stage
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p execsurface --bin execsurface
+          test "$(./target/release/execsurface --version)" = "execsurface $NEXT_VERSION"
+          dirname="execsurface-${NEXT_TAG}-${TARGET_TRIPLE}"
+          asset="${dirname}.tar.gz"
+          mkdir -p "../evidence/dist/$dirname"
+          cp target/release/execsurface "../evidence/dist/$dirname/execsurface"
+          cp LICENSE NOTICE "../evidence/dist/$dirname/"
+          lock_sha="$(sha256sum Cargo.lock | awk '{print $1}')"
+          notes_sha="$(sha256sum docs/releases/v0.1.0-alpha.4.md | awk '{print $1}')"
+          {
+            echo "ExecSurface $NEXT_TAG"
+            echo "product_version=$NEXT_VERSION"
+            echo "target=$TARGET_TRIPLE"
+            echo "source_candidate_commit=$SOURCE_CANDIDATE_SHA"
+            echo "workflow_driver_commit=$(git -C ../driver rev-parse HEAD)"
+            echo "build_workflow=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "evidence_schema=m12.6-dry-run-v2"
+            echo "cargo_lock_sha256=$lock_sha"
+            echo "release_notes_sha256=$notes_sha"
+            echo "publication=dry-run-only"
+          } > "../evidence/dist/$dirname/BUILD_INFO.txt"
+          tar -C ../evidence/dist -czf "../evidence/dist/$asset" "$dirname"
+          (cd ../evidence/dist && sha256sum "$asset" > "$asset.sha256")
+          (cd ../evidence/dist && sha256sum -c "$asset.sha256")
+          sha256sum target/release/execsurface > ../evidence/release-binary.sha256
+          printf '%s\n' "$asset" > ../evidence/release-asset-name.txt
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Build release-workflow preparation preview without mutating source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/release-prep-preview
+          cp driver/.github/workflows/release.yml evidence/release-prep-preview/release.yml.alpha4
+          cp driver/.github/workflows/publish-crates.yml evidence/release-prep-preview/publish-crates.yml.alpha4
+          sed -i 's/v0\.1\.0-alpha\.3/v0.1.0-alpha.4/g' evidence/release-prep-preview/release.yml.alpha4
+          sed -i 's/v0\.1\.0-alpha\.3/v0.1.0-alpha.4/g' evidence/release-prep-preview/publish-crates.yml.alpha4
+          diff -u driver/.github/workflows/release.yml evidence/release-prep-preview/release.yml.alpha4 > evidence/release-prep-preview/release.yml.patch || true
+          diff -u driver/.github/workflows/publish-crates.yml evidence/release-prep-preview/publish-crates.yml.alpha4 > evidence/release-prep-preview/publish-crates.yml.patch || true
+          grep -F 'v0.1.0-alpha.4' evidence/release-prep-preview/release.yml.alpha4
+          ! grep -F 'v0.1.0-alpha.3' evidence/release-prep-preview/release.yml.alpha4
+          printf '%s\n' 'M12.8 must atomically update workspace/internal versions, Cargo.lock path-package versions, action/release-tag.txt, final release notes, immutable Action tag references, stable-promotion tag gate, and publish-crates default before tag creation.' > evidence/release-prep-preview/REQUIRED_AT_M12_8.txt
+
+      - name: Generate and verify dry-run provenance statement
+        shell: bash
+        env:
+          ASSET: ${{ steps.bundle.outputs.asset }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          e = Path('evidence')
+          asset = os.environ['ASSET']
+          archive = e/'dist'/asset
+          lock = Path('stage/Cargo.lock')
+          notes = Path('stage/docs/releases/v0.1.0-alpha.4.md')
+          statement = {
+            '_type': 'https://in-toto.io/Statement/v1',
+            'subject': [{'name': asset, 'digest': {'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}}],
+            'predicateType': 'https://slsa.dev/provenance/v1',
+            'predicate': {
+              'buildDefinition': {
+                'buildType': 'https://github.com/AETHERXGLOBAL/execsurface/m12.6-release-dry-run/v2',
+                'externalParameters': {'prospectiveVersion': os.environ['NEXT_VERSION'], 'prospectiveTag': os.environ['NEXT_TAG'], 'target': os.environ['TARGET_TRIPLE'], 'publication': 'dry-run-only'},
+                'internalParameters': {'sourceCandidateCommit': os.environ['SOURCE_CANDIDATE_SHA'], 'workflowDriverCommit': (e/'driver-sha.txt').read_text().strip(), 'publicMainCommit': os.environ['PUBLIC_MAIN_SHA']},
+                'resolvedDependencies': [
+                  {'uri': 'git+https://github.com/AETHERXGLOBAL/execsurface.git', 'digest': {'gitCommit': os.environ['SOURCE_CANDIDATE_SHA']}},
+                  {'uri': 'file:Cargo.lock', 'digest': {'sha256': hashlib.sha256(lock.read_bytes()).hexdigest()}},
+                  {'uri': 'file:docs/releases/v0.1.0-alpha.4.md', 'digest': {'sha256': hashlib.sha256(notes.read_bytes()).hexdigest()}}
+                ]
+              },
+              'runDetails': {'builder': {'id': f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/m12-6-release-provenance-dry-run.yml"}, 'metadata': {'invocationId': f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}", 'dryRun': True, 'cryptographicGitHubAttestation': False, 'warning': 'This is a locally generated dry-run provenance record, not a GitHub-hosted signed attestation.'}}
+            }
+          }
+          p=e/'provenance-dry-run.intoto.json'
+          p.write_text(json.dumps(statement,indent=2,sort_keys=True)+'\n')
+          (e/'provenance-dry-run.intoto.json.sha256').write_text(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n")
+          PY
+          (cd evidence && sha256sum -c provenance-dry-run.intoto.json.sha256)
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          e=Path('evidence'); p=json.loads((e/'provenance-dry-run.intoto.json').read_text()); s=p['subject'][0]
+          assert hashlib.sha256((e/'dist'/s['name']).read_bytes()).hexdigest()==s['digest']['sha256']
+          assert p['predicate']['runDetails']['metadata']['cryptographicGitHubAttestation'] is False
+          PY
+
+      - name: Clean consumer proof from release archive
+        shell: bash
+        env:
+          ASSET: ${{ steps.bundle.outputs.asset }}
+        run: |
+          set -euo pipefail
+          consumer="$RUNNER_TEMP/m12-6-consumer"
+          rm -rf "$consumer"; mkdir -p "$consumer"
+          cp "evidence/dist/$ASSET" "evidence/dist/$ASSET.sha256" "$consumer/"
+          cd "$consumer"
+          sha256sum -c "$ASSET.sha256"
+          tar -xzf "$ASSET"
+          bin="$consumer/execsurface-${NEXT_TAG}-${TARGET_TRIPLE}/execsurface"
+          test -x "$bin"
+          test "$("$bin" --version)" = "execsurface $NEXT_VERSION"
+          mkdir -p work; cd work
+          "$bin" doctor |& tee "$GITHUB_WORKSPACE/evidence/consumer-doctor.txt"
+          "$bin" learn -- /bin/bash -lc true |& tee "$GITHUB_WORKSPACE/evidence/consumer-learn.txt"
+          "$bin" check -- /bin/bash -lc true |& tee "$GITHUB_WORKSPACE/evidence/consumer-check-pass.txt"
+          set +e
+          "$bin" check -- /bin/bash -lc 'true; /bin/echo controlled-drift >/dev/null' > "$GITHUB_WORKSPACE/evidence/consumer-review.txt" 2>&1
+          rc=$?
+          set -e
+          test "$rc" -eq 10
+          grep -F 'ExecSurface: REVIEW' "$GITHUB_WORKSPACE/evidence/consumer-review.txt"
+          printf '%s\n' "$rc" > "$GITHUB_WORKSPACE/evidence/consumer-review-exit-code.txt"
+
+      - name: Release-note and product-boundary sentinels
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes=stage/docs/releases/v0.1.0-alpha.4.md
+          grep -F 'Linux x86_64 remains the public support scope' "$notes"
+          grep -F 'native ptrace remains the public default/reference observer' "$notes"
+          grep -F 'not kernel-object identity' "$notes"
+          grep -F 'does not authorize automatic hybrid selection' "$notes"
+          grep -F 'incomplete evidence cannot silently become PASS' "$notes"
+
+      - name: Prove no public mutation occurred
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git -C driver ls-remote origin refs/heads/main refs/tags/v0.1 refs/tags/v0.1.0-alpha.3 refs/tags/v0.1.0-alpha.4 | sort > evidence/public-refs-after.txt
+          if test -f evidence/public-refs-before.txt; then cmp evidence/public-refs-before.txt evidence/public-refs-after.txt; fi
+          grep -F "$PUBLIC_MAIN_SHA" evidence/public-refs-after.txt | grep -F $'refs/heads/main'
+          ! grep -F $'refs/tags/v0.1.0-alpha.4' evidence/public-refs-after.txt
+          test "$(tr -d '[:space:]' < driver/action/release-tag.txt)" = "$CURRENT_TAG"
+
+      - name: Build evidence manifest and self-check
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          e=Path('evidence'); files=[]
+          for p in sorted(x for x in e.rglob('*') if x.is_file()):
+              rel=p.relative_to(e).as_posix()
+              if rel=='evidence-manifest.json': continue
+              files.append({'path':rel,'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()})
+          manifest={'schema_version':2,'classification_candidate':'M12_6_RELEASE_DRY_RUN_PASS_NO_PUBLIC_MUTATION','source_candidate_sha':os.environ['SOURCE_CANDIDATE_SHA'],'public_main_sha':os.environ['PUBLIC_MAIN_SHA'],'prospective_version':os.environ['NEXT_VERSION'],'prospective_tag':os.environ['NEXT_TAG'],'publication_performed':False,'github_cryptographic_attestation_performed':False,'preserved_failure_001_run':'36464283655','files':files}
+          (e/'evidence-manifest.json').write_text(json.dumps(manifest,indent=2,sort_keys=True)+'\n')
+          PY
+          python3 -m json.tool evidence/evidence-manifest.json >/dev/null
+
+      - name: Upload complete M12.6 dry-run evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m12-6-release-provenance-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30

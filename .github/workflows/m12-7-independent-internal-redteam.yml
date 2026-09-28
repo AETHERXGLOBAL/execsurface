@@ -1,0 +1,159 @@
+name: M12.7 Independent Internal Release Red-Team
+
+on:
+  push:
+    branches:
+      - integration/m12-portable-clean
+    paths:
+      - 'crates/execsurface-observe/**'
+      - 'crates/execsurface-baseline/**'
+      - 'crates/execsurface-cli/**'
+      - '.github/m12-fixtures/**'
+      - '.github/workflows/m12-*.yml'
+      - 'docs/milestones/M12_7_*.md'
+      - 'docs/releases/v0.1.0-alpha.4.DRAFT.md'
+      - 'README.md'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'action/**'
+      - 'action.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-internal-redteam:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout candidate with history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Freeze provenance and public-line state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          git show -s --format='%H %s' HEAD
+          test "$(git rev-parse origin/main)" = "db11761e2d75ebca7d4458dc39094f4aed6a26bb"
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "v0.1.0-alpha.3"
+          if git ls-remote --exit-code --tags origin refs/tags/v0.1.0-alpha.4 >/dev/null 2>&1; then
+            echo 'unexpected public v0.1.0-alpha.4 tag exists' >&2
+            exit 1
+          fi
+
+      - name: Prove runtime source remained frozen after M12.6 candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code 16ff98b205f951cf463b6ae5f811f164f4ba4572 HEAD -- \
+            crates Cargo.toml Cargo.lock action action.yml
+
+      - name: Diff-scope kill check
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only origin/main...HEAD > /tmp/m12-7-files.txt
+          cat /tmp/m12-7-files.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          files = [line.strip() for line in Path('/tmp/m12-7-files.txt').read_text().splitlines() if line.strip()]
+          exact = {
+              'crates/execsurface-observe/src/lib.rs',
+              'crates/execsurface-observe/tests/m11_shared_fd_ambiguity.rs',
+              'crates/execsurface-observe/tests/m12_adversarial.rs',
+              'crates/execsurface-observe/tests/ptrace_linux.rs',
+              'docs/releases/v0.1.0-alpha.4.DRAFT.md',
+              'README.md',
+          }
+          prefixes = (
+              '.github/m12-fixtures/',
+              '.github/workflows/m12-',
+              'docs/milestones/M12_',
+          )
+          unexpected = [f for f in files if f not in exact and not f.startswith(prefixes)]
+          if unexpected:
+              raise SystemExit('unexpected M12 diff paths: ' + ', '.join(unexpected))
+          forbidden = [
+              'action/release-tag.txt', 'action.yml', 'Cargo.toml', 'Cargo.lock'
+          ]
+          changed_forbidden = sorted(set(files).intersection(forbidden))
+          if changed_forbidden:
+              raise SystemExit('public/version plumbing changed before M12.8: ' + ', '.join(changed_forbidden))
+          PY
+
+      - name: Build adversarial fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/m12-7-fixtures"
+          cc -O2 -pthread .github/m12-fixtures/path_toctou_target.c -o "$RUNNER_TEMP/m12-7-fixtures/path_toctou_target"
+          cc -O2 -pthread .github/m12-fixtures/fd_share_race_target.c -o "$RUNNER_TEMP/m12-7-fixtures/fd_share_race_target"
+          test -x "$RUNNER_TEMP/m12-7-fixtures/path_toctou_target"
+          test -x "$RUNNER_TEMP/m12-7-fixtures/fd_share_race_target"
+          echo "M12_PATH_TOCTOU_BIN=$RUNNER_TEMP/m12-7-fixtures/path_toctou_target" >> "$GITHUB_ENV"
+          echo "M12_FD_SHARE_BIN=$RUNNER_TEMP/m12-7-fixtures/fd_share_race_target" >> "$GITHUB_ENV"
+
+      - name: Formatting and full-workspace Clippy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Kill attempt — shared-FD fail-closed semantics
+        run: cargo test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
+
+      - name: Kill attempt — full M12 adversarial replay
+        run: cargo test --locked -p execsurface-observe --test m12_adversarial -- --nocapture
+
+      - name: Kill attempt — existing ptrace regressions
+        run: cargo test --locked -p execsurface-observe --test ptrace_linux -- --nocapture
+
+      - name: Kill attempt — baseline and CLI compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p execsurface-baseline digest_serialization_vector_is_frozen
+          cargo test --locked -p execsurface --test check_linux
+          cargo test --locked -p execsurface --test policy_linux
+          cargo test --locked -p execsurface --test self_service_linux
+
+      - name: Full workspace regression
+        run: cargo test --locked --workspace --all-targets
+
+      - name: Privilege and hybrid-promotion sentinels
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -d crates/execsurface-hybrid-authority
+          grep -F 'The public correctness-reference backend is native `ptrace`.' README.md
+          grep -F 'eBPF work remains research-only' README.md
+          grep -F 'BPF-LSM / kernel-hook work remains managed/research-only and non-default' docs/releases/v0.1.0-alpha.4.DRAFT.md
+          grep -F 'does not authorize automatic hybrid selection, new privilege requirements for the portable path, ptrace↔hybrid baseline interchangeability' docs/releases/v0.1.0-alpha.4.DRAFT.md
+
+      - name: Claim-boundary kill sentinels
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'Incomplete evidence cannot silently become PASS.' README.md
+          grep -F 'pathname access-attempt metadata is not kernel-object identity' docs/releases/v0.1.0-alpha.4.DRAFT.md
+          grep -F 'does not prove software safety' docs/releases/v0.1.0-alpha.4.DRAFT.md
+
+      - name: Conservative clone-guard disclosure must be explicit
+        shell: bash
+        run: |
+          set -euo pipefail
+          phrase='may conservatively mark some clone/thread concurrency incomplete even when exact fd-table sharing is not proven'
+          grep -F "$phrase" README.md
+          grep -F "$phrase" docs/releases/v0.1.0-alpha.4.DRAFT.md
+
+      - name: Lockfile and public pointer immutability
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code origin/main...HEAD -- Cargo.toml Cargo.lock action/release-tag.txt action.yml
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "v0.1.0-alpha.3"
