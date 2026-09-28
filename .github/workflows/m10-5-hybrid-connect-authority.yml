@@ -67,7 +67,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          ROOT="$RUNNER_TEMP/root"; mkdir -p "$ROOT"/{bin,dev,proc,sys,sys/kernel/security,tmp}; chmod 1777 "$ROOT/tmp"
+          ROOT="$RUNNER_TEMP/root"; mkdir -p "$ROOT"/{bin,dev,proc,sys,sys/kernel/security,sys/kernel/tracing,tmp}; chmod 1777 "$ROOT/tmp"
           cp /bin/busybox "$ROOT/bin/busybox"
           for a in sh mount cat echo reboot sync; do ln -s busybox "$ROOT/bin/$a"; done
           cp experiments/m10/bpf-lsm-connect/m10_bpf_lsm_connect "$ROOT/bin/m10_bpf_lsm_connect"
@@ -77,12 +77,14 @@ jobs:
           export PATH=/bin
           mount -t proc proc /proc
           mount -t sysfs sysfs /sys
-          mkdir -p /sys/kernel/security
+          mkdir -p /sys/kernel/security /sys/kernel/tracing
           mount -t securityfs securityfs /sys/kernel/security || true
+          mount -t tracefs tracefs /sys/kernel/tracing || true
           mount -t devtmpfs devtmpfs /dev || true
           echo M10_5_PROBE_BEGIN
           echo "M10_5_LSM_LIST=$(cat /sys/kernel/security/lsm 2>/dev/null || echo '<unreadable>')"
           if [ -r /sys/kernel/btf/vmlinux ]; then echo M10_5_BTF_READABLE=true; else echo M10_5_BTF_READABLE=false; fi
+          if [ -r /sys/kernel/tracing/events/syscalls/sys_exit_connect/id ]; then echo M10_5_CONNECT_TRACEPOINT=true; else echo M10_5_CONNECT_TRACEPOINT=false; fi
           set +e
           /bin/m10_bpf_lsm_connect
           RC=$?
@@ -117,14 +119,14 @@ jobs:
           def one(p):
               m=re.search(p,log,re.M); return m.group(1) if m else None
           lsm=one(r'^M10_5_LSM_LIST=(.*)$') or '<missing>'; bpf='bpf' in [x.strip() for x in lsm.split(',')]
-          btf='M10_5_BTF_READABLE=true' in log; complete='M10_5_PROBE_COMPLETE' in log
+          btf='M10_5_BTF_READABLE=true' in log; tp='M10_5_CONNECT_TRACEPOINT=true' in log; complete='M10_5_PROBE_COMPLETE' in log
           cand=one(r'^classification_candidate=(\S+)$'); rc=one(r'^M10_5_LOADER_RC=(\d+)$'); rc=int(rc) if rc else None
           allowed={'M10_5_HYBRID_CONNECT_MATCH','M10_5_CONNECT_DESTINATION_MISMATCH','M10_5_FAILED_CONNECT_FALSE_PROMOTION','M10_5_EVIDENCE_INCOMPLETE'}
-          if bpf and btf and complete and cand in allowed: cls=cand
-          elif complete and not bpf: cls='M10_5_ENVIRONMENT_BLOCKED'
+          if bpf and btf and tp and complete and cand in allowed: cls=cand
+          elif complete and (not bpf or not tp): cls='M10_5_ENVIRONMENT_BLOCKED'
           elif rc==42: cls='M10_5_ENVIRONMENT_BLOCKED'
           else: cls='M10_5_INFRA_FAILURE'
-          r={'classification':cls,'active_lsms':lsm,'bpf_lsm_active':bpf,'btf_readable':btf,'probe_complete':complete,'loader_rc':rc,'public_authority':False,'product_integration_authorized':False}
+          r={'classification':cls,'active_lsms':lsm,'bpf_lsm_active':bpf,'btf_readable':btf,'connect_tracepoint':tp,'probe_complete':complete,'loader_rc':rc,'public_authority':False,'product_integration_authorized':False}
           (A/'result.json').write_text(json.dumps(r,indent=2)+'\n'); print(json.dumps(r,indent=2))
           PY
       - name: Upload evidence
