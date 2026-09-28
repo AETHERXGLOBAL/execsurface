@@ -66,7 +66,6 @@ jobs:
           fi
 
       - name: Install declared native build dependencies
-        if: steps.lsm_gate.outputs.available == 'true'
         shell: bash
         run: |
           set -euxo pipefail
@@ -76,7 +75,6 @@ jobs:
           pkg-config --modversion libelf
 
       - name: Install pinned Rust toolchains
-        if: steps.lsm_gate.outputs.available == 'true'
         shell: bash
         run: |
           set -euxo pipefail
@@ -84,7 +82,6 @@ jobs:
           rustup toolchain install 1.82.0 --profile minimal
 
       - name: Resolve isolated lock and build
-        if: steps.lsm_gate.outputs.available == 'true'
         shell: bash
         run: |
           set -euxo pipefail
@@ -95,6 +92,7 @@ jobs:
             experiments/m10-bpf-lsm/fixtures/file_open_identity.c \
             -o /tmp/m10-file-open-identity
           cargo +1.82.0 build --locked --manifest-path experiments/m10-bpf-lsm/Cargo.toml
+          echo 'build_validated=true' | tee m10-3-artifacts/build.txt
 
       - name: Run audit-only BPF-LSM proposition
         if: steps.lsm_gate.outputs.available == 'true'
