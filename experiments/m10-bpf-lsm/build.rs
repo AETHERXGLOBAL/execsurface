@@ -9,13 +9,10 @@ fn main() {
         .source("src/bpf/file_open.bpf.c")
         .clang_args([
             OsStr::new("-I"),
-            OsStr::new("src/bpf"),
-            OsStr::new("-I"),
             OsStr::new("/usr/include/x86_64-linux-gnu"),
         ])
         .build_and_generate(&out)
         .expect("build and generate M10.3 BPF-LSM skeleton");
 
     println!("cargo:rerun-if-changed=src/bpf/file_open.bpf.c");
-    println!("cargo:rerun-if-changed=src/bpf/vmlinux.h");
 }
