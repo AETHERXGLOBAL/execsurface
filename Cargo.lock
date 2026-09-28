@@ -114,6 +114,7 @@ dependencies = [
 name = "execsurface-observe"
 version = "0.1.0-alpha.3"
 dependencies = [
+ "execsurface-authority",
  "execsurface-model",
  "libc",
  "serde",
