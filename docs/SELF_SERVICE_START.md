@@ -28,12 +28,12 @@ Do not run the binary if checksum verification fails.
 ## Alternative install — crates.io
 
 ```bash
-cargo install execsurface --locked
+cargo install execsurface --version "=0.1.0-alpha.4" --locked
 execsurface --version
 execsurface doctor
 ```
 
-The registry publication follows the immutable GitHub release and stable Action validation.
+The current public release is a prerelease, so request the exact prerelease version explicitly. The registry publication follows the immutable GitHub release and stable Action validation.
 
 ## Start in your project
 
