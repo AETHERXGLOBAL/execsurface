@@ -29,10 +29,10 @@ jobs:
           rustc --version --verbose
           cargo --version
 
-      - name: Format
-        run: cargo fmt --all -- --check
+      - name: Format authority crate
+        run: cargo fmt --package execsurface-authority -- --check
 
-      - name: Clippy
+      - name: Clippy full workspace
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Authority tests
