@@ -43,6 +43,14 @@ fn clone_spawn_count(observation: &execsurface_model::Observation) -> usize {
         .count()
 }
 
+fn exec_count(observation: &execsurface_model::Observation) -> usize {
+    observation
+        .events
+        .iter()
+        .filter(|event| matches!(&event.kind, RawEventKind::ProcessExec { .. }))
+        .count()
+}
+
 #[test]
 fn clone_based_threading_fails_closed_for_fd_lifecycle_completeness() {
     let fixture = env!("CARGO_BIN_EXE_execsurface-fixture");
@@ -179,6 +187,57 @@ fn shared_fd_reuse_tracks_replacement_path_but_stays_fail_closed() {
     assert!(
         !observed_fd_read_path(&observation, &expected_old),
         "read after fd reuse must not be attributed to stale old-path fd state"
+    );
+}
+
+#[test]
+fn exec_from_shared_fd_table_preserves_inherited_fd_identity_but_stays_fail_closed() {
+    let fixture = env!("CARGO_BIN_EXE_execsurface-fixture");
+    let path = std::env::temp_dir().join(format!(
+        "execsurface-s5-thread-exec-{}-fixture.txt",
+        process::id()
+    ));
+    fs::write(&path, b"e").expect("write exec-shared fixture file");
+    let expected = fs::canonicalize(&path)
+        .expect("canonicalize exec-shared path")
+        .to_string_lossy()
+        .into_owned();
+
+    let observation = observe_command(
+        &CommandSpec::new(fixture)
+            .arg("thread-exec-fd")
+            .arg(path.as_os_str()),
+    )
+    .expect("observe thread exec fixture");
+
+    let _ = fs::remove_file(&path);
+
+    assert_eq!(observation.outcome.exit_code, Some(0));
+    assert!(
+        clone_spawn_count(&observation) >= 1,
+        "thread creation must be observed before exec"
+    );
+    assert!(
+        exec_count(&observation) >= 2,
+        "observer must retain both initial exec and thread-originated exec transition"
+    );
+    assert_eq!(
+        warning_count(&observation, "clone_flags_unavailable"),
+        0,
+        "shared-thread clone flags must be available before exec"
+    );
+    assert!(
+        observed_fd_read_path(&observation, &expected),
+        "fd inherited across thread-originated exec must remain attributed to the correct path"
+    );
+    assert!(
+        !observation.complete,
+        "v2 evidence remains fail-closed despite successful shared-table exec modeling"
+    );
+    assert_eq!(
+        warning_count(&observation, "shared_fd_table_ambiguity"),
+        1,
+        "v2 guard remains authoritative during S5"
     );
 }
 
