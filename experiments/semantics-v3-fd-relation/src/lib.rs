@@ -16,6 +16,14 @@ pub enum FdTableRelation {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetainedSpawnEvidence {
+    pub mechanism: SpawnMechanism,
+    pub clone_files: Option<bool>,
+    pub clone_thread: Option<bool>,
+    pub fd_table_relation: FdTableRelation,
+}
+
 pub fn classify_fd_table_relation(
     mechanism: SpawnMechanism,
     clone_flags: Option<u64>,
@@ -27,6 +35,32 @@ pub fn classify_fd_table_relation(
             Some(_) => FdTableRelation::IndependentCopy,
             None => FdTableRelation::Unknown,
         },
+    }
+}
+
+/// Retain only the semantic bits currently justified for v3 fd/thread
+/// relationship analysis. This deliberately avoids treating unrestricted raw
+/// clone flags as canonical baseline data.
+pub fn retain_spawn_evidence(
+    mechanism: SpawnMechanism,
+    clone_flags: Option<u64>,
+) -> RetainedSpawnEvidence {
+    let (clone_files, clone_thread) = match mechanism {
+        SpawnMechanism::Fork | SpawnMechanism::Vfork => (None, None),
+        SpawnMechanism::Clone => match clone_flags {
+            Some(flags) => (
+                Some(flags & libc::CLONE_FILES as u64 != 0),
+                Some(flags & libc::CLONE_THREAD as u64 != 0),
+            ),
+            None => (None, None),
+        },
+    };
+
+    RetainedSpawnEvidence {
+        mechanism,
+        clone_files,
+        clone_thread,
+        fd_table_relation: classify_fd_table_relation(mechanism, clone_flags),
     }
 }
 
@@ -96,5 +130,34 @@ mod tests {
         assert!(reuses_parent_fd_table(FdTableRelation::Shared));
         assert!(!reuses_parent_fd_table(FdTableRelation::IndependentCopy));
         assert!(!reuses_parent_fd_table(FdTableRelation::Unknown));
+    }
+
+    #[test]
+    fn retained_shared_clone_exposes_only_required_semantic_bits() {
+        let flags = libc::CLONE_FILES as u64 | libc::CLONE_THREAD as u64 | libc::CLONE_VM as u64;
+        let evidence = retain_spawn_evidence(SpawnMechanism::Clone, Some(flags));
+
+        assert_eq!(evidence.mechanism, SpawnMechanism::Clone);
+        assert_eq!(evidence.clone_files, Some(true));
+        assert_eq!(evidence.clone_thread, Some(true));
+        assert_eq!(evidence.fd_table_relation, FdTableRelation::Shared);
+    }
+
+    #[test]
+    fn retained_known_private_clone_is_explicitly_independent() {
+        let evidence = retain_spawn_evidence(SpawnMechanism::Clone, Some(libc::CLONE_VM as u64));
+
+        assert_eq!(evidence.clone_files, Some(false));
+        assert_eq!(evidence.clone_thread, Some(false));
+        assert_eq!(evidence.fd_table_relation, FdTableRelation::IndependentCopy);
+    }
+
+    #[test]
+    fn retained_unknown_clone_does_not_invent_semantic_bits() {
+        let evidence = retain_spawn_evidence(SpawnMechanism::Clone, None);
+
+        assert_eq!(evidence.clone_files, None);
+        assert_eq!(evidence.clone_thread, None);
+        assert_eq!(evidence.fd_table_relation, FdTableRelation::Unknown);
     }
 }
