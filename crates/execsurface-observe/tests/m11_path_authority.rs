@@ -48,7 +48,7 @@ fn legacy_ptrace_path_capabilities_do_not_imply_kernel_object_authority() {
 }
 
 #[test]
-fn path_toctou_promotion_to_kernel_object_bound_is_explicitly_rejected() {
+fn path_toctou_promotion_to_kernel_object_authority_is_explicitly_rejected() {
     let authority = ptrace_contract_v1();
 
     for proposition in [
@@ -56,18 +56,31 @@ fn path_toctou_promotion_to_kernel_object_bound_is_explicitly_rejected() {
         EvidenceProposition::FilePathAccessIntent,
         EvidenceProposition::NetworkConnectAttemptDestination,
     ] {
-        assert!(matches!(
-            authority
-                .require_exact_authority(proposition, EvidenceAuthority::KernelObjectSuccessBound,),
-            Err(AuthorityRequirementError::AuthorityMismatch { .. })
-        ));
+        assert!(authority
+            .require_exact_authority(proposition, EvidenceAuthority::ArgumentObserved)
+            .is_ok());
+
+        for stronger_request in [
+            EvidenceAuthority::KernelObjectCandidate,
+            EvidenceAuthority::KernelObjectSuccessBound,
+        ] {
+            assert!(matches!(
+                authority.require_exact_authority(proposition, stronger_request),
+                Err(AuthorityRequirementError::AuthorityMismatch { .. })
+            ));
+        }
     }
 
-    assert!(matches!(
-        authority.require_exact_authority(
-            EvidenceProposition::ProcessExecObjectIdentity,
-            EvidenceAuthority::KernelObjectSuccessBound,
-        ),
-        Err(AuthorityRequirementError::UnsupportedProposition { .. })
-    ));
+    for stronger_request in [
+        EvidenceAuthority::KernelObjectCandidate,
+        EvidenceAuthority::KernelObjectSuccessBound,
+    ] {
+        assert!(matches!(
+            authority.require_exact_authority(
+                EvidenceProposition::ProcessExecObjectIdentity,
+                stronger_request,
+            ),
+            Err(AuthorityRequirementError::UnsupportedProposition { .. })
+        ));
+    }
 }
