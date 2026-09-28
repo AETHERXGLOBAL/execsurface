@@ -94,6 +94,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "execsurface-hybrid-authority"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "execsurface-authority",
+]
+
+[[package]]
 name = "execsurface-model"
 version = "0.1.0-alpha.3"
 dependencies = [
@@ -141,7 +148,7 @@ dependencies = [
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
+checksum = "85649e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 dependencies = [
  "typenum",
  "version_check",
