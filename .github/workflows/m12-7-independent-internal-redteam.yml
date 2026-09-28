@@ -118,9 +118,9 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --locked -p execsurface-baseline digest_serialization_vector_is_frozen
-          cargo test --locked -p execsurface-cli --test check_linux
-          cargo test --locked -p execsurface-cli --test policy_linux
-          cargo test --locked -p execsurface-cli --test self_service_linux
+          cargo test --locked -p execsurface --test check_linux
+          cargo test --locked -p execsurface --test policy_linux
+          cargo test --locked -p execsurface --test self_service_linux
 
       - name: Full workspace regression
         run: cargo test --locked --workspace --all-targets
