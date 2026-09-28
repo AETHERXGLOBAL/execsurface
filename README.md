@@ -139,6 +139,8 @@ The current Linux x86_64 native `ptrace` reference backend can produce evidence 
 
 Incomplete evidence cannot silently become PASS.
 
+The portable ptrace guard may conservatively mark some clone/thread concurrency incomplete even when exact fd-table sharing is not proven. Raw observation v2 does not retain enough `CLONE_FILES` detail to certify exact sharing, so this guard intentionally trades possible false incompleteness for preventing the known false-completeness class. This is not an exact shared-FD attribution repair.
+
 ## Security boundary
 
 ExecSurface detects **observed execution-surface drift under its recorded observer and policy**.
