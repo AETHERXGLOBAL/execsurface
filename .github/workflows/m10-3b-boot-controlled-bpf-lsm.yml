@@ -49,8 +49,10 @@ jobs:
 
           KERNEL_DIR="$RUNNER_TEMP/m10-3b-kernel"
           EXTRACT_DIR="$RUNNER_TEMP/m10-3b-kernel-extract"
-          rm -rf "$KERNEL_DIR" "$EXTRACT_DIR"
-          mkdir -p "$KERNEL_DIR" "$EXTRACT_DIR"
+          BUILDINFO_DIR="$RUNNER_TEMP/m10-3b-buildinfo"
+          BUILDINFO_EXTRACT="$RUNNER_TEMP/m10-3b-buildinfo-extract"
+          rm -rf "$KERNEL_DIR" "$EXTRACT_DIR" "$BUILDINFO_DIR" "$BUILDINFO_EXTRACT"
+          mkdir -p "$KERNEL_DIR" "$EXTRACT_DIR" "$BUILDINFO_DIR" "$BUILDINFO_EXTRACT"
 
           (
             cd "$KERNEL_DIR"
@@ -61,13 +63,27 @@ jobs:
           dpkg-deb -x "$DEB" "$EXTRACT_DIR"
 
           SOURCE_KERNEL="$(find "$EXTRACT_DIR/boot" -maxdepth 1 -type f -name 'vmlinuz-*-generic' | sort -V | tail -n1)"
-          CONFIG="$(find "$EXTRACT_DIR/boot" -maxdepth 1 -type f -name 'config-*-generic' | sort -V | tail -n1)"
-          if [[ -z "$SOURCE_KERNEL" || -z "$CONFIG" ]]; then
-            echo 'Downloaded kernel package did not contain expected vmlinuz/config files' >&2
+          if [[ -z "$SOURCE_KERNEL" ]]; then
+            echo 'Downloaded kernel package did not contain expected vmlinuz file' >&2
+            exit 1
+          fi
+          VERSION="${SOURCE_KERNEL##*/vmlinuz-}"
+          BUILDINFO_PKG="linux-buildinfo-${VERSION}"
+
+          (
+            cd "$BUILDINFO_DIR"
+            apt-get download "$BUILDINFO_PKG"
+          )
+          BUILDINFO_DEB="$(find "$BUILDINFO_DIR" -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$BUILDINFO_DEB"
+          dpkg-deb -x "$BUILDINFO_DEB" "$BUILDINFO_EXTRACT"
+          CONFIG="$(find "$BUILDINFO_EXTRACT" -type f \( -name 'config' -o -name "config-${VERSION}" \) -print -quit)"
+          if [[ -z "$CONFIG" ]]; then
+            echo 'Matching buildinfo package did not contain expected kernel config' >&2
+            find "$BUILDINFO_EXTRACT" -maxdepth 6 -type f -print >&2 || true
             exit 1
           fi
 
-          VERSION="${SOURCE_KERNEL##*/vmlinuz-}"
           GUEST_KERNEL="$GITHUB_WORKSPACE/m10-3b-artifacts/vmlinuz-${VERSION}"
           cp "$SOURCE_KERNEL" "$GUEST_KERNEL"
           chmod 0644 "$GUEST_KERNEL"
@@ -76,7 +92,12 @@ jobs:
           dpkg-deb -f "$DEB" Package Version Architecture \
             | tee m10-3b-artifacts/guest-kernel-package-metadata.txt
           sha256sum "$DEB" | tee m10-3b-artifacts/guest-kernel-package.sha256
+          printf '%s\n' "$BUILDINFO_PKG" | tee m10-3b-artifacts/guest-buildinfo-package.txt
+          dpkg-deb -f "$BUILDINFO_DEB" Package Version Architecture \
+            | tee m10-3b-artifacts/guest-buildinfo-package-metadata.txt
+          sha256sum "$BUILDINFO_DEB" | tee m10-3b-artifacts/guest-buildinfo-package.sha256
           printf '%s\n' "$SOURCE_KERNEL" | tee m10-3b-artifacts/guest-kernel-source-path.txt
+          printf '%s\n' "$CONFIG" | tee m10-3b-artifacts/guest-kernel-config-source-path.txt
           printf '%s\n' "$GUEST_KERNEL" | tee m10-3b-artifacts/guest-kernel-path.txt
           printf '%s\n' "$VERSION" | tee m10-3b-artifacts/guest-kernel-version.txt
           cp "$CONFIG" m10-3b-artifacts/guest-kernel-config.txt
