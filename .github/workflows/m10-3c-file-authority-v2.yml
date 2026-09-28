@@ -5,6 +5,9 @@ on:
     branches: [research/m10-hybrid-observer-m103c]
     paths:
       - '.github/workflows/m10-3c-file-authority-v2.yml'
+      - 'experiments/m10/bpf-lsm-file/bpf_lsm_file.bpf.c'
+      - 'experiments/m10/bpf-lsm-file/loader.c'
+      - 'docs/milestones/M10_3C_PROTOCOL_AMENDMENT_001_FILE_OPEN_ABI.md'
   workflow_dispatch:
 
 permissions:
@@ -34,7 +37,7 @@ jobs:
           qemu-system-x86_64 --version | tee m10-3c-artifacts/qemu-version.txt
           clang --version | head -n1 | tee m10-3c-artifacts/clang-version.txt
 
-      - name: Build unchanged M10.3 prototype as static guest binary
+      - name: Build amended M10.3 prototype as static guest binary
         shell: bash
         run: |
           set -euxo pipefail
