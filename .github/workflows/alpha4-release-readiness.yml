@@ -92,13 +92,70 @@ jobs:
           test "$(./target/release/execsurface --version)" = 'execsurface 0.1.0-alpha.4'
           ./target/release/execsurface doctor
 
-      - name: Package topology without pretending registry visibility
+      - name: Package topology with explicit sequential-registry boundary
         shell: bash
         run: |
           set -euo pipefail
-          for crate in execsurface-model execsurface-observe execsurface-normalize execsurface-baseline execsurface-diff execsurface-policy execsurface-report execsurface; do
-            cargo package -p "$crate" --locked --allow-dirty --no-verify
-          done
+
+          # The dependency-root crate has no unpublished ExecSurface dependency,
+          # so it must package normally without bypassing verification.
+          cargo package -p execsurface-model --locked --allow-dirty
+
+          # Validate the full prospective dependency graph structurally. Dependent
+          # crates cannot truthfully complete registry-backed packaging until the
+          # exact predecessor version becomes visible on crates.io.
+          python3 - <<'PY'
+          from pathlib import Path
+          import tomllib
+
+          root = tomllib.loads(Path('Cargo.toml').read_text())
+          version = root['workspace']['package']['version']
+          assert version == '0.1.0-alpha.4'
+
+          publishable = {
+              'execsurface-model',
+              'execsurface-observe',
+              'execsurface-normalize',
+              'execsurface-baseline',
+              'execsurface-diff',
+              'execsurface-policy',
+              'execsurface-report',
+              'execsurface',
+          }
+          manifests = {}
+          for path in Path('crates').glob('*/Cargo.toml'):
+              data = tomllib.loads(path.read_text())
+              manifests[data['package']['name']] = (path, data)
+
+          assert publishable.issubset(manifests)
+          assert manifests['execsurface-bench'][1]['package'].get('publish') is False
+
+          for name in publishable:
+              path, data = manifests[name]
+              package = data['package']
+              assert package.get('version', {}).get('workspace') is True
+              assert package['description']
+              for section in ('dependencies', 'dev-dependencies', 'build-dependencies'):
+                  for dep_name, dep in data.get(section, {}).items():
+                      if dep_name.startswith('execsurface-') and isinstance(dep, dict) and 'path' in dep:
+                          assert dep.get('version') == f'={version}', (
+                              f'{path}: {section}.{dep_name} must pin ={version}'
+                          )
+          print('Prospective alpha.4 package graph verified')
+          PY
+
+          # Preserve the real registry boundary as executable evidence: before
+          # publication, the first dependent crate must fail specifically because
+          # execsurface-model alpha.4 is not yet visible in crates.io. Any other
+          # reason is a blocker, and unexpected success means public state changed.
+          set +e
+          cargo package -p execsurface-observe --locked --allow-dirty > "$RUNNER_TEMP/observe-package.log" 2>&1
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/observe-package.log"
+          test "$rc" -eq 101
+          grep -F 'no matching package named `execsurface-model` found' "$RUNNER_TEMP/observe-package.log"
+          grep -F 'crates.io index' "$RUNNER_TEMP/observe-package.log"
 
       - name: Prospective release bundle and checksum
         shell: bash

@@ -63,9 +63,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -F 'pathname access attempts;' README.md
+          grep -F 'pathname access attempts,' README.md
           grep -F 'observed execution-surface drift under its recorded observer and policy' README.md
           grep -F 'Incomplete evidence cannot silently become PASS.' README.md
+          grep -F 'eBPF/BPF-LSM work remains research-only/non-default' README.md
 
       - name: Format adversarial test
         run: rustfmt --edition 2021 --check crates/execsurface-observe/tests/m12_adversarial.rs
