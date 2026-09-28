@@ -83,8 +83,7 @@ fn main() {
                 libc::signal(libc::SIGUSR1, libc::SIG_IGN);
             }
             let flags = libc::SIGUSR1 as libc::c_long;
-            let child = unsafe { libc::syscall(libc::SYS_clone, flags, 0, 0, 0, 0) }
-                as libc::pid_t;
+            let child = unsafe { libc::syscall(libc::SYS_clone, flags, 0, 0, 0, 0) } as libc::pid_t;
             assert!(child >= 0, "private clone failed");
             if child == 0 {
                 let mut byte = [0_u8; 1];
