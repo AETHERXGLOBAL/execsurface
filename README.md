@@ -16,7 +16,7 @@ ExecSurface learns an accepted **runtime execution surface**, runs the same comm
 
 It is intended for CI pipelines, dependencies, developer tools and AI-assisted workflows where source review alone does not show every runtime effect.
 
-> **Public Alpha:** Linux x86_64 only. Release candidate version: **0.1.0-alpha.4**.
+> **Public Alpha:** Linux x86_64 only. Current public release: **v0.1.0-alpha.4**.
 >
 > **Self-service:** no signup, API key, meeting, or AETHER X approval is required.
 
@@ -157,6 +157,7 @@ A valid attestation links the artifact to its build source/workflow. It does **n
 
 ## Documentation
 
+- [Current Status](docs/STATUS.md)
 - [Self-Service Start](docs/SELF_SERVICE_START.md)
 - [Five-Minute Start](docs/QUICKSTART_5_MIN.md)
 - [GitHub Action](docs/GITHUB_ACTION.md)
