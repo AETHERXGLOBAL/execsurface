@@ -1,0 +1,50 @@
+name: M11 authority integration CI
+
+on:
+  push:
+    branches:
+      - research/m11-authority-aware-integration
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/execsurface-authority/**'
+      - 'crates/execsurface-baseline/**'
+      - '.github/workflows/m11-authority-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authority-and-compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Toolchain evidence
+        run: |
+          uname -a
+          rustc --version --verbose
+          cargo --version
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Authority tests
+        run: cargo test --locked -p execsurface-authority
+
+      - name: Frozen baseline v2 compatibility tests
+        run: cargo test --locked -p execsurface-baseline digest_serialization_vector_is_frozen
+
+      - name: Full workspace tests
+        run: cargo test --locked --workspace --all-targets
+
+      - name: Lockfile integrity
+        run: |
+          git diff --exit-code -- Cargo.lock
+          test -z "$(git status --porcelain -- Cargo.lock)"
