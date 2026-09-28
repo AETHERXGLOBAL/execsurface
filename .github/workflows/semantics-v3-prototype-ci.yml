@@ -1,0 +1,32 @@
+name: Semantics v3 prototype CI
+
+on:
+  push:
+    branches: [development/post-alpha4-behavioral-integrity]
+    paths:
+      - .github/workflows/semantics-v3-prototype-ci.yml
+      - crates/execsurface-model/**
+      - docs/development/SEMANTICS_V3_*.md
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  model:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Model clippy
+        run: cargo clippy --locked -p execsurface-model --all-targets -- -D warnings
+
+      - name: Model tests
+        run: cargo test --locked -p execsurface-model --all-targets
