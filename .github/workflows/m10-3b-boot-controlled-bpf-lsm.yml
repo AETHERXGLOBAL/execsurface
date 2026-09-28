@@ -39,18 +39,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          KERNEL="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' | sort -V | tail -n1)"
-          if [[ -z "$KERNEL" ]]; then
-            echo 'No packaged guest kernel found' >&2
+          SOURCE_KERNEL="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*-generic' | sort -V | tail -n1)"
+          if [[ -z "$SOURCE_KERNEL" ]]; then
+            echo 'No packaged generic guest kernel found' >&2
             exit 1
           fi
-          VERSION="${KERNEL#/boot/vmlinuz-}"
+          VERSION="${SOURCE_KERNEL#/boot/vmlinuz-}"
           CONFIG="/boot/config-${VERSION}"
           test -r "$CONFIG"
 
-          printf '%s\n' "$KERNEL" | tee m10-3b-artifacts/guest-kernel-path.txt
+          # The hosted runner may deliberately protect files under /boot.  Copy the
+          # intentionally installed generic kernel into this disposable workspace;
+          # do not relax host permissions or modify the host kernel configuration.
+          GUEST_KERNEL="$GITHUB_WORKSPACE/m10-3b-artifacts/vmlinuz-${VERSION}"
+          sudo cp "$SOURCE_KERNEL" "$GUEST_KERNEL"
+          sudo chown "$(id -u):$(id -g)" "$GUEST_KERNEL"
+          chmod 0644 "$GUEST_KERNEL"
+
+          printf '%s\n' "$SOURCE_KERNEL" | tee m10-3b-artifacts/guest-kernel-source-path.txt
+          printf '%s\n' "$GUEST_KERNEL" | tee m10-3b-artifacts/guest-kernel-path.txt
           printf '%s\n' "$VERSION" | tee m10-3b-artifacts/guest-kernel-version.txt
           cp "$CONFIG" m10-3b-artifacts/guest-kernel-config.txt
+          sha256sum "$GUEST_KERNEL" | tee m10-3b-artifacts/guest-kernel.sha256
 
           python3 - "$CONFIG" <<'PY'
           import json, sys
@@ -83,7 +93,7 @@ jobs:
           else
             echo 'config_capable=false' >> "$GITHUB_OUTPUT"
           fi
-          echo "kernel=$KERNEL" >> "$GITHUB_OUTPUT"
+          echo "kernel=$GUEST_KERNEL" >> "$GITHUB_OUTPUT"
 
       - name: Build minimal boot probe initramfs
         if: steps.kernel.outputs.config_capable == 'true'
@@ -94,7 +104,7 @@ jobs:
           rm -rf "$ROOT"
           mkdir -p "$ROOT"/{bin,dev,proc,sys,sys/kernel/security,tmp}
           cp /bin/busybox "$ROOT/bin/busybox"
-          for app in sh mount cat grep echo poweroff reboot sleep; do
+          for app in sh mount cat grep echo poweroff reboot sleep sync; do
             ln -s busybox "$ROOT/bin/$app"
           done
 
