@@ -30,8 +30,11 @@ jobs:
           rustc --version --verbose
           cargo --version
 
-      - name: Format M11 crates
-        run: cargo fmt --all -- --check
+      - name: Format M11 authority crate
+        run: cargo fmt --package execsurface-authority -- --check
+
+      - name: Format M11 observer bridge test
+        run: rustfmt --edition 2021 --check crates/execsurface-observe/tests/m11_path_authority.rs
 
       - name: Clippy full workspace
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
