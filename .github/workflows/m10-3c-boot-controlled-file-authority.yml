@@ -1,0 +1,267 @@
+name: M10.3C boot-controlled BPF-LSM file authority
+
+on:
+  push:
+    branches:
+      - research/m10-hybrid-observer-m103c
+    paths:
+      - 'docs/milestones/M10_3C_BOOT_CONTROLLED_FILE_AUTHORITY_PROTOCOL.md'
+      - 'experiments/m10/bpf-lsm-file/**'
+      - '.github/workflows/m10-3c-boot-controlled-file-authority.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  file-authority:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install build and boot dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p m10-3c-artifacts
+          uname -a | tee m10-3c-artifacts/host-uname.txt
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 busybox-static cpio \
+            clang llvm bpftool gcc pkg-config \
+            libbpf-dev libelf-dev zlib1g-dev libc6-dev
+          qemu-system-x86_64 --version | tee m10-3c-artifacts/qemu-version.txt
+          bpftool version | tee m10-3c-artifacts/bpftool-version.txt
+          clang --version | head -n1 | tee m10-3c-artifacts/clang-version.txt
+
+      - name: Build frozen BPF-LSM experiment for guest
+        id: build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          DIR="$GITHUB_WORKSPACE/experiments/m10/bpf-lsm-file"
+          test -r /sys/kernel/btf/vmlinux
+          bpftool btf dump file /sys/kernel/btf/vmlinux format c > "$DIR/vmlinux.h"
+          clang -g -O2 -target bpf -D__TARGET_ARCH_x86 \
+            -I"$DIR" -I/usr/include/$(uname -m)-linux-gnu \
+            -c "$DIR/bpf_lsm_file.bpf.c" -o "$DIR/bpf_lsm_file.bpf.o"
+          bpftool gen skeleton "$DIR/bpf_lsm_file.bpf.o" > "$DIR/bpf_lsm_file.skel.h"
+
+          STATIC_LIBS="$(pkg-config --static --libs libbpf)"
+          echo "static_libs=$STATIC_LIBS" | tee m10-3c-artifacts/static-link-input.txt
+          gcc -O2 -g -Wall -Wextra -Werror -static \
+            -I"$DIR" "$DIR/loader.c" -o "$DIR/m10_bpf_lsm_file" \
+            $STATIC_LIBS -pthread
+          file "$DIR/m10_bpf_lsm_file" | tee m10-3c-artifacts/loader-file.txt
+          sha256sum \
+            "$DIR/bpf_lsm_file.bpf.c" "$DIR/loader.c" \
+            "$DIR/bpf_lsm_file.bpf.o" "$DIR/m10_bpf_lsm_file" \
+            | tee m10-3c-artifacts/build-sha256.txt
+          if ldd "$DIR/m10_bpf_lsm_file" 2>&1 | grep -q 'not a dynamic executable'; then
+            echo 'static_loader=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'loader is not self-contained' >&2
+            ldd "$DIR/m10_bpf_lsm_file" || true
+            exit 1
+          fi
+
+      - name: Acquire and validate guest kernel
+        id: kernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          KERNEL_PKG="$(apt-cache show linux-image-generic \
+            | sed -n 's/^Depends: \(linux-image-[^, ]*-generic\).*/\1/p' \
+            | head -n1)"
+          test -n "$KERNEL_PKG"
+          KERNEL_DIR="$RUNNER_TEMP/m10-3c-kernel"
+          EXTRACT_DIR="$RUNNER_TEMP/m10-3c-kernel-extract"
+          BUILDINFO_DIR="$RUNNER_TEMP/m10-3c-buildinfo"
+          BUILDINFO_EXTRACT="$RUNNER_TEMP/m10-3c-buildinfo-extract"
+          rm -rf "$KERNEL_DIR" "$EXTRACT_DIR" "$BUILDINFO_DIR" "$BUILDINFO_EXTRACT"
+          mkdir -p "$KERNEL_DIR" "$EXTRACT_DIR" "$BUILDINFO_DIR" "$BUILDINFO_EXTRACT"
+          (cd "$KERNEL_DIR" && apt-get download "$KERNEL_PKG")
+          DEB="$(find "$KERNEL_DIR" -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          dpkg-deb -x "$DEB" "$EXTRACT_DIR"
+          SOURCE_KERNEL="$(find "$EXTRACT_DIR/boot" -maxdepth 1 -type f -name 'vmlinuz-*-generic' | sort -V | tail -n1)"
+          test -n "$SOURCE_KERNEL"
+          VERSION="${SOURCE_KERNEL##*/vmlinuz-}"
+          BUILDINFO_PKG="linux-buildinfo-${VERSION}"
+          (cd "$BUILDINFO_DIR" && apt-get download "$BUILDINFO_PKG")
+          BUILDINFO_DEB="$(find "$BUILDINFO_DIR" -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          dpkg-deb -x "$BUILDINFO_DEB" "$BUILDINFO_EXTRACT"
+          CONFIG="$(find "$BUILDINFO_EXTRACT" -type f \( -name 'config' -o -name "config-${VERSION}" \) -print -quit)"
+          test -n "$CONFIG"
+          GUEST_KERNEL="$GITHUB_WORKSPACE/m10-3c-artifacts/vmlinuz-${VERSION}"
+          cp "$SOURCE_KERNEL" "$GUEST_KERNEL"
+          chmod 0644 "$GUEST_KERNEL"
+          cp "$CONFIG" m10-3c-artifacts/guest-kernel-config.txt
+          printf '%s\n' "$VERSION" | tee m10-3c-artifacts/guest-kernel-version.txt
+          printf '%s\n' "$KERNEL_PKG" | tee m10-3c-artifacts/guest-kernel-package.txt
+          printf '%s\n' "$BUILDINFO_PKG" | tee m10-3c-artifacts/guest-buildinfo-package.txt
+          sha256sum "$DEB" "$BUILDINFO_DEB" "$GUEST_KERNEL" \
+            | tee m10-3c-artifacts/kernel-input-sha256.txt
+
+          python3 - "$CONFIG" <<'PY'
+          import json, sys
+          from pathlib import Path
+          values={}
+          for line in Path(sys.argv[1]).read_text().splitlines():
+              if line.startswith('CONFIG_') and '=' in line:
+                  k,v=line.split('=',1); values[k]=v
+          required=['CONFIG_BPF','CONFIG_BPF_SYSCALL','CONFIG_BPF_LSM']
+          present={k:values.get(k,'<unset>') for k in required}
+          capable=all(present[k]=='y' for k in required)
+          Path('m10-3c-artifacts/kernel-config-gate.json').write_text(json.dumps({'required_config':present,'kernel_config_capable':capable},indent=2)+'\n')
+          raise SystemExit(0 if capable else 1)
+          PY
+          echo "kernel=$GUEST_KERNEL" >> "$GITHUB_OUTPUT"
+
+      - name: Build experiment initramfs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$RUNNER_TEMP/m10-3c-root"
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT"/{bin,dev,proc,sys,sys/kernel/security,tmp}
+          chmod 1777 "$ROOT/tmp"
+          cp /bin/busybox "$ROOT/bin/busybox"
+          for app in sh mount cat grep echo poweroff reboot sleep sync; do
+            ln -s busybox "$ROOT/bin/$app"
+          done
+          cp experiments/m10/bpf-lsm-file/m10_bpf_lsm_file "$ROOT/bin/m10_bpf_lsm_file"
+          chmod 0755 "$ROOT/bin/m10_bpf_lsm_file"
+
+          cat > "$ROOT/init" <<'EOF'
+          #!/bin/sh
+          set -eu
+          export PATH=/bin
+          mount -t proc proc /proc
+          mount -t sysfs sysfs /sys
+          mkdir -p /sys/kernel/security
+          mount -t securityfs securityfs /sys/kernel/security || true
+          mount -t devtmpfs devtmpfs /dev || true
+
+          echo 'M10_3C_PROBE_BEGIN'
+          echo "M10_3C_CMDLINE=$(cat /proc/cmdline 2>/dev/null || true)"
+          if [ -r /sys/kernel/security/lsm ]; then
+            echo "M10_3C_LSM_LIST=$(cat /sys/kernel/security/lsm)"
+          else
+            echo 'M10_3C_LSM_LIST=<unreadable>'
+          fi
+          if [ -r /sys/kernel/btf/vmlinux ]; then
+            echo 'M10_3C_BTF_READABLE=true'
+          else
+            echo 'M10_3C_BTF_READABLE=false'
+          fi
+
+          set +e
+          /bin/m10_bpf_lsm_file
+          RC=$?
+          set -e
+          echo "M10_3C_LOADER_RC=$RC"
+          echo 'M10_3C_PROBE_COMPLETE'
+          sync
+          reboot -f
+          EOF
+          chmod 0755 "$ROOT/init"
+          (
+            cd "$ROOT"
+            find . -print0 | cpio --null -ov --format=newc 2> "$GITHUB_WORKSPACE/m10-3c-artifacts/cpio.stderr.txt" \
+              | gzip -9 > "$GITHUB_WORKSPACE/m10-3c-artifacts/initramfs.cpio.gz"
+          )
+          sha256sum m10-3c-artifacts/initramfs.cpio.gz | tee m10-3c-artifacts/initramfs.sha256
+
+      - name: Execute frozen proposition inside BPF-LSM guest
+        shell: bash
+        run: |
+          set -uo pipefail
+          KERNEL="${{ steps.kernel.outputs.kernel }}"
+          INITRD="$GITHUB_WORKSPACE/m10-3c-artifacts/initramfs.cpio.gz"
+          LOG="$GITHUB_WORKSPACE/m10-3c-artifacts/guest-serial.log"
+          CMDLINE='console=ttyS0 panic=-1 lsm=bpf'
+          printf '%s\n' "qemu-system-x86_64 -machine accel=tcg -cpu max -m 768M -nographic -no-reboot -kernel $KERNEL -initrd $INITRD -append '$CMDLINE'" \
+            > m10-3c-artifacts/qemu-command.txt
+          set +e
+          timeout 180s qemu-system-x86_64 \
+            -machine accel=tcg -cpu max -m 768M -nographic -no-reboot \
+            -kernel "$KERNEL" -initrd "$INITRD" -append "$CMDLINE" \
+            > "$LOG" 2>&1
+          RC=$?
+          set -e
+          echo "$RC" > m10-3c-artifacts/qemu-exit-code.txt
+          cat "$LOG"
+
+      - name: Classify frozen M10.3 proposition
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          A=Path('m10-3c-artifacts')
+          log=(A/'guest-serial.log').read_text(errors='replace') if (A/'guest-serial.log').exists() else ''
+          cfg=json.loads((A/'kernel-config-gate.json').read_text()) if (A/'kernel-config-gate.json').exists() else {}
+          complete='M10_3C_PROBE_COMPLETE' in log
+          lsm_m=re.search(r'^M10_3C_LSM_LIST=(.*)$',log,re.M)
+          lsm=lsm_m.group(1).strip() if lsm_m else '<missing>'
+          bpf_active='bpf' in [x.strip() for x in lsm.split(',')]
+          btf=bool(re.search(r'^M10_3C_BTF_READABLE=true$',log,re.M))
+          rc_m=re.search(r'^M10_3C_LOADER_RC=(\d+)$',log,re.M)
+          loader_rc=int(rc_m.group(1)) if rc_m else None
+          cand_m=re.search(r'^classification_candidate=(\S+)$',log,re.M)
+          candidate=cand_m.group(1) if cand_m else None
+          target_m=re.search(r'^target_exit=(-?\d+)$',log,re.M)
+          target_exit=int(target_m.group(1)) if target_m else None
+          a_m=re.search(r'^a_dev=(\d+) a_ino=(\d+) a_events=(\d+) expected=(\d+)$',log,re.M)
+          b_m=re.search(r'^b_dev=(\d+) b_ino=(\d+) b_events=(\d+) expected=(\d+)$',log,re.M)
+          h_m=re.search(r'^other_session_events=(\d+) wrong_session_events=(\d+) drops=(\d+)$',log,re.M)
+          a_events=int(a_m.group(3)) if a_m else None
+          a_expected=int(a_m.group(4)) if a_m else None
+          b_events=int(b_m.group(3)) if b_m else None
+          b_expected=int(b_m.group(4)) if b_m else None
+          other=int(h_m.group(1)) if h_m else None
+          wrong=int(h_m.group(2)) if h_m else None
+          drops=int(h_m.group(3)) if h_m else None
+
+          env_ok=bool(cfg.get('kernel_config_capable')) and complete and bpf_active and btf
+          exact=(target_exit==0 and a_events==a_expected==100 and b_events==b_expected==100 and other==0 and wrong==0 and drops==0)
+          if not env_ok:
+              classification='BPF_LSM_FILE_HOST_UNAVAILABLE' if complete else 'BPF_LSM_FILE_INFRA_FAILURE'
+          elif loader_rc==0 and candidate=='BPF_LSM_FILE_AUTHORITY_PASS' and exact:
+              classification='BPF_LSM_FILE_AUTHORITY_PASS'
+          elif target_exit==0 and drops==0 and wrong==0 and other is not None and other>0:
+              classification='BPF_LSM_FILE_COUNTEREXAMPLE'
+          elif candidate=='BPF_LSM_FILE_AUTHORITY_PARTIAL' or loader_rc==3:
+              classification='BPF_LSM_FILE_AUTHORITY_PARTIAL'
+          elif loader_rc==42:
+              classification='BPF_LSM_FILE_HOST_UNAVAILABLE'
+          else:
+              classification='BPF_LSM_FILE_INFRA_FAILURE'
+
+          result={
+            'protocol':'M10_3C_BOOT_CONTROLLED_FILE_AUTHORITY',
+            'classification':classification,
+            'environment':{'config_capable':bool(cfg.get('kernel_config_capable')),'active_lsms':lsm,'bpf_lsm_active':bpf_active,'btf_readable':btf,'probe_complete':complete},
+            'loader_rc':loader_rc,'loader_candidate':candidate,'target_exit':target_exit,
+            'a_events':a_events,'a_expected':a_expected,'b_events':b_events,'b_expected':b_expected,
+            'other_events':other,'wrong_session_events':wrong,'drops':drops,
+            'semantic_authority_scope':'file-object proposition only' if classification=='BPF_LSM_FILE_AUTHORITY_PASS' else 'none',
+            'product_integration_authorized':False,
+            'public_pass_authority_granted':False,
+          }
+          (A/'result.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          PY
+
+      - name: Upload M10.3C evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m10-3c-boot-controlled-file-authority-evidence
+          path: m10-3c-artifacts/
+          if-no-files-found: error
