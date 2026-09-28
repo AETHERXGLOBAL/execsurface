@@ -19,6 +19,7 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
+execsurface-authority = { path = "../execsurface-authority", version = "=0.1.0-alpha.3" }
 serde_json.workspace = true
 
 [[bin]]
