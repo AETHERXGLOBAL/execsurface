@@ -74,6 +74,33 @@ fn main() {
             assert!(libc::WIFEXITED(status));
             assert_eq!(libc::WEXITSTATUS(status), 0);
         }
+        Some("clone-private-read") => {
+            let path = args.next().expect("file path");
+            let file = File::open(path).expect("open");
+            let fd = file.as_raw_fd();
+
+            unsafe {
+                libc::signal(libc::SIGUSR1, libc::SIG_IGN);
+            }
+            let flags = libc::SIGUSR1 as libc::c_long;
+            let child = unsafe { libc::syscall(libc::SYS_clone, flags, 0, 0, 0, 0) }
+                as libc::pid_t;
+            assert!(child >= 0, "private clone failed");
+            if child == 0 {
+                let mut byte = [0_u8; 1];
+                let result = unsafe { libc::read(fd, byte.as_mut_ptr().cast(), 1) };
+                unsafe { libc::_exit(if result == 1 { 0 } else { 1 }) };
+            }
+
+            let mut status = 0;
+            assert_eq!(
+                unsafe { libc::waitpid(child, &mut status, libc::__WCLONE) },
+                child,
+                "wait private clone"
+            );
+            assert!(libc::WIFEXITED(status));
+            assert_eq!(libc::WEXITSTATUS(status), 0);
+        }
         Some("thread-read") => {
             let path = args.next().expect("file path");
             let count: usize = args.next().expect("thread count").parse().expect("count");
