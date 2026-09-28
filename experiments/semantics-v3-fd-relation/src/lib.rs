@@ -61,10 +61,7 @@ mod tests {
     #[test]
     fn clone_files_is_shared() {
         assert_eq!(
-            classify_fd_table_relation(
-                SpawnMechanism::Clone,
-                Some(libc::CLONE_FILES as u64)
-            ),
+            classify_fd_table_relation(SpawnMechanism::Clone, Some(libc::CLONE_FILES as u64)),
             FdTableRelation::Shared
         );
     }
@@ -80,10 +77,7 @@ mod tests {
     #[test]
     fn clone_thread_without_clone_files_does_not_launder_shared_authority() {
         assert_eq!(
-            classify_fd_table_relation(
-                SpawnMechanism::Clone,
-                Some(libc::CLONE_THREAD as u64)
-            ),
+            classify_fd_table_relation(SpawnMechanism::Clone, Some(libc::CLONE_THREAD as u64)),
             FdTableRelation::IndependentCopy
         );
     }
