@@ -6,7 +6,7 @@ on:
       release_tag:
         description: Immutable ExecSurface release tag to publish
         required: true
-        default: v0.1.0-alpha.3
+        default: v0.1.0-alpha.4
         type: string
 
 permissions:
@@ -48,42 +48,19 @@ jobs:
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-
-          published() {
-            crate="$1"
-            cargo info "$crate@$version" --registry crates-io >/dev/null 2>&1
-          }
-
+          published() { crate="$1"; cargo info "$crate@$version" --registry crates-io >/dev/null 2>&1; }
           publish_one() {
             crate="$1"
-
-            if published "$crate"; then
-              echo "$crate $version already exists on crates.io; skipping"
-              return 0
-            fi
-
+            if published "$crate"; then echo "$crate $version already exists on crates.io; skipping"; return 0; fi
             for attempt in $(seq 1 5); do
               echo "Publishing $crate $version (attempt $attempt/5)"
-              if cargo publish -p "$crate" --locked; then
-                echo "$crate $version published"
-                return 0
-              fi
-
-              if published "$crate"; then
-                echo "$crate $version is visible after the publish response; continuing"
-                return 0
-              fi
-
-              if [ "$attempt" -lt 5 ]; then
-                echo "Publish did not complete; backing off before retry"
-                sleep 30
-              fi
+              if cargo publish -p "$crate" --locked; then echo "$crate $version published"; return 0; fi
+              if published "$crate"; then echo "$crate $version is visible after the publish response; continuing"; return 0; fi
+              if [ "$attempt" -lt 5 ]; then sleep 30; fi
             done
-
             echo "::error::failed to publish $crate $version"
             return 1
           }
-
           publish_one execsurface-model
           publish_one execsurface-observe
           publish_one execsurface-normalize
@@ -98,21 +75,15 @@ jobs:
           set -euo pipefail
           version="${RELEASE_TAG#v}"
           root="$RUNNER_TEMP/crates-io-consumer"
-
           installed=0
           for attempt in $(seq 1 10); do
             rm -rf "$root"
-            if cargo install execsurface --version "=$version" --locked --root "$root"; then
-              installed=1
-              break
-            fi
+            if cargo install execsurface --version "=$version" --locked --root "$root"; then installed=1; break; fi
             echo "Registry install not ready yet (attempt $attempt/10)"
             sleep 10
           done
           test "$installed" = "1"
-
           test "$("$root/bin/execsurface" --version)" = "execsurface $version"
-
           work="$RUNNER_TEMP/crates-io-work"
           mkdir -p "$work"
           cd "$work"

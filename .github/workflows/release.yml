@@ -110,14 +110,11 @@ jobs:
             echo
             echo "Build workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } >> "$notes"
-
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --clobber --repo "$GITHUB_REPOSITORY"
             gh release edit "$TAG" --prerelease --title "ExecSurface $TAG" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" \
-              --verify-tag --prerelease --title "ExecSurface $TAG" --notes-file "$notes" \
-              --repo "$GITHUB_REPOSITORY"
+            gh release create "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --verify-tag --prerelease --title "ExecSurface $TAG" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
           fi
 
   binary-consumer:
@@ -177,10 +174,7 @@ jobs:
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/cargo-install"
-          cargo install \
-            --git https://github.com/AETHERXGLOBAL/execsurface.git \
-            --tag "$TAG" \
-            execsurface --locked --root "$root"
+          cargo install --git https://github.com/AETHERXGLOBAL/execsurface.git --tag "$TAG" execsurface --locked --root "$root"
           test "$("$root/bin/execsurface" --version)" = "execsurface $VERSION"
 
   immutable-action-consumer:
@@ -211,7 +205,7 @@ jobs:
 
       - name: Prove immutable Action tag
         id: immutable
-        uses: AETHERXGLOBAL/execsurface@v0.1.0-alpha.3
+        uses: AETHERXGLOBAL/execsurface@v0.1.0-alpha.4
         with:
           command: "true"
           baseline: immutable.lock.json
@@ -232,13 +226,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-
       - name: Move v0.1 only after release gates
         env:
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           set -euo pipefail
-          test "$TAG" = "v0.1.0-alpha.3"
+          test "$TAG" = "v0.1.0-alpha.4"
           release_sha="$(git rev-list -n1 "$TAG")"
           test "$release_sha" = "$GITHUB_SHA"
           git config user.name "github-actions[bot]"
@@ -280,14 +273,7 @@ jobs:
             "schema_version": 2,
             "default_action": "review",
             "rules": [
-              {
-                "id": "block-added-exec",
-                "action": "block",
-                "match": {
-                  "change": "added",
-                  "effect": "process_exec"
-                }
-              }
+              {"id": "block-added-exec", "action": "block", "match": {"change": "added", "effect": "process_exec"}}
             ]
           }
           JSON
@@ -299,7 +285,6 @@ jobs:
           command: "true"
           baseline: pass.lock.json
           upload-artifact: "false"
-
       - name: Stable REVIEW
         id: review
         uses: AETHERXGLOBAL/execsurface@v0.1
@@ -307,7 +292,6 @@ jobs:
           command: "true; /bin/echo x >/dev/null"
           baseline: review.lock.json
           upload-artifact: "false"
-
       - name: Stable BLOCK
         id: block
         continue-on-error: true
@@ -317,7 +301,6 @@ jobs:
           baseline: block.lock.json
           policy: block-policy.json
           upload-artifact: "false"
-
       - name: Stable ERROR
         id: error
         continue-on-error: true
@@ -326,7 +309,6 @@ jobs:
           command: "true"
           baseline: missing.lock.json
           upload-artifact: "false"
-
       - name: Assert stable channel semantics
         env:
           PASS_VERDICT: ${{ steps.pass.outputs.verdict }}
@@ -358,8 +340,5 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           set -euo pipefail
-          gh workflow run publish-crates.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            --ref main \
-            -f release_tag="$TAG"
+          gh workflow run publish-crates.yml --repo "$GITHUB_REPOSITORY" --ref main -f release_tag="$TAG"
           echo "Dispatched crates.io publication for $TAG"

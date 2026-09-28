@@ -1,0 +1,123 @@
+name: Alpha.4 Release Readiness
+
+on:
+  push:
+    branches:
+      - release/v0.1.0-alpha.4
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Identity and tag absence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "v0.1.0-alpha.4"
+          version="$(cargo metadata --locked --no-deps --format-version 1 | python -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="execsurface"))')"
+          test "$version" = "0.1.0-alpha.4"
+          if git ls-remote --exit-code --tags origin refs/tags/v0.1.0-alpha.4 >/dev/null 2>&1; then
+            echo 'v0.1.0-alpha.4 tag already exists before readiness closeout' >&2
+            exit 1
+          fi
+
+      - name: Active release surfaces contain no alpha.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            Cargo.toml Cargo.lock
+            crates/execsurface-model/Cargo.toml
+            crates/execsurface-observe/Cargo.toml
+            crates/execsurface-normalize/Cargo.toml
+            crates/execsurface-baseline/Cargo.toml
+            crates/execsurface-diff/Cargo.toml
+            crates/execsurface-policy/Cargo.toml
+            crates/execsurface-report/Cargo.toml
+            crates/execsurface-cli/Cargo.toml
+            README.md action/release-tag.txt
+            docs/QUICKSTART_5_MIN.md docs/SELF_SERVICE_START.md docs/GITHUB_ACTION.md
+            .github/workflows/release.yml .github/workflows/publish-crates.yml
+          )
+          if grep -nF '0.1.0-alpha.3' "${files[@]}"; then
+            echo 'stale alpha.3 reference in active release surface' >&2
+            exit 1
+          fi
+
+      - name: Exact internal dependency pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          for p in Path('crates').glob('*/Cargo.toml'):
+              text=p.read_text()
+              if 'execsurface-' in text and '=0.1.0-alpha.3' in text:
+                  raise SystemExit(f'stale internal pin: {p}')
+          PY
+
+      - name: Release workflow alpha.4 bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'AETHERXGLOBAL/execsurface@v0.1.0-alpha.4' .github/workflows/release.yml
+          grep -F 'test "$TAG" = "v0.1.0-alpha.4"' .github/workflows/release.yml
+          grep -F 'default: v0.1.0-alpha.4' .github/workflows/publish-crates.yml
+          test -f docs/releases/v0.1.0-alpha.4.md
+
+      - name: Format Clippy and full tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace --all-targets
+          git diff --exit-code -- Cargo.lock
+          test -z "$(git status --porcelain -- Cargo.lock)"
+
+      - name: Build and version smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p execsurface --bin execsurface
+          test "$(./target/release/execsurface --version)" = 'execsurface 0.1.0-alpha.4'
+          ./target/release/execsurface doctor
+
+      - name: Package topology without pretending registry visibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          for crate in execsurface-model execsurface-observe execsurface-normalize execsurface-baseline execsurface-diff execsurface-policy execsurface-report execsurface; do
+            cargo package -p "$crate" --locked --allow-dirty --no-verify
+          done
+
+      - name: Prospective release bundle and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag=v0.1.0-alpha.4
+          target=x86_64-unknown-linux-gnu
+          dirname="execsurface-${tag}-${target}"
+          asset="${dirname}.tar.gz"
+          mkdir -p "dist/$dirname"
+          cp target/release/execsurface "dist/$dirname/execsurface"
+          cp LICENSE NOTICE "dist/$dirname/"
+          printf 'ExecSurface %s\nsource_commit=%s\ntarget=%s\nevidence_schema=v2\n' "$tag" "$GITHUB_SHA" "$target" > "dist/$dirname/BUILD_INFO.txt"
+          tar -C dist -czf "dist/$asset" "$dirname"
+          (cd dist && sha256sum "$asset" > "$asset.sha256" && sha256sum -c "$asset.sha256")
+
+      - name: Public-line ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=100
+          git merge-base --is-ancestor origin/main HEAD
