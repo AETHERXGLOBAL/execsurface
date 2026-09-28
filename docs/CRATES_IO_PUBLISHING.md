@@ -1,28 +1,16 @@
 # crates.io Publishing
 
-ExecSurface uses GitHub Releases as its checksum-verified, provenance-attested binary distribution channel and crates.io as the primary Rust-native installation channel.
+ExecSurface uses GitHub Releases as its checksum-verified, provenance-attested binary distribution channel and crates.io as the Rust-native installation channel.
 
 ## Public install
-
-The verified public install path is:
 
 ```bash
 cargo install execsurface --locked
 ```
 
-The installed binary is:
+The release workflow for `0.1.0-alpha.4` publishes to crates.io only after the immutable GitHub release, immutable Action consumer, stable `v0.1` promotion, and stable PASS / REVIEW / BLOCK / ERROR gates succeed.
 
-```text
-execsurface
-```
-
-The first verified registry release is `0.1.0-alpha.2`.
-
-The current verified registry release is `0.1.0-alpha.3`.
-
-A fresh public-consumer release workflow verified the corresponding immutable source and distribution paths, and the registry index records `execsurface 0.1.0-alpha.3` with exact `0.1.0-alpha.3` dependencies across the published ExecSurface runtime crate chain.
-
-The verified consumer path includes:
+The verified consumer path is:
 
 ```text
 execsurface --version
@@ -31,15 +19,9 @@ execsurface learn -- /bin/bash -lc true
 execsurface check -- /bin/bash -lc true
 ```
 
-The no-drift check returns `PASS` with zero findings on the accepted smoke workload.
-
 ## Why several crates are published
 
-The CLI is intentionally composed from independently tested workspace crates. Cargo registry packages cannot depend on unpublished path-only workspace crates, so the publishable runtime crates carry the same exact prerelease version and are published in dependency order.
-
-The benchmark probe is internal engineering support and is explicitly `publish = false`.
-
-Publish order:
+The CLI is composed from independently tested workspace crates. Registry packages cannot depend on unpublished path-only workspace crates, so publishable runtime crates carry the same exact prerelease version and are published in dependency order:
 
 1. `execsurface-model`
 2. `execsurface-observe`
@@ -50,31 +32,17 @@ Publish order:
 7. `execsurface-report`
 8. `execsurface`
 
+`execsurface-bench` is internal engineering support and `publish = false`.
+
 ## Publication security model
 
-Publishing requires an authenticated crates.io token stored only in the GitHub Environment named `crates-io` as `CARGO_REGISTRY_TOKEN`.
+Publishing requires an authenticated crates.io token stored only in the GitHub Environment `crates-io` as `CARGO_REGISTRY_TOKEN`. The token must never be pasted into an issue, chat, commit, log or documentation.
 
-The token must never be pasted into an issue, chat, commit, log or documentation.
+The release workflow checks out the immutable release tag, verifies tag identity against Cargo metadata and `action/release-tag.txt`, runs source/package gates, publishes in dependency order, skips versions already present so interrupted chains can resume safely, and proves a fresh registry install.
 
-The normal release workflow:
+## Sequential registry visibility
 
-1. checks out the requested immutable release tag;
-2. verifies tag identity against Cargo metadata and `action/release-tag.txt`;
-3. runs source/package gates;
-4. publishes the workspace crates in dependency order;
-5. skips versions already present in crates.io so interrupted chains can resume safely;
-6. proves a fresh `cargo install execsurface` consumer from the registry.
-
-For `0.1.0-alpha.3`, registry publication is dispatched only after the GitHub Release binary, immutable Action, stable `v0.1` channel, and stable PASS / REVIEW / BLOCK / ERROR consumer gates succeed.
-
-## Preserved first-publication failures
-
-The initial `0.1.0-alpha.2` publication retained two operational failures rather than hiding them:
-
-- the first authenticated upload was blocked because the crates.io account email was not yet verified;
-- after several new crate names were published, crates.io enforced its new-crate rate limit.
-
-The recovery workflow was idempotent, kept the immutable release source fixed, skipped packages that were already present, resumed after the server-provided rate-limit window, and completed the remaining publications.
+A prerelease dependency chain cannot truthfully be treated as fully registry-dry-runnable before the new dependency versions exist on crates.io. The publish workflow therefore publishes and verifies visibility in dependency order. This operational constraint is preserved from M12.6 rather than hidden.
 
 ## Permanence
 

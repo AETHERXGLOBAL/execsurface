@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "execsurface"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "execsurface-baseline",
  "execsurface-diff",
@@ -62,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "execsurface-baseline"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "execsurface-model",
  "serde",
@@ -72,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "execsurface-bench"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "execsurface-normalize",
  "execsurface-observe",
@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "execsurface-diff"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "execsurface-baseline",
  "execsurface-model",
@@ -91,14 +91,14 @@ dependencies = [
 
 [[package]]
 name = "execsurface-model"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "execsurface-normalize"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "execsurface-model",
  "execsurface-observe",
@@ -108,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "execsurface-observe"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "execsurface-model",
  "libc",
@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "execsurface-policy"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "execsurface-diff",
  "execsurface-model",
@@ -127,7 +127,7 @@ dependencies = [
 
 [[package]]
 name = "execsurface-report"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 dependencies = [
  "execsurface-policy",
 ]

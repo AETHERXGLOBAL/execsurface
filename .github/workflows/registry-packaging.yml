@@ -49,7 +49,7 @@ jobs:
 
           # Before the first registry publication, only the leaf crate can be
           # fully packaged and verified against crates.io.
-          cargo package -p execsurface-model --allow-dirty
+          cargo package -p execsurface-model --locked --allow-dirty
 
           # Dependent crates will package successfully only after their exact
           # prerelease dependencies are present in the registry. Validate the
@@ -59,7 +59,8 @@ jobs:
           from pathlib import Path
           import tomllib
 
-          version = "0.1.0-alpha.3"
+          root = tomllib.loads(Path("Cargo.toml").read_text())
+          version = root["workspace"]["package"]["version"]
           publishable = {
               "execsurface-model",
               "execsurface-observe",
@@ -101,5 +102,5 @@ jobs:
           cli = manifests["execsurface"][1]["package"]
           assert cli["keywords"]
           assert cli["categories"]
-          print("Registry manifest graph verified")
+          print(f"Registry manifest graph verified for {version}")
           PY
