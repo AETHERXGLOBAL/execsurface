@@ -133,7 +133,7 @@ jobs:
           grep -F 'The public correctness-reference backend is native `ptrace`.' README.md
           grep -F 'eBPF work remains research-only' README.md
           grep -F 'BPF-LSM / kernel-hook work remains managed/research-only and non-default' docs/releases/v0.1.0-alpha.4.DRAFT.md
-          grep -F 'no ptrace↔hybrid baseline interchangeability' docs/releases/v0.1.0-alpha.4.DRAFT.md
+          grep -F 'does not authorize automatic hybrid selection, new privilege requirements for the portable path, ptrace↔hybrid baseline interchangeability' docs/releases/v0.1.0-alpha.4.DRAFT.md
 
       - name: Claim-boundary kill sentinels
         shell: bash
