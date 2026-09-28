@@ -1,8 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0-only
-#include "vmlinux.h"
+#include <linux/bpf.h>
+#include <linux/types.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
+
+struct super_block {
+    __u32 s_dev;
+} __attribute__((preserve_access_index));
+
+struct inode {
+    unsigned long i_ino;
+    struct super_block *i_sb;
+} __attribute__((preserve_access_index));
+
+struct file {
+    struct inode *f_inode;
+    unsigned int f_flags;
+} __attribute__((preserve_access_index));
 
 struct file_open_event {
     __u64 session_id;
