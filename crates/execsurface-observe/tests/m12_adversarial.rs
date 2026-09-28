@@ -33,7 +33,10 @@ fn ab_from_path(path: &str) -> Option<char> {
 }
 
 fn has_warning(observation: &execsurface_model::Observation, code: &str) -> bool {
-    observation.warnings.iter().any(|warning| warning.code == code)
+    observation
+        .warnings
+        .iter()
+        .any(|warning| warning.code == code)
 }
 
 fn write_result(name: &str, value: &serde_json::Value) {
@@ -130,8 +133,14 @@ fn path_toctou_counterexample_is_replayed_and_non_pass_eligible() {
     });
     write_result("path-toctou.json", &result);
 
-    assert!(valid_truth_runs > 0, "path fixture produced no valid kernel truth");
-    assert!(mismatch_runs > 0, "known PATH-TOCTOU counterexample did not reproduce");
+    assert!(
+        valid_truth_runs > 0,
+        "path fixture produced no valid kernel truth"
+    );
+    assert!(
+        mismatch_runs > 0,
+        "known PATH-TOCTOU counterexample did not reproduce"
+    );
     assert_eq!(
         mismatch_fail_closed_runs, mismatch_runs,
         "a reproduced PATH-TOCTOU mismatch remained pass-eligible"
@@ -217,8 +226,14 @@ fn shared_fd_counterexample_is_replayed_and_fail_closed() {
     });
     write_result("shared-fd.json", &result);
 
-    assert_eq!(fail_closed_attempts, attempts, "shared-FD ambiguity did not always fail closed");
-    assert!(divergent_attempts > 0, "known shared-FD divergence did not reproduce");
+    assert_eq!(
+        fail_closed_attempts, attempts,
+        "shared-FD ambiguity did not always fail closed"
+    );
+    assert!(
+        divergent_attempts > 0,
+        "known shared-FD divergence did not reproduce"
+    );
 }
 
 #[test]
@@ -254,21 +269,28 @@ fn failed_open_attempt_is_not_promoted_to_fd_success_effect() {
     .expect("observe failed open");
 
     let expected = missing.to_string_lossy();
-    let saw_attempt = observation.events.iter().any(|event| matches!(
-        &event.kind,
-        RawEventKind::FilePathAccess {
-            operation: FileOperation::Open,
-            path,
-            ..
-        } if path == expected.as_ref()
-    ));
-    let promoted_success = observation.events.iter().any(|event| matches!(
-        &event.kind,
-        RawEventKind::FileDescriptorAccess { path, .. } if path == expected.as_ref()
-    ));
+    let saw_attempt = observation.events.iter().any(|event| {
+        matches!(
+            &event.kind,
+            RawEventKind::FilePathAccess {
+                operation: FileOperation::Open,
+                path,
+                ..
+            } if path == expected.as_ref()
+        )
+    });
+    let promoted_success = observation.events.iter().any(|event| {
+        matches!(
+            &event.kind,
+            RawEventKind::FileDescriptorAccess { path, .. } if path == expected.as_ref()
+        )
+    });
 
     assert!(saw_attempt, "failed open attempt was not observed");
-    assert!(!promoted_success, "failed open was promoted to a successful fd effect");
+    assert!(
+        !promoted_success,
+        "failed open was promoted to a successful fd effect"
+    );
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -291,13 +313,16 @@ fn observation_sessions_do_not_leak_prior_file_identity() {
         _ => false,
     }));
 
-    let second = observe_command(&CommandSpec::new(fixture()).arg("noop"))
-        .expect("second observation");
-    assert!(!second.events.iter().any(|event| match &event.kind {
-        RawEventKind::FilePathAccess { path, .. }
-        | RawEventKind::FileDescriptorAccess { path, .. } => path == expected.as_ref(),
-        _ => false,
-    }), "second observation leaked first-session file identity");
+    let second =
+        observe_command(&CommandSpec::new(fixture()).arg("noop")).expect("second observation");
+    assert!(
+        !second.events.iter().any(|event| match &event.kind {
+            RawEventKind::FilePathAccess { path, .. }
+            | RawEventKind::FileDescriptorAccess { path, .. } => path == expected.as_ref(),
+            _ => false,
+        }),
+        "second observation leaked first-session file identity"
+    );
 
     let _ = fs::remove_dir_all(dir);
 }
@@ -307,7 +332,9 @@ fn unsupported_experimental_capabilities_cannot_be_confused_with_default() {
     let reference = reference_backend_descriptor();
     let experimental = experimental_ebpf_backend_descriptor();
 
-    reference.validate_capability_partition().expect("reference partition");
+    reference
+        .validate_capability_partition()
+        .expect("reference partition");
     experimental
         .validate_capability_partition()
         .expect("experimental partition");
