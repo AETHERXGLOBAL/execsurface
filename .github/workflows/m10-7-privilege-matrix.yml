@@ -1,0 +1,214 @@
+name: M10.7 privilege matrix
+
+on:
+  push:
+    branches: [research/m10-hybrid-observer-m107]
+    paths:
+      - '.github/workflows/m10-7-privilege-matrix.yml'
+      - 'experiments/m10/privilege-matrix/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  privilege-matrix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build static privilege probe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p m10-7-artifacts
+          gcc -O2 -Wall -Wextra -Werror -static experiments/m10/privilege-matrix/probe.c -o m10-7-artifacts/probe
+          file m10-7-artifacts/probe | tee m10-7-artifacts/probe-file.txt
+          file m10-7-artifacts/probe | grep -q 'statically linked'
+          sha256sum experiments/m10/privilege-matrix/probe.c m10-7-artifacts/probe | tee m10-7-artifacts/probe-sha256.txt
+
+      - name: P1 hosted runner host
+        shell: bash
+        run: |
+          set -euxo pipefail
+          {
+            if sudo test -r /sys/kernel/security/lsm; then
+              sudo cat /sys/kernel/security/lsm
+            else
+              sudo mkdir -p /sys/kernel/security
+              sudo mount -t securityfs securityfs /sys/kernel/security 2>/dev/null || true
+              if sudo test -r /sys/kernel/security/lsm; then sudo cat /sys/kernel/security/lsm; else echo '<unreadable>'; fi
+            fi
+          } | tr -d '\n' > m10-7-artifacts/host-lsm.txt
+          echo >> m10-7-artifacts/host-lsm.txt
+          cat /proc/sys/kernel/unprivileged_bpf_disabled | tee m10-7-artifacts/host-unprivileged-bpf-disabled.txt
+          sudo ./m10-7-artifacts/probe root | tee m10-7-artifacts/host-root-probe.txt
+          uname -a | tee m10-7-artifacts/host-uname.txt
+
+      - name: P2 and P3 container matrix
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$RUNNER_TEMP/m10-7-container-root"
+          mkdir -p "$ROOT"
+          cp m10-7-artifacts/probe "$ROOT/probe"
+          chmod 0755 "$ROOT/probe"
+          tar -C "$ROOT" -cf "$RUNNER_TEMP/m10-7-rootfs.tar" .
+          cat "$RUNNER_TEMP/m10-7-rootfs.tar" | docker import - m10-priv-local:latest >/dev/null
+          set +e
+          docker run --rm m10-priv-local:latest /probe root > m10-7-artifacts/container-default-probe.txt 2>&1
+          echo $? > m10-7-artifacts/container-default-docker-rc.txt
+          docker run --rm --privileged m10-priv-local:latest /probe root > m10-7-artifacts/container-privileged-probe.txt 2>&1
+          echo $? > m10-7-artifacts/container-privileged-docker-rc.txt
+          set -e
+          cat m10-7-artifacts/container-default-probe.txt
+          cat m10-7-artifacts/container-privileged-probe.txt
+
+      - name: Install guest dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 busybox-static cpio
+          qemu-system-x86_64 --version | tee m10-7-artifacts/qemu-version.txt
+
+      - name: Acquire BPF-LSM-capable guest kernel
+        id: kernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          KERNEL_PKG="$(apt-cache show linux-image-generic | sed -n 's/^Depends: \(linux-image-[^, ]*-generic\).*/\1/p' | head -n1)"
+          test -n "$KERNEL_PKG"
+          KDIR="$RUNNER_TEMP/kernel"; KX="$RUNNER_TEMP/kernel-x"; BDIR="$RUNNER_TEMP/buildinfo"; BX="$RUNNER_TEMP/buildinfo-x"
+          mkdir -p "$KDIR" "$KX" "$BDIR" "$BX"
+          (cd "$KDIR" && apt-get download "$KERNEL_PKG")
+          KDEB="$(find "$KDIR" -name '*.deb' -print -quit)"; dpkg-deb -x "$KDEB" "$KX"
+          SOURCE_KERNEL="$(find "$KX/boot" -name 'vmlinuz-*-generic' | sort -V | tail -n1)"; VERSION="${SOURCE_KERNEL##*/vmlinuz-}"
+          (cd "$BDIR" && apt-get download "linux-buildinfo-${VERSION}")
+          BDEB="$(find "$BDIR" -name '*.deb' -print -quit)"; dpkg-deb -x "$BDEB" "$BX"
+          CONFIG="$(find "$BX" -type f \( -name config -o -name "config-${VERSION}" \) -print -quit)"
+          test -n "$SOURCE_KERNEL"; test -n "$CONFIG"
+          for x in CONFIG_BPF=y CONFIG_BPF_SYSCALL=y CONFIG_BPF_LSM=y; do grep -qx "$x" "$CONFIG"; done
+          GUEST_KERNEL="$GITHUB_WORKSPACE/m10-7-artifacts/vmlinuz-${VERSION}"
+          cp "$SOURCE_KERNEL" "$GUEST_KERNEL"; chmod 0644 "$GUEST_KERNEL"; cp "$CONFIG" m10-7-artifacts/guest-kernel-config.txt
+          echo "$VERSION" | tee m10-7-artifacts/guest-kernel-version.txt
+          echo "kernel=$GUEST_KERNEL" >> "$GITHUB_OUTPUT"
+
+      - name: Build isolated guest matrix
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$RUNNER_TEMP/m10-7-guest-root"
+          mkdir -p "$ROOT"/{bin,dev,proc,sys,sys/kernel/security,tmp}
+          chmod 1777 "$ROOT/tmp"
+          cp /bin/busybox "$ROOT/bin/busybox"
+          for a in sh mount cat echo reboot sync; do ln -s busybox "$ROOT/bin/$a"; done
+          cp m10-7-artifacts/probe "$ROOT/bin/probe"
+          cat > "$ROOT/init" <<'EOF'
+          #!/bin/sh
+          set -eu
+          export PATH=/bin
+          mount -t proc proc /proc
+          mount -t sysfs sysfs /sys
+          mkdir -p /sys/kernel/security
+          mount -t securityfs securityfs /sys/kernel/security || true
+          mount -t devtmpfs devtmpfs /dev || true
+          echo M10_7_GUEST_BEGIN
+          printf 'M10_7_GUEST_LSM='
+          cat /sys/kernel/security/lsm 2>/dev/null || echo '<unreadable>'
+          echo
+          if [ -r /sys/kernel/btf/vmlinux ]; then echo M10_7_GUEST_BTF=true; else echo M10_7_GUEST_BTF=false; fi
+          printf 'M10_7_GUEST_UNPRIV_BPF='
+          cat /proc/sys/kernel/unprivileged_bpf_disabled 2>/dev/null || echo '<unreadable>'
+          echo 'M10_7_P4_BEGIN'
+          /bin/probe root
+          echo 'M10_7_P4_END'
+          echo 'M10_7_P5_BEGIN'
+          /bin/probe drop
+          echo 'M10_7_P5_END'
+          echo 'M10_7_P6_BEGIN'
+          /bin/probe userns
+          echo 'M10_7_P6_END'
+          echo M10_7_GUEST_COMPLETE
+          sync
+          reboot -f
+          EOF
+          chmod 0755 "$ROOT/init"
+          (cd "$ROOT" && find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip -9 > "$GITHUB_WORKSPACE/m10-7-artifacts/initramfs.cpio.gz")
+          sha256sum m10-7-artifacts/initramfs.cpio.gz | tee m10-7-artifacts/initramfs.sha256
+
+      - name: P4 P5 P6 boot-controlled guest matrix
+        shell: bash
+        run: |
+          set -uo pipefail
+          LOG=m10-7-artifacts/guest-serial.log
+          set +e
+          timeout 180s qemu-system-x86_64 -machine accel=tcg -cpu max -m 768M -nographic -no-reboot -kernel '${{ steps.kernel.outputs.kernel }}' -initrd m10-7-artifacts/initramfs.cpio.gz -append 'console=ttyS0 panic=-1 lsm=bpf' > "$LOG" 2>&1
+          echo $? > m10-7-artifacts/qemu-exit-code.txt
+          set -e
+          cat "$LOG"
+
+      - name: Frozen matrix evaluator
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          A=Path('m10-7-artifacts')
+          def text(name):
+              p=A/name
+              return p.read_text(errors='replace') if p.exists() else ''
+          def parse_probe(s, mode):
+              pat=(r'^mode='+re.escape(mode)+r' uid=(\d+) euid=(\d+) gid=(\d+) egid=(\d+) '
+                   r'userns_rc=(-?\d+) userns_errno=(\d+) bpf_rc=(-?\d+) bpf_errno=(\d+)$')
+              m=re.search(pat,s,re.M)
+              if not m: return None
+              k=['uid','euid','gid','egid','userns_rc','userns_errno','bpf_rc','bpf_errno']
+              return dict(zip(k,map(int,m.groups())))
+          host_lsm=text('host-lsm.txt').strip()
+          host_bpf='bpf' in [x.strip() for x in host_lsm.split(',')]
+          host_sysctl=text('host-unprivileged-bpf-disabled.txt').strip()
+          p1=parse_probe(text('host-root-probe.txt'),'root')
+          p2=parse_probe(text('container-default-probe.txt'),'root')
+          p3=parse_probe(text('container-privileged-probe.txt'),'root')
+          guest=text('guest-serial.log')
+          gm=re.search(r'^M10_7_GUEST_LSM=(.*)$',guest,re.M)
+          guest_lsm=gm.group(1).strip() if gm else '<missing>'
+          guest_bpf='bpf' in [x.strip() for x in guest_lsm.split(',')]
+          guest_btf='M10_7_GUEST_BTF=true' in guest
+          guest_complete='M10_7_GUEST_COMPLETE' in guest
+          p4=parse_probe(guest,'root')
+          p5=parse_probe(guest,'drop')
+          p6=parse_probe(guest,'userns')
+          contexts_complete=all(x is not None for x in [p1,p2,p3,p4,p5,p6]) and host_lsm not in ('','<unreadable>') and guest_complete
+          if contexts_complete and (not host_bpf) and guest_bpf and guest_btf and p4['bpf_rc']==0 and p5['bpf_rc']==-1:
+              cls='M10_7_PRIVILEGE_MATRIX_CONFIRMED'
+          elif contexts_complete and (host_bpf or not guest_bpf or p4['bpf_rc']!=0 or p5['bpf_rc']==0):
+              cls='M10_7_PRIVILEGE_MATRIX_SURPRISE'
+          elif guest_complete or any([p1,p2,p3,p4,p5,p6]):
+              cls='M10_7_MATRIX_INCOMPLETE'
+          else:
+              cls='M10_7_INFRA_FAILURE'
+          result={
+              'classification':cls,
+              'host':{'lsms':host_lsm,'bpf_lsm_active':host_bpf,'unprivileged_bpf_disabled':host_sysctl,'root_probe':p1},
+              'container_default':p2,
+              'container_privileged':p3,
+              'guest':{'lsms':guest_lsm,'bpf_lsm_active':guest_bpf,'btf_readable':guest_btf,'root_probe':p4,'unprivileged_probe':p5,'userns_probe':p6},
+              'public_default_authorized':False,
+              'product_integration_authorized':False
+          }
+          (A/'result.json').write_text(json.dumps(result,indent=2)+'\n')
+          print(json.dumps(result,indent=2))
+          PY
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m10-7-privilege-matrix-evidence
+          path: m10-7-artifacts/
+          if-no-files-found: error
