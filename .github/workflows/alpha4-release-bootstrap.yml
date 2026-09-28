@@ -1,0 +1,144 @@
+name: Alpha.4 Release Bootstrap
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/alpha4-release-bootstrap.yml
+
+permissions:
+  contents: read
+
+jobs:
+  pretag-and-dispatch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Freeze alpha.4 release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=v0.1.0-alpha.4
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "$TAG"
+          version="$(cargo metadata --locked --no-deps --format-version 1 | python -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="execsurface"))')"
+          test "$version" = 0.1.0-alpha.4
+          test -f docs/releases/$TAG.md
+          if git ls-remote --exit-code --tags origin refs/tags/$TAG >/dev/null 2>&1; then
+            echo "$TAG already exists; refusing duplicate release bootstrap" >&2
+            exit 1
+          fi
+
+      - name: Exact-source source and semantic gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets -- -D warnings
+          cargo test --locked --workspace --all-targets
+          git diff --exit-code -- Cargo.lock
+          test -z "$(git status --porcelain -- Cargo.lock)"
+
+      - name: Exact-source release smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p execsurface --bin execsurface
+          test "$(./target/release/execsurface --version)" = 'execsurface 0.1.0-alpha.4'
+          ./target/release/execsurface doctor
+          work="$RUNNER_TEMP/pretag-smoke"
+          mkdir -p "$work"
+          (
+            cd "$work"
+            "$GITHUB_WORKSPACE/target/release/execsurface" learn -- /bin/bash -lc true
+            "$GITHUB_WORKSPACE/target/release/execsurface" check -- /bin/bash -lc true
+          )
+
+      - name: Package graph and sequential-registry boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo package -p execsurface-model --locked --allow-dirty
+          python3 - <<'PY'
+          from pathlib import Path
+          import tomllib
+          root = tomllib.loads(Path('Cargo.toml').read_text())
+          version = root['workspace']['package']['version']
+          assert version == '0.1.0-alpha.4'
+          publishable = {
+              'execsurface-model','execsurface-observe','execsurface-normalize',
+              'execsurface-baseline','execsurface-diff','execsurface-policy',
+              'execsurface-report','execsurface',
+          }
+          manifests = {}
+          for path in Path('crates').glob('*/Cargo.toml'):
+              data = tomllib.loads(path.read_text())
+              manifests[data['package']['name']] = (path, data)
+          assert publishable.issubset(manifests)
+          assert manifests['execsurface-bench'][1]['package'].get('publish') is False
+          for name in publishable:
+              path, data = manifests[name]
+              assert data['package'].get('version', {}).get('workspace') is True
+              assert data['package']['description']
+              for section in ('dependencies','dev-dependencies','build-dependencies'):
+                  for dep_name, dep in data.get(section, {}).items():
+                      if dep_name.startswith('execsurface-') and isinstance(dep, dict) and 'path' in dep:
+                          assert dep.get('version') == f'={version}', f'{path}: {section}.{dep_name}'
+          PY
+          set +e
+          cargo package -p execsurface-observe --locked --allow-dirty > "$RUNNER_TEMP/observe-package.log" 2>&1
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/observe-package.log"
+          test "$rc" -eq 101
+          grep -F 'execsurface-model = "=0.1.0-alpha.4"' "$RUNNER_TEMP/observe-package.log"
+          grep -F 'crates.io index' "$RUNNER_TEMP/observe-package.log"
+          if ! grep -F 'no matching package named `execsurface-model` found' "$RUNNER_TEMP/observe-package.log" >/dev/null \
+             && ! grep -F 'failed to select a version for the requirement `execsurface-model' "$RUNNER_TEMP/observe-package.log" >/dev/null; then
+            echo 'unexpected registry failure mode before alpha.4 publication' >&2
+            exit 1
+          fi
+
+      - name: Prospective bundle checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=v0.1.0-alpha.4
+          target=x86_64-unknown-linux-gnu
+          dirname="execsurface-${TAG}-${target}"
+          asset="${dirname}.tar.gz"
+          mkdir -p "dist/$dirname"
+          cp target/release/execsurface "dist/$dirname/execsurface"
+          cp LICENSE NOTICE "dist/$dirname/"
+          printf 'ExecSurface %s\nsource_commit=%s\ntarget=%s\nevidence_schema=v2\n' "$TAG" "$GITHUB_SHA" "$target" > "dist/$dirname/BUILD_INFO.txt"
+          tar -C dist -czf "dist/$asset" "$dirname"
+          (cd dist && sha256sum "$asset" > "$asset.sha256" && sha256sum -c "$asset.sha256")
+
+      - name: Create immutable alpha.4 tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG=v0.1.0-alpha.4
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "$GITHUB_SHA" -m "ExecSurface $TAG"
+          git push origin "refs/tags/$TAG"
+          test "$(git rev-list -n1 "$TAG")" = "$GITHUB_SHA"
+
+      - name: Dispatch release workflow on immutable tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref v0.1.0-alpha.4
+          echo 'Dispatched Release ExecSurface on v0.1.0-alpha.4'
