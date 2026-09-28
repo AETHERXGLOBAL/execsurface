@@ -40,6 +40,14 @@ Rehearse the next-alpha release boundary from the frozen portable candidate and 
 
 The dry run must prove that a staged next-alpha identity can produce internally coherent source/package/binary metadata, checksummed release artifacts, a machine-readable provenance statement, release notes, and a clean consumer install/smoke path without mutating the current public line.
 
+## Failure-first record
+
+Attempt 001 is preserved in `M12_6_FAILURE_001_DOWNSTREAM_PACKAGE_REGISTRY_VISIBILITY.md`.
+
+It established that Cargo can create the prospective `execsurface-model` package, but cannot complete registry-backed packaging of `execsurface-observe` until `execsurface-model = =0.1.0-alpha.4` exists in crates.io. This is a real sequential-publication constraint, not a product-code failure.
+
+The gate therefore does not pretend that all downstream crates can perform a full crates.io package/publish dry run before their exact prospective dependencies exist publicly.
+
 ## Mandatory assertions
 
 ### A. Public-line immutability
@@ -74,10 +82,15 @@ The staged source must pass:
 - `cargo clippy --locked --workspace --all-targets -- -D warnings`;
 - `cargo test --locked --workspace --all-targets`;
 - `cargo metadata --locked`;
-- package archive creation (`cargo package --no-verify --allow-dirty`) for the publishable ExecSurface crates in dependency order;
-- `cargo publish -p execsurface-model --locked --dry-run` as the registry-front-of-chain dry-run sentinel.
+- exact prospective internal dependency-topology validation for all publishable crates;
+- `cargo package --locked --allow-dirty --no-verify -p execsurface-model`;
+- `cargo publish -p execsurface-model --locked --dry-run --allow-dirty` as the registry-front-of-chain dry-run sentinel;
+- `cargo package --list --allow-dirty -p <crate>` for every publishable ExecSurface crate;
+- an explicit negative sentinel proving `execsurface-observe` registry-backed package preparation fails only because prospective `execsurface-model = =0.1.0-alpha.4` is not yet visible in crates.io.
 
-Later internal crates are not allowed to be represented as full crates.io publication dry runs before their prospective dependency versions exist in the registry. Their package archives are structural packaging evidence only.
+Any different downstream packaging failure is a gate failure.
+
+Downstream crates are not represented as full crates.io publication dry runs before their prospective dependency versions exist in the registry. The real publish workflow remains responsible for sequential publication and registry visibility waits.
 
 ### D. Release binary and bundle
 
@@ -137,7 +150,10 @@ The workflow must upload an evidence artifact containing at least:
 - environment/toolchain records;
 - staged cargo metadata;
 - staged Cargo.lock and its digest;
-- package archive listing/digests;
+- publishable-crate package file-set listings;
+- actual `execsurface-model` package archive and digest;
+- root-crate publish dry-run log;
+- expected downstream registry-visibility failure log;
 - release binary digest;
 - release archive and `.sha256`;
 - `BUILD_INFO.txt`;
