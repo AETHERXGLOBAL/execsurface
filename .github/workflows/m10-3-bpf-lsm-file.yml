@@ -82,20 +82,42 @@ jobs:
           rustup toolchain install 1.82.0 --profile minimal
 
       - name: Resolve isolated lock and build
+        id: build
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           rm -f experiments/m10-bpf-lsm/Cargo.lock
           CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
             cargo +1.87.0 generate-lockfile --manifest-path experiments/m10-bpf-lsm/Cargo.toml
           cc -O2 -Wall -Wextra \
             experiments/m10-bpf-lsm/fixtures/file_open_identity.c \
             -o /tmp/m10-file-open-identity
-          cargo +1.82.0 build --locked --manifest-path experiments/m10-bpf-lsm/Cargo.toml
-          echo 'build_validated=true' | tee m10-3-artifacts/build.txt
+
+          set +e
+          cargo +1.82.0 build --locked --manifest-path experiments/m10-bpf-lsm/Cargo.toml \
+            > >(tee m10-3-artifacts/build.stdout.txt) \
+            2> >(tee m10-3-artifacts/build.stderr.txt >&2)
+          rc=$?
+          set -e
+
+          python3 - "$rc" <<'PY'
+          import json, sys
+          from pathlib import Path
+          rc = int(sys.argv[1])
+          Path('m10-3-artifacts/build.json').write_text(json.dumps({
+              'build_exit_code': rc,
+              'build_validated': rc == 0,
+          }, indent=2) + '\n')
+          PY
+
+          if [[ "$rc" -eq 0 ]]; then
+            echo 'valid=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'valid=false' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run audit-only BPF-LSM proposition
-        if: steps.lsm_gate.outputs.available == 'true'
+        if: steps.lsm_gate.outputs.available == 'true' && steps.build.outputs.valid == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -107,13 +129,15 @@ jobs:
             m10-3-artifacts/collector.json \
             m10-3-artifacts/result.json
 
-      - name: Display frozen result
+      - name: Display frozen evidence state
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           test -f m10-3-artifacts/result.json
           cat m10-3-artifacts/result.json
+          test -f m10-3-artifacts/build.json
+          cat m10-3-artifacts/build.json
 
       - name: Upload M10.3 evidence
         if: always()
