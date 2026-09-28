@@ -41,6 +41,7 @@ jobs:
           rustfmt --edition 2021 --check crates/execsurface-observe/src/lib.rs
           rustfmt --edition 2021 --check crates/execsurface-observe/tests/m11_path_authority.rs
           rustfmt --edition 2021 --check crates/execsurface-observe/tests/m11_shared_fd_ambiguity.rs
+          rustfmt --edition 2021 --check crates/execsurface-observe/tests/m11_privacy_redteam.rs
 
       - name: Clippy full workspace
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
@@ -51,11 +52,20 @@ jobs:
       - name: Explicit hybrid adapter tests
         run: cargo test --locked -p execsurface-hybrid-authority
 
+      - name: Proposition comparability red-team
+        run: cargo test --locked -p execsurface-hybrid-authority --test m11_comparability
+
+      - name: Hybrid fail-closed red-team
+        run: cargo test --locked -p execsurface-hybrid-authority --test m11_redteam
+
       - name: Ptrace authority bridge tests
         run: cargo test --locked -p execsurface-observe --test m11_path_authority
 
       - name: Shared-fd ambiguity tests
         run: cargo test --locked -p execsurface-observe --test m11_shared_fd_ambiguity
+
+      - name: Ptrace privacy sentinel red-team
+        run: cargo test --locked -p execsurface-observe --test m11_privacy_redteam
 
       - name: Frozen baseline v2 compatibility tests
         run: cargo test --locked -p execsurface-baseline digest_serialization_vector_is_frozen
