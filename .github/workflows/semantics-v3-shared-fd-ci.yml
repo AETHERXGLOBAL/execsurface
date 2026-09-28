@@ -6,6 +6,8 @@ on:
     paths:
       - .github/workflows/semantics-v3-shared-fd-ci.yml
       - experiments/semantics-v3-fd-relation/**
+      - crates/execsurface-observe/src/bin/execsurface-fixture.rs
+      - crates/execsurface-observe/tests/m11_shared_fd_ambiguity.rs
       - docs/development/SEMANTICS_V3_S5_*.md
   workflow_dispatch:
 
@@ -30,3 +32,21 @@ jobs:
 
       - name: Classifier tests
         run: cargo test --locked --manifest-path experiments/semantics-v3-fd-relation/Cargo.toml --all-targets
+
+  live-ptrace-shared-fd:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Workspace formatting
+        run: cargo fmt --all -- --check
+
+      - name: Observe clippy
+        run: cargo clippy --locked -p execsurface-observe --all-targets -- -D warnings
+
+      - name: Shared-FD adversarial tests
+        run: cargo test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
