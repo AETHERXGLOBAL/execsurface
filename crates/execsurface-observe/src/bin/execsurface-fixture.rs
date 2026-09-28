@@ -102,8 +102,16 @@ fn main() {
                 let replacement = File::open(new_path).expect("open replacement file");
                 let replacement_fd = replacement.into_raw_fd();
                 if replacement_fd != fd {
-                    assert_eq!(unsafe { libc::dup2(replacement_fd, fd) }, fd, "dup2 replacement fd");
-                    assert_eq!(unsafe { libc::close(replacement_fd) }, 0, "close extra replacement fd");
+                    assert_eq!(
+                        unsafe { libc::dup2(replacement_fd, fd) },
+                        fd,
+                        "dup2 replacement fd"
+                    );
+                    assert_eq!(
+                        unsafe { libc::close(replacement_fd) },
+                        0,
+                        "close extra replacement fd"
+                    );
                 }
                 replace_barrier.wait();
             });
