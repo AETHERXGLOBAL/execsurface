@@ -1,0 +1,81 @@
+name: M10.3A hosted BPF-LSM capability matrix
+
+on:
+  push:
+    branches:
+      - research/m10-hybrid-observer-m103
+    paths:
+      - 'docs/milestones/M10_3A_HOSTED_BPF_LSM_MATRIX_PROTOCOL.md'
+      - '.github/workflows/m10-3a-hosted-bpf-lsm-matrix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capability:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - ubuntu-26.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Record frozen environment facts
+        shell: bash
+        env:
+          REQUESTED_RUNNER: ${{ matrix.runner }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          uname -a > evidence/uname.txt
+          id > evidence/id.txt
+          cat /proc/self/status > evidence/proc-self-status.txt
+          cat /proc/sys/kernel/unprivileged_bpf_disabled > evidence/unprivileged_bpf_disabled.txt 2>/dev/null || echo '<unreadable>' > evidence/unprivileged_bpf_disabled.txt
+          if [[ -r /sys/kernel/security/lsm ]]; then
+            cat /sys/kernel/security/lsm > evidence/lsm.txt
+          else
+            echo '<unreadable>' > evidence/lsm.txt
+          fi
+          if [[ -r /sys/kernel/btf/vmlinux ]]; then
+            echo true > evidence/kernel_btf_readable.txt
+          else
+            echo false > evidence/kernel_btf_readable.txt
+          fi
+
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+
+          label = os.environ['REQUESTED_RUNNER']
+          lsm = Path('evidence/lsm.txt').read_text().strip()
+          btf = Path('evidence/kernel_btf_readable.txt').read_text().strip() == 'true'
+          active = [x.strip() for x in lsm.split(',') if x.strip()] if not lsm.startswith('<') else []
+          bpf_lsm = 'bpf' in active
+          classification = 'M10_3A_HOST_CAPABLE' if bpf_lsm and btf else 'M10_3A_HOST_BLOCKED'
+          result = {
+              'protocol': 'M10_3A_HOSTED_BPF_LSM_MATRIX',
+              'requested_runner': label,
+              'classification': classification,
+              'active_lsms': lsm,
+              'bpf_lsm_active': bpf_lsm,
+              'kernel_btf_readable': btf,
+              'unprivileged_bpf_disabled': Path('evidence/unprivileged_bpf_disabled.txt').read_text().strip(),
+          }
+          Path('evidence/result.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result, indent=2))
+          PY
+
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: m10-3a-${{ matrix.runner }}
+          path: evidence/
+          if-no-files-found: error
