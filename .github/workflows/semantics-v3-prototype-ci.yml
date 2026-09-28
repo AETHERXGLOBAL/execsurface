@@ -5,6 +5,7 @@ on:
     branches: [development/post-alpha4-behavioral-integrity]
     paths:
       - .github/workflows/semantics-v3-prototype-ci.yml
+      - Cargo.lock
       - crates/execsurface-model/**
       - docs/development/SEMANTICS_V3_*.md
   workflow_dispatch:
