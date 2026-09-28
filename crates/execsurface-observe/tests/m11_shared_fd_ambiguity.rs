@@ -44,8 +44,8 @@ fn clone_based_threading_fails_closed_for_fd_lifecycle_completeness() {
 #[test]
 fn no_clone_control_does_not_invent_shared_fd_ambiguity() {
     let fixture = env!("CARGO_BIN_EXE_execsurface-fixture");
-    let observation = observe_command(&CommandSpec::new(fixture).arg("noop"))
-        .expect("observe no-clone control");
+    let observation =
+        observe_command(&CommandSpec::new(fixture).arg("noop")).expect("observe no-clone control");
 
     assert_eq!(
         warning_count(&observation, "shared_fd_table_ambiguity"),
