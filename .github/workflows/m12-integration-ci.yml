@@ -7,6 +7,7 @@ on:
     paths:
       - 'crates/execsurface-observe/**'
       - 'crates/execsurface-baseline/**'
+      - 'crates/execsurface-cli/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/m12-integration-ci.yml'
@@ -17,6 +18,7 @@ on:
     paths:
       - 'crates/execsurface-observe/**'
       - 'crates/execsurface-baseline/**'
+      - 'crates/execsurface-cli/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/m12-integration-ci.yml'
@@ -29,7 +31,7 @@ permissions:
 jobs:
   portable-semantic-integration:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -55,8 +57,22 @@ jobs:
       - name: Existing ptrace Linux regressions
         run: cargo test --locked -p execsurface-observe --test ptrace_linux
 
-      - name: Frozen baseline v2 compatibility
+      - name: Frozen baseline v2 serialization compatibility
         run: cargo test --locked -p execsurface-baseline digest_serialization_vector_is_frozen
+
+      - name: Legacy baseline schema is rejected, never reinterpreted
+        run: cargo test --locked -p execsurface-baseline legacy_lock_schema_is_rejected_instead_of_reinterpreted
+
+      - name: CLI learn/check compatibility
+        run: |
+          cargo test --locked -p execsurface --test learn_linux
+          cargo test --locked -p execsurface --test check_linux
+
+      - name: CLI stable verdict exit codes
+        run: cargo test --locked -p execsurface --test policy_linux
+
+      - name: CLI self-service compatibility
+        run: cargo test --locked -p execsurface --test self_service_linux
 
       - name: Full workspace tests
         run: cargo test --locked --workspace --all-targets
