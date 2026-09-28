@@ -146,16 +146,23 @@ jobs:
 
           # Preserve the real registry boundary as executable evidence: before
           # publication, the first dependent crate must fail specifically because
-          # execsurface-model alpha.4 is not yet visible in crates.io. Any other
-          # reason is a blocker, and unexpected success means public state changed.
+          # execsurface-model alpha.4 is not yet visible in crates.io. Cargo may
+          # report either a missing package or a version-selection miss when older
+          # ExecSurface versions are already present. Require the exact alpha.4
+          # requirement and crates.io location rather than a brittle wording form.
           set +e
           cargo package -p execsurface-observe --locked --allow-dirty > "$RUNNER_TEMP/observe-package.log" 2>&1
           rc=$?
           set -e
           cat "$RUNNER_TEMP/observe-package.log"
           test "$rc" -eq 101
-          grep -F 'no matching package named `execsurface-model` found' "$RUNNER_TEMP/observe-package.log"
+          grep -F 'execsurface-model = "=0.1.0-alpha.4"' "$RUNNER_TEMP/observe-package.log"
           grep -F 'crates.io index' "$RUNNER_TEMP/observe-package.log"
+          if ! grep -F 'no matching package named `execsurface-model` found' "$RUNNER_TEMP/observe-package.log" >/dev/null \
+             && ! grep -F 'failed to select a version for the requirement `execsurface-model' "$RUNNER_TEMP/observe-package.log" >/dev/null; then
+            echo 'unexpected registry failure mode for prospective execsurface-model alpha.4 dependency' >&2
+            exit 1
+          fi
 
       - name: Prospective release bundle and checksum
         shell: bash
