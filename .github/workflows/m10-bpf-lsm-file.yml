@@ -20,16 +20,45 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Preflight BPF-LSM capability
+        id: preflight
+        shell: bash
+        run: |
+          set -u
+          OUT=experiments/m10/bpf-lsm-file/out
+          mkdir -p "$OUT"
+          LSM_LIST="$(cat /sys/kernel/security/lsm 2>/dev/null || true)"
+          {
+            echo "date_utc=$(date -u +%FT%TZ)"
+            echo "uname=$(uname -a)"
+            echo "kernel=$(uname -r)"
+            echo "uid=$(id -u)"
+            echo "btf_vmlinux=$([[ -r /sys/kernel/btf/vmlinux ]] && echo yes || echo no)"
+            echo "lsm_list=${LSM_LIST:-UNREADABLE}"
+          } | tee "$OUT/host-audit.txt"
+
+          if [[ ! -r /sys/kernel/btf/vmlinux ]]; then
+            echo "classification=BPF_LSM_FILE_HOST_UNAVAILABLE reason=no_vmlinux_btf" | tee "$OUT/result.txt"
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+          elif [[ ",$LSM_LIST," != *,bpf,* ]]; then
+            echo "classification=BPF_LSM_FILE_HOST_UNAVAILABLE reason=bpf_not_in_active_lsm_list lsm_list=${LSM_LIST:-UNREADABLE}" | tee "$OUT/result.txt"
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "eligible=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install build dependencies
+        if: steps.preflight.outputs.eligible == 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm gcc make pkg-config libbpf-dev libelf-dev zlib1g-dev linux-tools-common linux-tools-generic
+          sudo apt-get install -y --no-install-recommends clang llvm gcc make pkg-config libbpf-dev libelf-dev zlib1g-dev linux-tools-common linux-tools-generic
           BPFTOOL="$(find /usr/lib/linux-tools -type f -name bpftool -perm -111 2>/dev/null | sort -V | tail -n1)"
           test -n "$BPFTOOL"
           sudo ln -sf "$BPFTOOL" /usr/local/bin/bpftool
           /usr/local/bin/bpftool version
 
       - name: Run M10.3 audit-only BPF-LSM gate
+        if: steps.preflight.outputs.eligible == 'true'
         run: |
           chmod +x experiments/m10/bpf-lsm-file/run.sh
           experiments/m10/bpf-lsm-file/run.sh
