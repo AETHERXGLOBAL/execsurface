@@ -8,6 +8,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'crates/execsurface-authority/**'
+      - 'crates/execsurface-hybrid-authority/**'
       - 'crates/execsurface-observe/**'
       - 'crates/execsurface-baseline/**'
       - '.github/workflows/m11-authority-ci.yml'
@@ -30,8 +31,10 @@ jobs:
           rustc --version --verbose
           cargo --version
 
-      - name: Format M11 authority crate
-        run: cargo fmt --package execsurface-authority -- --check
+      - name: Format M11 authority crates
+        run: |
+          cargo fmt --package execsurface-authority -- --check
+          cargo fmt --package execsurface-hybrid-authority -- --check
 
       - name: Format M11 observer changes
         run: |
@@ -44,6 +47,9 @@ jobs:
 
       - name: Authority tests
         run: cargo test --locked -p execsurface-authority
+
+      - name: Explicit hybrid adapter tests
+        run: cargo test --locked -p execsurface-hybrid-authority
 
       - name: Ptrace authority bridge tests
         run: cargo test --locked -p execsurface-observe --test m11_path_authority
