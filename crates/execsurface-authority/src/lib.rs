@@ -267,10 +267,10 @@ impl<T> AuthorityEnvelope<T> {
 /// Internal M11 authority contract for the current public ptrace observer.
 ///
 /// This deliberately preserves the M10 limits. In particular, syscall-entry
-/// pathname/destination metadata is argument evidence, and fd/object
-/// attribution remains lifecycle-derived rather than kernel-object proof.
+/// pathname/destination metadata is argument evidence, and fd/object and
+/// success attribution remain lifecycle-derived rather than kernel-object proof.
 pub fn ptrace_contract_v1() -> BackendEvidenceContract {
-    use EvidenceAuthority::{ArgumentObserved, DerivedLifecycleModel, KernelSuccessConfirmed};
+    use EvidenceAuthority::{ArgumentObserved, DerivedLifecycleModel};
     use EvidenceProposition::*;
     use PropositionSupport::{Supported, Unsupported};
 
@@ -288,7 +288,7 @@ pub fn ptrace_contract_v1() -> BackendEvidenceContract {
         propositions: vec![
             PropositionAuthority {
                 proposition: ProcessSpawnOccurrence,
-                support: Supported(KernelSuccessConfirmed),
+                support: Supported(DerivedLifecycleModel),
             },
             PropositionAuthority {
                 proposition: ProcessExecAttemptPath,
@@ -296,7 +296,7 @@ pub fn ptrace_contract_v1() -> BackendEvidenceContract {
             },
             PropositionAuthority {
                 proposition: ProcessExecSuccess,
-                support: Supported(KernelSuccessConfirmed),
+                support: Supported(DerivedLifecycleModel),
             },
             PropositionAuthority {
                 proposition: ProcessExecObjectIdentity,
@@ -308,7 +308,7 @@ pub fn ptrace_contract_v1() -> BackendEvidenceContract {
             },
             PropositionAuthority {
                 proposition: FileOpenSuccess,
-                support: Supported(KernelSuccessConfirmed),
+                support: Supported(DerivedLifecycleModel),
             },
             PropositionAuthority {
                 proposition: FileOpenObjectIdentity,
@@ -444,6 +444,29 @@ mod tests {
             ),
             Err(AuthorityRequirementError::UnsupportedProposition { .. })
         ));
+    }
+
+    #[test]
+    fn ptrace_success_facts_remain_lifecycle_derived() {
+        let contract = ptrace_contract_v1();
+        for proposition in [
+            EvidenceProposition::ProcessSpawnOccurrence,
+            EvidenceProposition::ProcessExecSuccess,
+            EvidenceProposition::FileOpenSuccess,
+        ] {
+            assert_eq!(
+                contract.support_for(proposition),
+                Some(PropositionSupport::Supported(
+                    EvidenceAuthority::DerivedLifecycleModel
+                ))
+            );
+            assert_ne!(
+                contract.support_for(proposition),
+                Some(PropositionSupport::Supported(
+                    EvidenceAuthority::KernelSuccessConfirmed
+                ))
+            );
+        }
     }
 
     #[test]
