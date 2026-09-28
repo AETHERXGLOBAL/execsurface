@@ -44,7 +44,7 @@ static __always_inline void note_drop(void)
 }
 
 SEC("lsm/file_open")
-int BPF_PROG(m10_file_open, struct file *file, int mask, int ret)
+int BPF_PROG(m10_file_open, struct file *file, int ret)
 {
     __u64 pid_tgid;
     __u32 tgid, tid;
@@ -53,7 +53,7 @@ int BPF_PROG(m10_file_open, struct file *file, int mask, int ret)
     struct inode *inode;
     struct super_block *sb;
 
-    /* Preserve prior LSM denial and never weaken it. */
+    /* Preserve prior BPF-LSM denial and never weaken it. */
     if (ret)
         return ret;
 
@@ -80,7 +80,8 @@ int BPF_PROG(m10_file_open, struct file *file, int mask, int ret)
     ev->tgid = tgid;
     ev->tid = tid;
     ev->f_flags = BPF_CORE_READ(file, f_flags);
-    ev->mask = (__u32)mask;
+    /* file_open has no hook-specific mask argument; retained only for schema continuity. */
+    ev->mask = 0;
     bpf_ringbuf_submit(ev, 0);
 
     return 0;
