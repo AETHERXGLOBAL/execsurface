@@ -51,12 +51,12 @@ Then run the controlled **PASS → REVIEW** walkthrough in **[Five-Minute Start]
 ### B. Rust already installed
 
 ```bash
-cargo install execsurface --locked
+cargo install execsurface --version "=0.1.0-alpha.4" --locked
 execsurface --version
 execsurface doctor
 ```
 
-The crates.io channel is published only after the immutable GitHub release and stable Action gates succeed. See [crates.io Publishing](docs/CRATES_IO_PUBLISHING.md).
+The current public release is a prerelease, so request the exact prerelease version explicitly. The crates.io channel is published only after the immutable GitHub release and stable Action gates succeed. See [crates.io Publishing](docs/CRATES_IO_PUBLISHING.md).
 
 ### C. Add it to a GitHub Actions project
 
@@ -142,7 +142,7 @@ Use [Self-Service Start](docs/SELF_SERVICE_START.md), [Five-Minute Start](docs/Q
 The public alpha distribution surfaces are:
 
 - checksum-verified GitHub Release binary for Linux x86_64;
-- `cargo install execsurface --locked` for Rust users after registry publication;
+- exact prerelease install `cargo install execsurface --version "=0.1.0-alpha.4" --locked` for Rust users after registry publication;
 - GitHub Action `AETHERXGLOBAL/execsurface@v0.1` after stable-channel promotion.
 
 For maximum Action pinning after release, use `AETHERXGLOBAL/execsurface@v0.1.0-alpha.4`.

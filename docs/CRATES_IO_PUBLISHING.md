@@ -5,10 +5,10 @@ ExecSurface uses GitHub Releases as its checksum-verified, provenance-attested b
 ## Public install
 
 ```bash
-cargo install execsurface --locked
+cargo install execsurface --version "=0.1.0-alpha.4" --locked
 ```
 
-The release workflow for `0.1.0-alpha.4` publishes to crates.io only after the immutable GitHub release, immutable Action consumer, stable `v0.1` promotion, and stable PASS / REVIEW / BLOCK / ERROR gates succeed.
+The current public release is a prerelease, so the exact prerelease version must be requested explicitly. The release workflow for `0.1.0-alpha.4` publishes to crates.io only after the immutable GitHub release, immutable Action consumer, stable `v0.1` promotion, and stable PASS / REVIEW / BLOCK / ERROR gates succeed.
 
 The verified consumer path is:
 
