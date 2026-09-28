@@ -29,30 +29,53 @@ jobs:
           uname -a | tee m10-3b-artifacts/host-uname.txt
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            qemu-system-x86 busybox-static cpio linux-image-generic
+            qemu-system-x86 busybox-static cpio
           qemu-system-x86_64 --version | tee m10-3b-artifacts/qemu-version.txt
-          dpkg-query -W -f='${Package} ${Version}\n' linux-image-generic busybox-static qemu-system-x86 \
+          dpkg-query -W -f='${Package} ${Version}\n' busybox-static qemu-system-x86 \
             | tee m10-3b-artifacts/packages.txt
 
-      - name: Select and validate guest kernel
+      - name: Acquire and validate guest kernel
         id: kernel
         shell: bash
         run: |
-          set -euo pipefail
-          SOURCE_KERNEL="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*-generic' | sort -V | tail -n1)"
-          if [[ -z "$SOURCE_KERNEL" ]]; then
-            echo 'No packaged generic guest kernel found' >&2
+          set -euxo pipefail
+          KERNEL_PKG="$(apt-cache show linux-image-generic \
+            | sed -n 's/^Depends: \(linux-image-[^, ]*-generic\).*/\1/p' \
+            | head -n1)"
+          if [[ -z "$KERNEL_PKG" ]]; then
+            echo 'Unable to resolve Ubuntu generic kernel image package' >&2
             exit 1
           fi
-          VERSION="${SOURCE_KERNEL#/boot/vmlinuz-}"
-          CONFIG="/boot/config-${VERSION}"
-          test -r "$CONFIG"
 
+          KERNEL_DIR="$RUNNER_TEMP/m10-3b-kernel"
+          EXTRACT_DIR="$RUNNER_TEMP/m10-3b-kernel-extract"
+          rm -rf "$KERNEL_DIR" "$EXTRACT_DIR"
+          mkdir -p "$KERNEL_DIR" "$EXTRACT_DIR"
+
+          (
+            cd "$KERNEL_DIR"
+            apt-get download "$KERNEL_PKG"
+          )
+          DEB="$(find "$KERNEL_DIR" -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$DEB"
+          dpkg-deb -x "$DEB" "$EXTRACT_DIR"
+
+          SOURCE_KERNEL="$(find "$EXTRACT_DIR/boot" -maxdepth 1 -type f -name 'vmlinuz-*-generic' | sort -V | tail -n1)"
+          CONFIG="$(find "$EXTRACT_DIR/boot" -maxdepth 1 -type f -name 'config-*-generic' | sort -V | tail -n1)"
+          if [[ -z "$SOURCE_KERNEL" || -z "$CONFIG" ]]; then
+            echo 'Downloaded kernel package did not contain expected vmlinuz/config files' >&2
+            exit 1
+          fi
+
+          VERSION="${SOURCE_KERNEL##*/vmlinuz-}"
           GUEST_KERNEL="$GITHUB_WORKSPACE/m10-3b-artifacts/vmlinuz-${VERSION}"
-          sudo cp "$SOURCE_KERNEL" "$GUEST_KERNEL"
-          sudo chown "$(id -u):$(id -g)" "$GUEST_KERNEL"
+          cp "$SOURCE_KERNEL" "$GUEST_KERNEL"
           chmod 0644 "$GUEST_KERNEL"
 
+          printf '%s\n' "$KERNEL_PKG" | tee m10-3b-artifacts/guest-kernel-package.txt
+          dpkg-deb -f "$DEB" Package Version Architecture \
+            | tee m10-3b-artifacts/guest-kernel-package-metadata.txt
+          sha256sum "$DEB" | tee m10-3b-artifacts/guest-kernel-package.sha256
           printf '%s\n' "$SOURCE_KERNEL" | tee m10-3b-artifacts/guest-kernel-source-path.txt
           printf '%s\n' "$GUEST_KERNEL" | tee m10-3b-artifacts/guest-kernel-path.txt
           printf '%s\n' "$VERSION" | tee m10-3b-artifacts/guest-kernel-version.txt
