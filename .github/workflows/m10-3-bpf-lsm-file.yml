@@ -1,0 +1,115 @@
+name: M10.3 BPF-LSM file evidence
+
+on:
+  push:
+    branches:
+      - research/m10-hybrid-observer-m103
+    paths:
+      - 'experiments/m10-bpf-lsm/**'
+      - 'docs/milestones/M10_3_BPF_LSM_FILE_PROTOCOL.md'
+      - '.github/workflows/m10-3-bpf-lsm-file.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  m10-3:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Host and LSM inventory
+        id: env
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m10-3-artifacts
+          uname -a | tee m10-3-artifacts/uname.txt
+          if [[ -r /sys/kernel/security/lsm ]]; then
+            cat /sys/kernel/security/lsm | tee m10-3-artifacts/lsm.txt
+          else
+            echo '<unreadable>' | tee m10-3-artifacts/lsm.txt
+          fi
+          if [[ -r /sys/kernel/btf/vmlinux ]]; then
+            echo 'kernel_btf_readable=true' | tee m10-3-artifacts/btf.txt
+          else
+            echo 'kernel_btf_readable=false' | tee m10-3-artifacts/btf.txt
+          fi
+          id | tee m10-3-artifacts/id.txt
+
+      - name: Install BPF build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm libelf-dev libbpf-dev bpftool pkg-config build-essential
+
+      - name: BPF feature inventory
+        shell: bash
+        run: |
+          set +e
+          sudo bpftool feature probe > m10-3-artifacts/bpftool-feature.txt 2>&1
+          exit 0
+
+      - name: Gate BPF-LSM availability
+        id: lsm_gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          LSM_LIST="$(cat /sys/kernel/security/lsm 2>/dev/null || true)"
+          if [[ ",$LSM_LIST," != *,bpf,* ]]; then
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+          lsm = Path('/sys/kernel/security/lsm').read_text().strip() if Path('/sys/kernel/security/lsm').exists() else '<unavailable>'
+          Path('m10-3-artifacts/result.json').write_text(json.dumps({
+              'protocol': 'M10_3_BPF_LSM_FILE_001',
+              'classification': 'M10_3_ENVIRONMENT_BLOCKED',
+              'reason': 'bpf_lsm_not_present_in_active_lsm_list',
+              'active_lsms': lsm,
+          }, indent=2) + '\n')
+          PY
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate vmlinux.h
+        if: steps.lsm_gate.outputs.available == 'true'
+        run: |
+          sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > experiments/m10-bpf-lsm/src/bpf/vmlinux.h
+
+      - name: Build fixture and collector
+        if: steps.lsm_gate.outputs.available == 'true'
+        run: |
+          cc -O2 -Wall -Wextra -pthread \
+            experiments/m10-bpf-lsm/fixtures/file_open_identity.c \
+            -o /tmp/m10-file-open-identity
+          cargo build --locked --manifest-path experiments/m10-bpf-lsm/Cargo.toml
+
+      - name: Run audit-only BPF-LSM proposition
+        if: steps.lsm_gate.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'M10.3 controlled object\n' > /tmp/m10-bpf-lsm-target
+          sudo -E experiments/m10-bpf-lsm/target/debug/execsurface-m10-bpf-lsm \
+            --report m10-3-artifacts/collector.json \
+            -- /tmp/m10-file-open-identity /tmp/m10-bpf-lsm-target
+          python3 experiments/m10-bpf-lsm/evaluate.py \
+            m10-3-artifacts/collector.json \
+            m10-3-artifacts/result.json
+
+      - name: Display frozen result
+        if: always()
+        run: |
+          cat m10-3-artifacts/result.json
+
+      - name: Upload M10.3 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m10-3-bpf-lsm-file-evidence
+          path: m10-3-artifacts/
+          if-no-files-found: error
