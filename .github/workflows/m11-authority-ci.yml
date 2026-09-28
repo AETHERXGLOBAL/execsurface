@@ -33,8 +33,9 @@ jobs:
       - name: Format M11 authority crate
         run: cargo fmt --package execsurface-authority -- --check
 
-      - name: Format M11 observer regression tests
+      - name: Format M11 observer changes
         run: |
+          rustfmt --edition 2021 --check crates/execsurface-observe/src/lib.rs
           rustfmt --edition 2021 --check crates/execsurface-observe/tests/m11_path_authority.rs
           rustfmt --edition 2021 --check crates/execsurface-observe/tests/m11_shared_fd_ambiguity.rs
 
