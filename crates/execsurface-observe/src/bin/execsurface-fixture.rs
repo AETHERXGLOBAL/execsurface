@@ -4,6 +4,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::TcpStream;
 use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileExt;
 use std::process::Command;
 use std::sync::{Arc, Barrier};
@@ -46,6 +47,12 @@ fn main() {
             let name = args.next().expect("relative file name");
             env::set_current_dir(dir).expect("chdir");
             let _ = fs::read(name).expect("read relative fixture file");
+        }
+        Some("read-fd") => {
+            let fd: i32 = args.next().expect("fd").parse().expect("numeric fd");
+            let mut byte = [0_u8; 1];
+            let result = unsafe { libc::read(fd, byte.as_mut_ptr().cast(), 1) };
+            assert_eq!(result, 1, "read inherited fd after exec");
         }
         Some("dup-read") => {
             let path = args.next().expect("file path");
@@ -115,6 +122,32 @@ fn main() {
             for handle in handles {
                 handle.join().expect("thread");
             }
+        }
+        Some("thread-exec-fd") => {
+            let path = args.next().expect("file path");
+            let fd = File::open(path).expect("open exec-shared file").into_raw_fd();
+            let fd_flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            assert!(fd_flags >= 0, "F_GETFD");
+            assert_eq!(
+                unsafe { libc::fcntl(fd, libc::F_SETFD, fd_flags & !libc::FD_CLOEXEC) },
+                0,
+                "clear FD_CLOEXEC"
+            );
+
+            let handle = thread::spawn(move || {
+                let exe = env::current_exe().expect("current executable");
+                let exe = CString::new(exe.as_os_str().as_bytes()).expect("executable cstring");
+                let mode = CString::new("read-fd").expect("mode cstring");
+                let fd_arg = CString::new(fd.to_string()).expect("fd cstring");
+                let argv = [exe.as_ptr(), mode.as_ptr(), fd_arg.as_ptr(), std::ptr::null()];
+                unsafe {
+                    libc::execv(exe.as_ptr(), argv.as_ptr());
+                    libc::_exit(127);
+                }
+            });
+
+            handle.join().expect("exec thread unexpectedly returned");
+            panic!("thread exec unexpectedly returned without replacing the process");
         }
         Some("thread-fd-reuse") => {
             let old_path = args.next().expect("old file path");
