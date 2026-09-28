@@ -33,6 +33,7 @@ jobs:
             qemu-system-x86 busybox-static cpio \
             clang llvm linux-tools-common gcc pkg-config \
             libbpf-dev libelf-dev zlib1g-dev libc6-dev
+          sudo apt-get install -y --no-install-recommends "linux-tools-$(uname -r)"
           qemu-system-x86_64 --version | tee m10-3c-artifacts/qemu-version.txt
           bpftool version | tee m10-3c-artifacts/bpftool-version.txt
           clang --version | head -n1 | tee m10-3c-artifacts/clang-version.txt
