@@ -2,7 +2,7 @@ name: Post-M9 eBPF E4 same-workload value
 
 on:
   push:
-    branches: [main, development/post-alpha4-behavioral-integrity]
+    branches: [main]
     paths:
       - .github/workflows/post-m9-ebpf-e4-same-workload-value.yml
       - docs/milestones/POST_M9_EBPF_E4_SAME_WORKLOAD_VALUE_PROTOCOL.md
