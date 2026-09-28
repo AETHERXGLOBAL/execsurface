@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Internal evidence-authority vocabulary for M11.
 //!
 //! This crate is intentionally outside the public/default raw observation,
@@ -28,24 +30,49 @@ pub enum EvidenceProposition {
     CausalExecutableChain,
 }
 
-pub const ALL_EVIDENCE_PROPOSITIONS: [EvidenceProposition; 15] = [
-    EvidenceProposition::ProcessSpawnOccurrence,
-    EvidenceProposition::ProcessExecAttemptPath,
-    EvidenceProposition::ProcessExecSuccess,
-    EvidenceProposition::ProcessExecObjectIdentity,
-    EvidenceProposition::FilePathAccessIntent,
-    EvidenceProposition::FileOpenSuccess,
-    EvidenceProposition::FileOpenObjectIdentity,
-    EvidenceProposition::FdReadEffect,
-    EvidenceProposition::FdWriteEffect,
-    EvidenceProposition::FdLifecycle,
-    EvidenceProposition::RenameDeleteEffect,
-    EvidenceProposition::NetworkConnectAttemptDestination,
-    EvidenceProposition::NetworkConnectSuccess,
-    EvidenceProposition::TraceRelativePath,
-    EvidenceProposition::CausalExecutableChain,
-];
+impl EvidenceProposition {
+    pub const ALL: [Self; 15] = [
+        Self::ProcessSpawnOccurrence,
+        Self::ProcessExecAttemptPath,
+        Self::ProcessExecSuccess,
+        Self::ProcessExecObjectIdentity,
+        Self::FilePathAccessIntent,
+        Self::FileOpenSuccess,
+        Self::FileOpenObjectIdentity,
+        Self::FdReadEffect,
+        Self::FdWriteEffect,
+        Self::FdLifecycle,
+        Self::RenameDeleteEffect,
+        Self::NetworkConnectAttemptDestination,
+        Self::NetworkConnectSuccess,
+        Self::TraceRelativePath,
+        Self::CausalExecutableChain,
+    ];
 
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ProcessSpawnOccurrence => "process_spawn_occurrence",
+            Self::ProcessExecAttemptPath => "process_exec_attempt_path",
+            Self::ProcessExecSuccess => "process_exec_success",
+            Self::ProcessExecObjectIdentity => "process_exec_object_identity",
+            Self::FilePathAccessIntent => "file_path_access_intent",
+            Self::FileOpenSuccess => "file_open_success",
+            Self::FileOpenObjectIdentity => "file_open_object_identity",
+            Self::FdReadEffect => "fd_read_effect",
+            Self::FdWriteEffect => "fd_write_effect",
+            Self::FdLifecycle => "fd_lifecycle",
+            Self::RenameDeleteEffect => "rename_delete_effect",
+            Self::NetworkConnectAttemptDestination => "network_connect_attempt_destination",
+            Self::NetworkConnectSuccess => "network_connect_success",
+            Self::TraceRelativePath => "trace_relative_path",
+            Self::CausalExecutableChain => "causal_executable_chain",
+        }
+    }
+}
+
+pub const ALL_EVIDENCE_PROPOSITIONS: [EvidenceProposition; 15] = EvidenceProposition::ALL;
+
+/// Authority is proposition-specific. This enum is not a global strength score.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EvidenceAuthority {
     ArgumentObserved,
@@ -91,6 +118,34 @@ pub struct CapabilityFingerprint {
     pub kernel_capability_mode: Option<String>,
 }
 
+impl CapabilityFingerprint {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.source_id.trim().is_empty() {
+            return Err("capability fingerprint source id is empty");
+        }
+        if self.implementation_contract_version.trim().is_empty() {
+            return Err("capability fingerprint implementation contract version is empty");
+        }
+        if self.platform.trim().is_empty() || self.architecture.trim().is_empty() {
+            return Err("capability fingerprint platform/architecture is empty");
+        }
+        if self.privacy_profile.trim().is_empty() {
+            return Err("capability fingerprint privacy profile is empty");
+        }
+        if self.health_contract_version.trim().is_empty() {
+            return Err("capability fingerprint health contract version is empty");
+        }
+        if self
+            .kernel_capability_mode
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err("capability fingerprint kernel capability mode is empty");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackendEvidenceContract {
     pub version: EvidenceContractVersion,
@@ -100,6 +155,8 @@ pub struct BackendEvidenceContract {
 
 impl BackendEvidenceContract {
     pub fn validate_total_partition(&self) -> Result<(), &'static str> {
+        self.fingerprint.validate()?;
+
         let mut seen = BTreeSet::new();
         for entry in &self.propositions {
             if !seen.insert(entry.proposition) {
@@ -107,7 +164,7 @@ impl BackendEvidenceContract {
             }
         }
 
-        let expected: BTreeSet<_> = ALL_EVIDENCE_PROPOSITIONS.into_iter().collect();
+        let expected: BTreeSet<_> = EvidenceProposition::ALL.into_iter().collect();
         if seen != expected {
             return Err("evidence contract does not classify the full proposition universe");
         }
@@ -134,7 +191,7 @@ pub enum EvidenceHealth {
 }
 
 impl EvidenceHealth {
-    pub fn pass_eligible(self) -> bool {
+    pub const fn pass_eligible(self) -> bool {
         matches!(self, Self::Complete)
     }
 }
@@ -147,6 +204,12 @@ pub enum PropositionComparability {
     Unknown,
 }
 
+impl PropositionComparability {
+    pub const fn permits_symmetric_baseline_reuse(self) -> bool {
+        matches!(self, Self::EquivalentForProposition)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthorityEnvelope<T> {
     pub contract: BackendEvidenceContract,
@@ -155,11 +218,16 @@ pub struct AuthorityEnvelope<T> {
 }
 
 impl<T> AuthorityEnvelope<T> {
-    pub fn pass_eligible(&self) -> bool {
+    pub const fn pass_eligible(&self) -> bool {
         self.health.pass_eligible()
     }
 }
 
+/// Internal M11 authority contract for the current public ptrace observer.
+///
+/// This deliberately preserves the M10 limits. In particular, syscall-entry
+/// pathname/destination metadata is argument evidence, and fd/object
+/// attribution remains lifecycle-derived rather than kernel-object proof.
 pub fn ptrace_contract_v1() -> BackendEvidenceContract {
     use EvidenceAuthority::{ArgumentObserved, DerivedLifecycleModel, KernelSuccessConfirmed};
     use EvidenceProposition::*;
@@ -246,12 +314,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn proposition_names_are_unique_and_universe_is_frozen() {
+        let mut names = EvidenceProposition::ALL
+            .iter()
+            .map(|proposition| proposition.as_str())
+            .collect::<Vec<_>>();
+        let count = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(count, 15);
+        assert_eq!(names.len(), count);
+    }
+
+    #[test]
     fn ptrace_contract_classifies_every_proposition_once() {
         let contract = ptrace_contract_v1();
         contract
             .validate_total_partition()
             .expect("ptrace authority contract must be total and non-duplicated");
-        assert_eq!(contract.propositions.len(), ALL_EVIDENCE_PROPOSITIONS.len());
+        assert_eq!(contract.propositions.len(), EvidenceProposition::ALL.len());
+    }
+
+    #[test]
+    fn duplicate_or_missing_proposition_is_rejected() {
+        let mut contract = ptrace_contract_v1();
+        contract.propositions.pop();
+        assert!(contract.validate_total_partition().is_err());
+
+        let mut contract = ptrace_contract_v1();
+        contract.propositions.push(contract.propositions[0]);
+        assert!(contract.validate_total_partition().is_err());
+    }
+
+    #[test]
+    fn malformed_fingerprint_is_rejected() {
+        let mut contract = ptrace_contract_v1();
+        contract.fingerprint.source_id.clear();
+        assert!(contract.validate_total_partition().is_err());
     }
 
     #[test]
@@ -259,19 +358,21 @@ mod tests {
         let contract = ptrace_contract_v1();
         assert_eq!(
             contract.support_for(EvidenceProposition::ProcessExecAttemptPath),
-            Some(PropositionSupport::Supported(
-                EvidenceAuthority::ArgumentObserved
-            ))
+            Some(PropositionSupport::Supported(EvidenceAuthority::ArgumentObserved))
         );
         assert_eq!(
             contract.support_for(EvidenceProposition::FilePathAccessIntent),
-            Some(PropositionSupport::Supported(
-                EvidenceAuthority::ArgumentObserved
-            ))
+            Some(PropositionSupport::Supported(EvidenceAuthority::ArgumentObserved))
         );
         assert_eq!(
             contract.support_for(EvidenceProposition::ProcessExecObjectIdentity),
             Some(PropositionSupport::Unsupported)
+        );
+        assert_ne!(
+            contract.support_for(EvidenceProposition::FileOpenObjectIdentity),
+            Some(PropositionSupport::Supported(
+                EvidenceAuthority::KernelObjectSuccessBound
+            ))
         );
     }
 
@@ -294,13 +395,11 @@ mod tests {
     }
 
     #[test]
-    fn ptrace_does_not_claim_connect_success_authority() {
+    fn ptrace_connect_attempt_is_not_silently_promoted_to_success() {
         let contract = ptrace_contract_v1();
         assert_eq!(
             contract.support_for(EvidenceProposition::NetworkConnectAttemptDestination),
-            Some(PropositionSupport::Supported(
-                EvidenceAuthority::ArgumentObserved
-            ))
+            Some(PropositionSupport::Supported(EvidenceAuthority::ArgumentObserved))
         );
         assert_eq!(
             contract.support_for(EvidenceProposition::NetworkConnectSuccess),
@@ -318,7 +417,7 @@ mod tests {
             EvidenceHealth::IncompleteAmbiguity,
             EvidenceHealth::Error,
         ] {
-            assert!(!health.pass_eligible());
+            assert!(!health.pass_eligible(), "{health:?} must fail closed");
         }
     }
 
@@ -330,5 +429,14 @@ mod tests {
             payload: (),
         };
         assert!(!envelope.pass_eligible());
+    }
+
+    #[test]
+    fn only_explicit_equivalence_allows_symmetric_baseline_reuse() {
+        assert!(PropositionComparability::EquivalentForProposition
+            .permits_symmetric_baseline_reuse());
+        assert!(!PropositionComparability::OneWayRefinement.permits_symmetric_baseline_reuse());
+        assert!(!PropositionComparability::NotComparable.permits_symmetric_baseline_reuse());
+        assert!(!PropositionComparability::Unknown.permits_symmetric_baseline_reuse());
     }
 }
