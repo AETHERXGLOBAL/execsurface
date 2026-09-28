@@ -3,10 +3,10 @@ use std::ffi::CString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::TcpStream;
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd};
 use std::os::unix::fs::FileExt;
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::thread;
 
 #[repr(C)]
@@ -89,6 +89,36 @@ fn main() {
             for handle in handles {
                 handle.join().expect("thread");
             }
+        }
+        Some("thread-fd-reuse") => {
+            let old_path = args.next().expect("old file path");
+            let new_path = args.next().expect("new file path");
+            let fd = File::open(old_path).expect("open old file").into_raw_fd();
+            let barrier = Arc::new(Barrier::new(2));
+
+            let replace_barrier = Arc::clone(&barrier);
+            let replace = thread::spawn(move || {
+                assert_eq!(unsafe { libc::close(fd) }, 0, "close old shared fd");
+                let replacement = File::open(new_path).expect("open replacement file");
+                let replacement_fd = replacement.into_raw_fd();
+                if replacement_fd != fd {
+                    assert_eq!(unsafe { libc::dup2(replacement_fd, fd) }, fd, "dup2 replacement fd");
+                    assert_eq!(unsafe { libc::close(replacement_fd) }, 0, "close extra replacement fd");
+                }
+                replace_barrier.wait();
+            });
+
+            let read_barrier = Arc::clone(&barrier);
+            let read = thread::spawn(move || {
+                read_barrier.wait();
+                let mut byte = [0_u8; 1];
+                let result = unsafe { libc::read(fd, byte.as_mut_ptr().cast(), 1) };
+                assert_eq!(result, 1, "read reused shared fd");
+            });
+
+            replace.join().expect("replace thread");
+            read.join().expect("read thread");
+            assert_eq!(unsafe { libc::close(fd) }, 0, "close final shared fd");
         }
         Some("burst") => {
             let dir = args.next().expect("directory");
