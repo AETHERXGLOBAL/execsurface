@@ -1,19 +1,21 @@
 # OpenSSF Current State Baseline
 
 Date: 2026-09-28
-Purpose: freeze the public ExecSurface state that must govern all OpenSSF / Linux Foundation technical engagement. Historical outreach that referenced `v0.1.0-alpha.3` is not a current-state description.
+Purpose: state the public ExecSurface facts that govern OpenSSF / Linux Foundation technical engagement. Historical outreach that referenced `v0.1.0-alpha.3` is not a current-state description.
 
 ## Source of truth
 
 - Repository: `AETHERXGLOBAL/execsurface`
-- Current `main` HEAD: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
+- Current `main` HEAD after OpenSSF-pack merge: `a90c4c6e94129da5445aeed40863e097df045c28`
 - Latest published GitHub Release: `v0.1.0-alpha.4`
-- `v0.1.0-alpha.4` source commit: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
-- Stable Action channel `v0.1`: points to the same current commit as `main` / alpha.4 at this baseline freeze.
+- Immutable `v0.1.0-alpha.4` source commit: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
+- Stable Action channel `v0.1`: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
 - Public maturity: Public Alpha
 - Public platform scope: Linux x86_64
 
-Comparison against `v0.1.0-alpha.3`: `main` is 143 commits ahead of the alpha.3 tag.
+The commits after the immutable alpha.4 source are documentation/evaluation/community-engagement changes only. They do not alter the released alpha.4 runtime semantics and do not silently move the stable Action channel.
+
+At the initial OpenSSF baseline freeze, the release source/current main was 143 commits ahead of `v0.1.0-alpha.3`. Subsequent documentation-only engagement commits moved `main` further without changing the immutable alpha.4 source.
 
 ## Current product model
 
@@ -39,7 +41,7 @@ The current reference path provides bounded evidence for selected descendant pro
 
 ### Important alpha.4 hardening
 
-The public portable path now treats the known clone/shared-FD ambiguity conservatively:
+The public portable path treats the known clone/shared-FD ambiguity conservatively:
 
 - the known false-completeness class is no longer allowed to remain `complete=true` / PASS-eligible;
 - ambiguity becomes explicit incomplete evidence;
@@ -50,7 +52,7 @@ The public portable path now treats the known clone/shared-FD ambiguity conserva
 
 A pathname copied from userspace at ptrace syscall entry is **pathname access-attempt metadata**, not kernel-object identity.
 
-The PATH-TOCTOU criticism is preserved rather than explained away. The current public documentation does not treat ptrace userspace pointer observations as universally kernel-authoritative.
+The PATH-TOCTOU criticism is preserved rather than explained away. Current public documentation does not treat ptrace userspace pointer observations as universally kernel-authoritative.
 
 ### Hybrid / BPF-LSM status
 
@@ -114,7 +116,8 @@ Documented public paths:
 - adversarial PATH-TOCTOU and shared-FD counterexamples are retained in release-review evidence;
 - release review added explicit compatibility, adversarial, performance/resource, provenance and internal red-team gates;
 - alpha.4 public Release binary and stable Action channel were promoted only after those gates;
-- public documentation now states the conservative false-incompleteness tradeoff.
+- public documentation states the conservative false-incompleteness tradeoff;
+- OpenSSF-facing evaluation material was refreshed from alpha.3 to exact alpha.4 public artifacts.
 
 ### Intentionally unchanged
 
@@ -134,16 +137,38 @@ Repository architecture review: `docs/architecture/PTRACE_VS_LSM_ARCHITECTURE_RE
 
 The review established that SELinux/AppArmor are not drop-in replacements for ExecSurface's per-command evidence-generation contract, while also establishing that ptrace is not the strongest evidence authority for all object-identity propositions. The resulting architectural direction is additive/hybrid research, with public promotion deferred until proposition semantics, loss, privilege, portability and compatibility are proved.
 
-## Documentation drift found during this OpenSSF baseline freeze
+## Documentation drift discovered and resolved
 
-The following current-branch documents are stale relative to the alpha.4 public release and MUST be repaired before OpenSSF outreach:
+Initial OpenSSF baseline inspection found:
 
-1. `docs/TECHNICAL_EVALUATION.md` pins `0.1.0-alpha.3` and calls alpha.3 current.
-2. `docs/INDEPENDENT_EVALUATION.md` states `v0.1.0-alpha.3` as the current public version.
-3. `ROADMAP.md` contains historical M9.3 wording that says alpha.3 is the current public alpha and does not yet summarize the later M10-M12 / alpha.4 release state.
-4. `docs/architecture/PTRACE_VS_LSM_ARCHITECTURE_REVIEW.md` correctly records the historical alpha.3 freeze point; references to alpha.3 there are historical context and must not be quoted as current release status.
+1. `docs/TECHNICAL_EVALUATION.md` still pinned alpha.3;
+2. `docs/INDEPENDENT_EVALUATION.md` still named alpha.3 current;
+3. historical M9.3 roadmap wording could be mistaken for current release status;
+4. the architecture review correctly referenced alpha.3 as its historical freeze point.
 
-Until these are repaired and the self-service evaluation is rerun from public artifacts only, the OpenSSF review pack is **NOT READY TO SEND**.
+Resolution:
+
+- both evaluation docs now use exact alpha.4 public artifacts and current limitation/authority wording;
+- `docs/STATUS.md` now states the live current state and explicitly treats older roadmap entries as historical milestone records;
+- README now calls alpha.4 the current published release;
+- historical architecture/milestone records are retained rather than rewritten.
+
+## Zero-assistance rehearsal
+
+A clean GitHub-hosted Ubuntu 24.04 evaluation using only the published alpha.4 binary/checksum completed successfully:
+
+- exact alpha.4 download/checksum: PASS;
+- `execsurface --version`: alpha.4;
+- `doctor`: PASS;
+- baseline learn: PASS;
+- unchanged check: PASS / exit `0`;
+- controlled drift: REVIEW / exit `10`;
+- evidence artifact retained.
+
+Canonical rehearsal run: `36478741625`.
+Final pre-merge repeat: `36479236174`.
+
+This is internal readiness evidence only, not independent external validation.
 
 ## Historical OpenSSF outreach content now obsolete
 
@@ -154,16 +179,20 @@ The following must not be reused as current facts:
 - any evaluation command that pins alpha.3;
 - any statement that omits the shared-FD fail-closed hardening / conservative false-incompleteness tradeoff;
 - any statement that ignores the ptrace-vs-LSM architecture review and kernel-hook research direction;
-- any claim that the current project has external validation merely because outreach occurred.
+- any claim that outreach or internal rehearsal constitutes external validation.
+
+## OpenSSF path and current engagement state
+
+`PRIMARY_OPENSSF_PATH = ORBIT Working Group`
+
+`SECONDARY_OPENSSF_PATH = Supply Chain Integrity Working Group` only for a concrete provenance/attestation question.
+
+The public pack has been merged to `main`, the original OpenSSF/Linux Foundation email thread has been answered with alpha.4 material, and direct ORBIT GitHub issue creation was attempted.
+
+That external GitHub write returned `403 Resource not accessible by integration`; this is recorded as a connector permission limitation, **not** an ORBIT rejection.
 
 ## Engagement readiness state
 
-`NOT_READY_FOR_OPENSSF_SUBMISSION — DOCUMENTATION_REPAIR_AND_ZERO_ASSISTANCE_REHEARSAL_REQUIRED`
+`READY_FOR_EXTERNAL_TECHNICAL_REVIEW — PUBLIC_PACK_MERGED / ZERO_ASSISTANCE_INTERNAL_REHEARSAL_PASS`
 
-Required before external submission:
-
-1. update evaluation and independent-evaluation docs to alpha.4;
-2. create the OpenSSF-specific technical review pack with exact questions and prior-art boundary;
-3. run a clean evaluator rehearsal using only public documentation/artifacts;
-4. preserve any friction/failure as evidence;
-5. only after PASS, contact the selected OpenSSF community path.
+Remaining external step: obtain real community/evaluator interaction through ORBIT/OpenSSF channels. Any external failure or criticism must be preserved before assistance is offered.
