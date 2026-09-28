@@ -6,16 +6,15 @@ Purpose: state the public ExecSurface facts that govern OpenSSF / Linux Foundati
 ## Source of truth
 
 - Repository: `AETHERXGLOBAL/execsurface`
-- Current `main` HEAD after OpenSSF-pack merge: `a90c4c6e94129da5445aeed40863e097df045c28`
+- Baseline-start `main` HEAD before OpenSSF documentation work: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
+- Current live `main`: resolve from the GitHub branch head at read time; engagement/documentation commits may advance it without changing the immutable release source
 - Latest published GitHub Release: `v0.1.0-alpha.4`
 - Immutable `v0.1.0-alpha.4` source commit: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
 - Stable Action channel `v0.1`: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
 - Public maturity: Public Alpha
 - Public platform scope: Linux x86_64
 
-The commits after the immutable alpha.4 source are documentation/evaluation/community-engagement changes only. They do not alter the released alpha.4 runtime semantics and do not silently move the stable Action channel.
-
-At the initial OpenSSF baseline freeze, the release source/current main was 143 commits ahead of `v0.1.0-alpha.3`. Subsequent documentation-only engagement commits moved `main` further without changing the immutable alpha.4 source.
+At the initial OpenSSF baseline freeze, the release source/current main was 143 commits ahead of `v0.1.0-alpha.3`. Subsequent OpenSSF engagement commits are documentation/evaluation/community-tracking changes; they do not alter the immutable alpha.4 runtime semantics and do not silently move the stable Action channel.
 
 ## Current product model
 
@@ -149,8 +148,8 @@ Initial OpenSSF baseline inspection found:
 Resolution:
 
 - both evaluation docs now use exact alpha.4 public artifacts and current limitation/authority wording;
-- `docs/STATUS.md` now states the live current state and explicitly treats older roadmap entries as historical milestone records;
-- README now calls alpha.4 the current published release;
+- `docs/STATUS.md` states live product status and explicitly treats older roadmap entries as historical milestone records;
+- README calls alpha.4 the current published release;
 - historical architecture/milestone records are retained rather than rewritten.
 
 ## Zero-assistance rehearsal
