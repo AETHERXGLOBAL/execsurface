@@ -1,0 +1,12 @@
+[package]
+name = "execsurface-hybrid-authority"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Internal explicit hybrid authority adapter for AETHER X ExecSurface"
+readme.workspace = true
+
+[dependencies]
+execsurface-authority = { path = "../execsurface-authority", version = "=0.1.0-alpha.3" }
