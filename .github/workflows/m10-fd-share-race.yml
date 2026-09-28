@@ -1,0 +1,78 @@
+name: M10 FD-SHARE-RACE adversarial gate
+
+on:
+  push:
+    branches:
+      - research/m10-hybrid-observer
+    paths:
+      - "crates/execsurface-observe/tests/m10_fd_share_race.rs"
+      - "experiments/m10/fd-share-race/**"
+      - "docs/milestones/M10_2_FD_SHARE_RACE_PROTOCOL.md"
+      - ".github/workflows/m10-fd-share-race.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fd-share-race:
+    name: FD-SHARE-RACE-001 / unchanged ptrace observer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Environment evidence
+        run: |
+          set -euxo pipefail
+          uname -a
+          rustc --version --verbose
+          cargo --version
+          cc --version | head -n 1
+          cat /proc/sys/kernel/yama/ptrace_scope || true
+
+      - name: Build shared-fd adversarial target
+        run: |
+          set -euxo pipefail
+          cc -std=c11 -O2 -pthread \
+            experiments/m10/fd-share-race/fd_share_race_target.c \
+            -o /tmp/m10-fd-share-race-target
+          file /tmp/m10-fd-share-race-target
+
+      - name: Execute frozen M10.2 gate
+        env:
+          M10_FD_TARGET_BIN: /tmp/m10-fd-share-race-target
+          M10_FD_RESULT_PATH: ${{ github.workspace }}/m10-fd-share-race-result.json
+        run: |
+          set -euxo pipefail
+          cargo test --locked -p execsurface-observe \
+            --test m10_fd_share_race \
+            m10_fd_share_race_gate \
+            -- --ignored --exact --nocapture
+          cat m10-fd-share-race-result.json
+
+      - name: Publish bounded summary
+        if: always()
+        run: |
+          if test -f m10-fd-share-race-result.json; then
+            {
+              echo '## M10 FD-SHARE-RACE-001'
+              echo
+              echo '```json'
+              jq '{classification, observation_complete, warning_codes, target_exit_code, truth_successful_read_count, emitted_fd_read_count, count_delta, paired_identity_mismatch_count, invalid_truth_bytes, observation_event_count}' m10-fd-share-race-result.json
+              echo '```'
+              echo
+              echo 'A divergence kills only universal fd-attribution integrity for the tested shared-fd adversary. It does not authorize a product/backend change.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload M10.2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m10-fd-share-race-evidence
+          path: m10-fd-share-race-result.json
+          if-no-files-found: error
+          retention-days: 30
