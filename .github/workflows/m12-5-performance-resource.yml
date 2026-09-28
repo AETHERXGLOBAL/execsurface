@@ -1,0 +1,294 @@
+name: M12.5 Performance and Resource Regression
+
+on:
+  push:
+    branches:
+      - integration/m12-portable-clean
+    paths:
+      - '.github/workflows/m12-5-performance-resource.yml'
+      - 'docs/milestones/M12_5_*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paired-performance-resource:
+    name: Paired performance/resource / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout workflow driver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: driver
+          fetch-depth: 1
+
+      - name: Checkout frozen public main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: db11761e2d75ebca7d4458dc39094f4aed6a26bb
+          path: main
+          fetch-depth: 1
+
+      - name: Checkout frozen M12 candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 2d6b32c30c6062d7aea035d4a59a70ba834647f4
+          path: candidate
+          fetch-depth: 1
+
+      - name: Environment and provenance evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          uname -a | tee evidence/uname.txt
+          rustc --version --verbose | tee evidence/rustc.txt
+          cargo --version | tee evidence/cargo.txt
+          lscpu | sed -n '1,35p' | tee evidence/lscpu.txt
+          git -C main rev-parse HEAD | tee evidence/main-sha.txt
+          git -C candidate rev-parse HEAD | tee evidence/candidate-sha.txt
+          test "$(cat evidence/main-sha.txt)" = "db11761e2d75ebca7d4458dc39094f4aed6a26bb"
+          test "$(cat evidence/candidate-sha.txt)" = "2d6b32c30c6062d7aea035d4a59a70ba834647f4"
+          test -x /usr/bin/time
+
+      - name: Build frozen release binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN_TARGET="$RUNNER_TEMP/m12-5-main-target"
+          CANDIDATE_TARGET="$RUNNER_TEMP/m12-5-candidate-target"
+
+          (cd main && CARGO_TARGET_DIR="$MAIN_TARGET" cargo build --locked --release -p execsurface-bench --bin execsurface-bench)
+          (cd main && CARGO_TARGET_DIR="$MAIN_TARGET" cargo build --locked --release -p execsurface-observe --bin execsurface-fixture)
+          (cd main && CARGO_TARGET_DIR="$MAIN_TARGET" cargo build --locked --release -p execsurface --bin execsurface)
+
+          (cd candidate && CARGO_TARGET_DIR="$CANDIDATE_TARGET" cargo build --locked --release -p execsurface-bench --bin execsurface-bench)
+          (cd candidate && CARGO_TARGET_DIR="$CANDIDATE_TARGET" cargo build --locked --release -p execsurface-observe --bin execsurface-fixture)
+          (cd candidate && CARGO_TARGET_DIR="$CANDIDATE_TARGET" cargo build --locked --release -p execsurface --bin execsurface)
+
+          echo "MAIN_TARGET=$MAIN_TARGET" >> "$GITHUB_ENV"
+          echo "CANDIDATE_TARGET=$CANDIDATE_TARGET" >> "$GITHUB_ENV"
+
+          stat -c '%s' "$MAIN_TARGET/release/execsurface" | tee evidence/main-cli-bytes.txt
+          stat -c '%s' "$CANDIDATE_TARGET/release/execsurface" | tee evidence/candidate-cli-bytes.txt
+
+      - name: Run frozen paired workloads with resource sentinels
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_case() {
+            local name="$1"; shift
+            local out="evidence/${name}.json"
+            local err="evidence/${name}.stderr.txt"
+            local rc_file="evidence/${name}.rc.txt"
+            local time_file="evidence/${name}.time.txt"
+            set +e
+            /usr/bin/time -v -o "$time_file" "$@" >"$out" 2>"$err"
+            local rc=$?
+            set -e
+            echo "$rc" > "$rc_file"
+          }
+
+          run_case main-true "$MAIN_TARGET/release/execsurface-bench" --repetitions 30 -- /bin/true
+          run_case candidate-true "$CANDIDATE_TARGET/release/execsurface-bench" --repetitions 30 -- /bin/true
+
+          run_case main-spawn "$MAIN_TARGET/release/execsurface-bench" --repetitions 20 -- "$MAIN_TARGET/release/execsurface-fixture" spawn
+          run_case candidate-spawn "$CANDIDATE_TARGET/release/execsurface-bench" --repetitions 20 -- "$CANDIDATE_TARGET/release/execsurface-fixture" spawn
+
+          mkdir -p "$RUNNER_TEMP/m12-5-main-burst" "$RUNNER_TEMP/m12-5-candidate-burst"
+          run_case main-burst-128 "$MAIN_TARGET/release/execsurface-bench" --repetitions 10 -- "$MAIN_TARGET/release/execsurface-fixture" burst "$RUNNER_TEMP/m12-5-main-burst" 128
+          run_case candidate-burst-128 "$CANDIDATE_TARGET/release/execsurface-bench" --repetitions 10 -- "$CANDIDATE_TARGET/release/execsurface-fixture" burst "$RUNNER_TEMP/m12-5-candidate-burst" 128
+
+      - name: Frozen per-environment evaluator
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          root = Path('evidence')
+          cases = {
+              'true': ('main-true', 'candidate-true', False),
+              'spawn': ('main-spawn', 'candidate-spawn', True),
+              'burst-128': ('main-burst-128', 'candidate-burst-128', True),
+          }
+
+          def rss_kib(name):
+              text = (root / f'{name}.time.txt').read_text()
+              match = re.search(r'Maximum resident set size \(kbytes\):\s*(\d+)', text)
+              if not match:
+                  raise RuntimeError(f'missing max RSS for {name}')
+              return int(match.group(1))
+
+          result = {
+              'schema_version': 1,
+              'scope': 'paired-shared-github-runner-engineering-evidence-not-performance-or-memory-guarantee',
+              'refs': {
+                  'main': (root / 'main-sha.txt').read_text().strip(),
+                  'candidate': (root / 'candidate-sha.txt').read_text().strip(),
+              },
+              'thresholds': {
+                  'performance_ratio_gt': 1.25,
+                  'performance_absolute_increase_us_gte': 1000,
+                  'performance_blocking_nontrivial_signals_required': 2,
+                  'rss_ratio_gt': 1.20,
+                  'rss_absolute_increase_kib_gte': 16384,
+                  'binary_size_ratio_gt': 1.10,
+                  'binary_size_absolute_increase_bytes_gte': 524288,
+              },
+              'workloads': {},
+          }
+
+          performance_material = 0
+          incomplete = False
+          event_shape_review = False
+          rss_material_names = []
+
+          for label, (main_name, candidate_name, nontrivial) in cases.items():
+              main_rc = int((root / f'{main_name}.rc.txt').read_text().strip())
+              candidate_rc = int((root / f'{candidate_name}.rc.txt').read_text().strip())
+              entry = {
+                  'main_rc': main_rc,
+                  'candidate_rc': candidate_rc,
+                  'nontrivial': nontrivial,
+              }
+              if main_rc != 0 or candidate_rc != 0:
+                  incomplete = True
+                  entry['comparable'] = False
+                  entry['performance_material_regression_signal'] = False
+                  entry['rss_material_regression_signal'] = False
+                  result['workloads'][label] = entry
+                  continue
+
+              try:
+                  main = json.loads((root / f'{main_name}.json').read_text())
+                  candidate = json.loads((root / f'{candidate_name}.json').read_text())
+                  main_rss = rss_kib(main_name)
+                  candidate_rss = rss_kib(candidate_name)
+              except Exception as exc:
+                  incomplete = True
+                  entry['comparable'] = False
+                  entry['parse_error'] = str(exc)
+                  entry['performance_material_regression_signal'] = False
+                  entry['rss_material_regression_signal'] = False
+                  result['workloads'][label] = entry
+                  continue
+
+              main_us = int(main['observed']['median_us'])
+              candidate_us = int(candidate['observed']['median_us'])
+              perf_ratio = (candidate_us / main_us) if main_us else None
+              perf_delta = candidate_us - main_us
+              perf_material = bool(
+                  nontrivial
+                  and perf_ratio is not None
+                  and perf_ratio > 1.25
+                  and perf_delta >= 1000
+              )
+              if perf_material:
+                  performance_material += 1
+
+              rss_ratio = (candidate_rss / main_rss) if main_rss else None
+              rss_delta = candidate_rss - main_rss
+              rss_material = bool(
+                  rss_ratio is not None
+                  and rss_ratio > 1.20
+                  and rss_delta >= 16384
+              )
+              if rss_material:
+                  rss_material_names.append(label)
+
+              main_events = int(main['event_count']['median'])
+              candidate_events = int(candidate['event_count']['median'])
+              event_changed = main_events != candidate_events
+              if event_changed:
+                  event_shape_review = True
+
+              entry.update({
+                  'comparable': True,
+                  'main': main,
+                  'candidate': candidate,
+                  'candidate_over_main_observed_median_ratio': perf_ratio,
+                  'candidate_minus_main_observed_median_us': perf_delta,
+                  'performance_material_regression_signal': perf_material,
+                  'main_max_rss_kib': main_rss,
+                  'candidate_max_rss_kib': candidate_rss,
+                  'candidate_over_main_max_rss_ratio': rss_ratio,
+                  'candidate_minus_main_max_rss_kib': rss_delta,
+                  'rss_material_regression_signal': rss_material,
+                  'event_count_changed': event_changed,
+              })
+              result['workloads'][label] = entry
+
+          main_bytes = int((root / 'main-cli-bytes.txt').read_text().strip())
+          candidate_bytes = int((root / 'candidate-cli-bytes.txt').read_text().strip())
+          size_ratio = (candidate_bytes / main_bytes) if main_bytes else None
+          size_delta = candidate_bytes - main_bytes
+          size_material = bool(
+              size_ratio is not None
+              and size_ratio > 1.10
+              and size_delta >= 524288
+          )
+          result['binary_size'] = {
+              'main_bytes': main_bytes,
+              'candidate_bytes': candidate_bytes,
+              'candidate_over_main_ratio': size_ratio,
+              'candidate_minus_main_bytes': size_delta,
+              'material_regression_signal': size_material,
+          }
+
+          if incomplete:
+              classification = 'PERFORMANCE_EVIDENCE_INCOMPLETE'
+          elif performance_material >= 2:
+              classification = 'PERFORMANCE_BLOCK'
+          else:
+              classification = 'NO_PERFORMANCE_BLOCKING_REGRESSION'
+
+          result['performance_material_regression_signal_count'] = performance_material
+          result['rss_material_signal_workloads'] = rss_material_names
+          result['binary_size_material_signal'] = size_material
+          result['event_shape_review_required'] = event_shape_review
+          result['classification'] = classification
+
+          (root / 'm12-5-comparison.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result, indent=2))
+          PY
+
+      - name: Validate evaluator evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m json.tool evidence/m12-5-comparison.json >/dev/null
+          test -s evidence/main-sha.txt
+          test -s evidence/candidate-sha.txt
+
+      - name: Upload M12.5 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m12-5-performance-resource-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Reject incomplete or environment-local performance block
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('evidence/m12-5-comparison.json').read_text())
+          assert data['classification'] == 'NO_PERFORMANCE_BLOCKING_REGRESSION', data['classification']
+          assert not data['binary_size_material_signal'], 'material CLI binary-size regression'
+          assert not data['event_shape_review_required'], 'unexpected median event-count shape change'
+          PY
