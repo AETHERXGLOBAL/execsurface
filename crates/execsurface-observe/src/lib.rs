@@ -15,7 +15,7 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::sync::Mutex;
 
-use execsurface_model::Observation;
+use execsurface_model::{Observation, ObserverWarning, RawEventKind, SpawnMechanism};
 
 pub const DEFAULT_EVENT_LIMIT: usize = 1_000_000;
 
@@ -197,6 +197,7 @@ pub enum CollectionCompleteness {
     IncompleteLoss,
     IncompleteLimit,
     IncompleteCapability,
+    IncompleteAmbiguity,
     Error,
 }
 
@@ -294,6 +295,34 @@ pub fn reference_backend_descriptor() -> BackendDescriptor {
     ptrace_backend_descriptor()
 }
 
+fn apply_shared_fd_ambiguity_guard(mut observation: Observation) -> Observation {
+    let clone_seen = observation.events.iter().any(|event| {
+        matches!(
+            &event.kind,
+            RawEventKind::ProcessSpawn {
+                mechanism: SpawnMechanism::Clone,
+                ..
+            }
+        )
+    });
+    let already_reported = observation
+        .warnings
+        .iter()
+        .any(|warning| warning.code == "shared_fd_table_ambiguity");
+
+    if clone_seen && !already_reported {
+        observation.complete = false;
+        observation.warnings.push(ObserverWarning {
+            code: "shared_fd_table_ambiguity".to_owned(),
+            tid: None,
+            message: "clone-based concurrency observed; raw v2 does not retain CLONE_FILES flags, so shared-fd lifecycle attribution cannot be certified complete for this session"
+                .to_owned(),
+        });
+    }
+
+    observation
+}
+
 fn classify_observation_completeness(observation: &Observation) -> CollectionCompleteness {
     if observation.complete {
         return CollectionCompleteness::Complete;
@@ -305,6 +334,12 @@ fn classify_observation_completeness(observation: &Observation) -> CollectionCom
         .any(|warning| warning.code == "event_limit_exceeded")
     {
         CollectionCompleteness::IncompleteLimit
+    } else if observation
+        .warnings
+        .iter()
+        .any(|warning| warning.code == "shared_fd_table_ambiguity")
+    {
+        CollectionCompleteness::IncompleteAmbiguity
     } else {
         // Existing ptrace warnings represent a known semantic/capability gap.
         // M8.4 will further refine transport/lifecycle loss classification for
@@ -349,7 +384,7 @@ impl ObservationBackend for PtraceBackend {
     ) -> Result<BackendObservation, ObserveError> {
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
-            let observation = linux_ptrace::observe(spec, options)?;
+            let observation = apply_shared_fd_ambiguity_guard(linux_ptrace::observe(spec, options)?);
             let descriptor = self.descriptor();
             descriptor
                 .validate_capability_partition()
@@ -492,5 +527,29 @@ mod api_tests {
         assert_eq!(completeness, CollectionCompleteness::IncompleteLimit);
         assert!(!completeness.pass_eligible());
         assert!(CollectionCompleteness::Complete.pass_eligible());
+    }
+
+    #[test]
+    fn shared_fd_ambiguity_is_never_pass_eligible() {
+        let mut observation = Observation::empty(execsurface_model::BackendMetadata {
+            name: "linux-ptrace-metadata-v2".to_owned(),
+            platform: "linux".to_owned(),
+            architecture: "x86_64".to_owned(),
+            capabilities: Vec::new(),
+            limitations: Vec::new(),
+        });
+        observation.complete = false;
+        observation.warnings.push(ObserverWarning {
+            code: "shared_fd_table_ambiguity".to_owned(),
+            tid: None,
+            message: "controlled test".to_owned(),
+        });
+
+        let completeness = classify_observation_completeness(&observation);
+        assert_eq!(
+            completeness,
+            CollectionCompleteness::IncompleteAmbiguity
+        );
+        assert!(!completeness.pass_eligible());
     }
 }
