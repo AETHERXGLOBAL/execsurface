@@ -384,7 +384,8 @@ impl ObservationBackend for PtraceBackend {
     ) -> Result<BackendObservation, ObserveError> {
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
-            let observation = apply_shared_fd_ambiguity_guard(linux_ptrace::observe(spec, options)?);
+            let observation =
+                apply_shared_fd_ambiguity_guard(linux_ptrace::observe(spec, options)?);
             let descriptor = self.descriptor();
             descriptor
                 .validate_capability_partition()
@@ -546,10 +547,7 @@ mod api_tests {
         });
 
         let completeness = classify_observation_completeness(&observation);
-        assert_eq!(
-            completeness,
-            CollectionCompleteness::IncompleteAmbiguity
-        );
+        assert_eq!(completeness, CollectionCompleteness::IncompleteAmbiguity);
         assert!(!completeness.pass_eligible());
     }
 }
