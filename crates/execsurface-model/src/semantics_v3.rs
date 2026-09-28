@@ -8,9 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::canonical::{
-    CanonicalExecutable, CanonicalNetworkEndpoint, CanonicalPath, OpenIntent,
-};
+use crate::canonical::{CanonicalExecutable, CanonicalNetworkEndpoint, CanonicalPath, OpenIntent};
 use crate::{FileOperation, SpawnMechanism};
 
 pub const SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION: u32 = 3;
@@ -107,7 +105,9 @@ impl EvidenceGuarantees {
             .observation_points
             .is_subset(&self.observation_points)
             && required.identity_bases.is_subset(&self.identity_bases)
-            && required.temporal_bindings.is_subset(&self.temporal_bindings)
+            && required
+                .temporal_bindings
+                .is_subset(&self.temporal_bindings)
             && required.causal_bindings.is_subset(&self.causal_bindings)
     }
 }
@@ -180,9 +180,10 @@ impl ProofCarryingObservation {
         if !self.guarantees.entails(&requirement.guarantees) {
             return false;
         }
-        requirement.required_complete.iter().all(|dimension| {
-            self.completeness.get(dimension) == Some(&CompletenessState::Complete)
-        })
+        requirement
+            .required_complete
+            .iter()
+            .all(|dimension| self.completeness.get(dimension) == Some(&CompletenessState::Complete))
     }
 }
 
@@ -227,12 +228,14 @@ mod tests {
                 semantic_profile_version: 1,
             },
         );
-        record
-            .completeness
-            .insert(CompletenessDimension::SessionScope, CompletenessState::Complete);
-        record
-            .completeness
-            .insert(CompletenessDimension::Lifecycle, CompletenessState::Complete);
+        record.completeness.insert(
+            CompletenessDimension::SessionScope,
+            CompletenessState::Complete,
+        );
+        record.completeness.insert(
+            CompletenessDimension::Lifecycle,
+            CompletenessState::Complete,
+        );
         record
     }
 
