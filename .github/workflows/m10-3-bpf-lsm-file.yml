@@ -16,18 +16,20 @@ permissions:
 jobs:
   m10-3:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
       - name: Host and LSM inventory
-        id: env
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p m10-3-artifacts
           uname -a | tee m10-3-artifacts/uname.txt
+          id | tee m10-3-artifacts/id.txt
+          cat /proc/sys/kernel/unprivileged_bpf_disabled 2>/dev/null | tee m10-3-artifacts/unprivileged_bpf_disabled.txt || true
           if [[ -r /sys/kernel/security/lsm ]]; then
             cat /sys/kernel/security/lsm | tee m10-3-artifacts/lsm.txt
           else
@@ -38,19 +40,6 @@ jobs:
           else
             echo 'kernel_btf_readable=false' | tee m10-3-artifacts/btf.txt
           fi
-          id | tee m10-3-artifacts/id.txt
-
-      - name: Install BPF build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang llvm libelf-dev libbpf-dev bpftool pkg-config build-essential
-
-      - name: BPF feature inventory
-        shell: bash
-        run: |
-          set +e
-          sudo bpftool feature probe > m10-3-artifacts/bpftool-feature.txt 2>&1
-          exit 0
 
       - name: Gate BPF-LSM availability
         id: lsm_gate
@@ -62,11 +51,12 @@ jobs:
             python3 - <<'PY'
           import json
           from pathlib import Path
-          lsm = Path('/sys/kernel/security/lsm').read_text().strip() if Path('/sys/kernel/security/lsm').exists() else '<unavailable>'
+          p = Path('/sys/kernel/security/lsm')
+          lsm = p.read_text().strip() if p.exists() and p.is_file() else '<unavailable>'
           Path('m10-3-artifacts/result.json').write_text(json.dumps({
               'protocol': 'M10_3_BPF_LSM_FILE_001',
               'classification': 'M10_3_ENVIRONMENT_BLOCKED',
-              'reason': 'bpf_lsm_not_present_in_active_lsm_list',
+              'reason': 'bpf_lsm_not_present_or_securityfs_lsm_unreadable',
               'active_lsms': lsm,
           }, indent=2) + '\n')
           PY
@@ -75,18 +65,36 @@ jobs:
             echo 'available=true' >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Generate vmlinux.h
+      - name: Install declared native build dependencies
         if: steps.lsm_gate.outputs.available == 'true'
+        shell: bash
         run: |
-          sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > experiments/m10-bpf-lsm/src/bpf/vmlinux.h
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config build-essential
+          clang --version
+          pkg-config --modversion libelf
 
-      - name: Build fixture and collector
+      - name: Install pinned Rust toolchains
         if: steps.lsm_gate.outputs.available == 'true'
+        shell: bash
         run: |
-          cc -O2 -Wall -Wextra -pthread \
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal
+
+      - name: Resolve isolated lock and build
+        if: steps.lsm_gate.outputs.available == 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f experiments/m10-bpf-lsm/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile --manifest-path experiments/m10-bpf-lsm/Cargo.toml
+          cc -O2 -Wall -Wextra \
             experiments/m10-bpf-lsm/fixtures/file_open_identity.c \
             -o /tmp/m10-file-open-identity
-          cargo build --locked --manifest-path experiments/m10-bpf-lsm/Cargo.toml
+          cargo +1.82.0 build --locked --manifest-path experiments/m10-bpf-lsm/Cargo.toml
 
       - name: Run audit-only BPF-LSM proposition
         if: steps.lsm_gate.outputs.available == 'true'
@@ -103,7 +111,10 @@ jobs:
 
       - name: Display frozen result
         if: always()
+        shell: bash
         run: |
+          set -euo pipefail
+          test -f m10-3-artifacts/result.json
           cat m10-3-artifacts/result.json
 
       - name: Upload M10.3 evidence
