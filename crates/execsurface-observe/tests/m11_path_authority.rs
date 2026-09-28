@@ -57,10 +57,8 @@ fn path_toctou_promotion_to_kernel_object_bound_is_explicitly_rejected() {
         EvidenceProposition::NetworkConnectAttemptDestination,
     ] {
         assert!(matches!(
-            authority.require_exact_authority(
-                proposition,
-                EvidenceAuthority::KernelObjectSuccessBound,
-            ),
+            authority
+                .require_exact_authority(proposition, EvidenceAuthority::KernelObjectSuccessBound,),
             Err(AuthorityRequirementError::AuthorityMismatch { .. })
         ));
     }
