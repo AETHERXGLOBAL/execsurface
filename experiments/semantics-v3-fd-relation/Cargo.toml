@@ -6,3 +6,5 @@ publish = false
 
 [dependencies]
 libc = "=0.2.189"
+
+[workspace]
