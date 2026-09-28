@@ -79,7 +79,8 @@ jobs:
         run: |
           set -euxo pipefail
           rustup toolchain install 1.87.0 --profile minimal
-          rustup toolchain install 1.82.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          rustfmt +1.82.0 --version
 
       - name: Resolve isolated lock and build
         id: build
