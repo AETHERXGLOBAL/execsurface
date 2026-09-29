@@ -1,0 +1,9 @@
+[package]
+name = "execsurface-p3-v5-completeness-diagnostic"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+execsurface-model = { path = "../../crates/execsurface-model" }
+execsurface-observe = { path = "../../crates/execsurface-observe" }
