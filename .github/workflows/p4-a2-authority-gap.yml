@@ -7,7 +7,7 @@ on:
     paths:
       - '.github/workflows/p4-a2-authority-gap.yml'
       - 'docs/development/P4_A2_AUTHORITY_GAP_PROTOCOL.md'
-      - 'experiments/p4-backend-authority/tests/authority_gap_matrix.rs'
+      - 'experiments/p4-backend-authority/tests/a2_authority_gap_matrix.rs'
       - 'experiments/p4-backend-authority/src/**'
   workflow_dispatch:
 
@@ -53,6 +53,7 @@ jobs:
             exit 1
           fi
           printf 'source_sha=%s\n' "$(git rev-parse HEAD)" | tee "$EVIDENCE_ROOT/source.txt"
+          printf 'canonical_matrix=experiments/p4-backend-authority/src/a2_matrix.rs\n' | tee -a "$EVIDENCE_ROOT/source.txt"
 
       - name: Generate isolated lock
         shell: bash
@@ -71,8 +72,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test authority_gap_matrix -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/a2-matrix.log"
-          grep -q 'test result: ok. 10 passed; 0 failed' "$EVIDENCE_ROOT/a2-matrix.log"
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test a2_authority_gap_matrix -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/a2-matrix.log"
+          grep -q 'test result: ok. 14 passed; 0 failed' "$EVIDENCE_ROOT/a2-matrix.log"
+          grep -q 'A2_MATRIX_JSON_BEGIN' "$EVIDENCE_ROOT/a2-matrix.log"
+          grep -q 'A2_MATRIX_JSON_END' "$EVIDENCE_ROOT/a2-matrix.log"
 
       - name: Re-run A1 falsification corpus
         shell: bash
@@ -83,6 +86,7 @@ jobs:
           grep -q 'test result: ok. 5 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
           grep -q 'test result: ok. 18 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
           grep -q 'test result: ok. 10 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
+          grep -q 'test result: ok. 14 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
 
       - name: Re-prove Semantics v3 and public M11 boundary
         shell: bash
