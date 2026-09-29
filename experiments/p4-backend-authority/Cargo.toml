@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 execsurface-model = { path = "../../crates/execsurface-model" }
+execsurface-normalize = { path = "../../crates/execsurface-normalize" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
