@@ -107,11 +107,19 @@ impl RenameDeleteContext {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "authority", rename_all = "snake_case")]
 pub enum RenameDeleteAuthority {
-    SuccessEffectBounded { proof_digest: String },
+    SuccessEffectBounded {
+        proof_digest: String,
+    },
     AttemptOnly,
-    FailureObserved { errno: i32 },
-    Ambiguous { reason_codes: std::collections::BTreeSet<String> },
-    Lost { reason_codes: std::collections::BTreeSet<String> },
+    FailureObserved {
+        errno: i32,
+    },
+    Ambiguous {
+        reason_codes: std::collections::BTreeSet<String>,
+    },
+    Lost {
+        reason_codes: std::collections::BTreeSet<String>,
+    },
 }
 
 impl RenameDeleteAuthority {
@@ -191,6 +199,7 @@ fn proof_digest(
     success_evidence: &SuccessEvidenceRecord,
     context: &RenameDeleteContext,
 ) -> Result<String, String> {
-    let bytes = serde_json::to_vec(&(success_evidence, context)).map_err(|error| error.to_string())?;
+    let bytes =
+        serde_json::to_vec(&(success_evidence, context)).map_err(|error| error.to_string())?;
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
 }
