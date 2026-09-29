@@ -195,3 +195,9 @@ Before B1 can close, the accepted workflow must also re-prove:
 - `P4_B1_INCOMPLETE_FOR_SAFE_PTRACE_AUTHORITY`
 
 Only the bounded PASS decision may authorize preregistration of B2. It still does **not** authorize public integration or a second backend.
+
+## Retained execution evidence — pre-test formatting failures
+
+The first strict B1 model/live runs reached the frozen public-isolation and dependency-lock gates, then stopped at `rustfmt --check` before Clippy or any scientific test executed. These failures are retained as engineering evidence and are not counted as semantic falsification outcomes. A one-shot research-only formatter was permitted to change only `experiments/p4-backend-authority/**`; it refused any `crates/` drift and produced source commit `2985415a4d2f6b7b9314ded7506e4e775db33748`.
+
+This note changes no proposition, fixture, test count, authority rule, completeness rule, success criterion, or allowed B1 decision. The exact frozen model and live gates must now rerun on the formatted source before any B1 judgment.
