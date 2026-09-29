@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::AuthorityState;
 
@@ -17,7 +17,7 @@ pub const A2_PROPOSITION_IDS: [&str; 10] = [
     "P4.FDTABLE.RELATION",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GapClass {
     NoGap,
@@ -29,7 +29,7 @@ pub enum GapClass {
     NoProductRequirement,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AuthorityGapRow {
     pub proposition_id: &'static str,
     pub raw_v2_sources: &'static [&'static str],
