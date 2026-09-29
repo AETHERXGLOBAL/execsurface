@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -50,7 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .into());
     }
 
-    let normalization = NormalizationConfig::default();
+    let normalization = cli_equivalent_default_normalization()?;
     let canonical_surface = canonicalize(&observation, &normalization)?;
 
     let root_exec_path = observation
@@ -103,8 +104,38 @@ fn main() -> Result<(), Box<dyn Error>> {
         "canonical_effects={}",
         lock.payload.canonical_surface.effects.len()
     );
+    println!(
+        "semantic_roots={}",
+        lock.payload.canonical_surface.normalization.semantic_roots.join(",")
+    );
     println!("warnings={}", observation.warnings.len());
     println!("complete={}", observation.complete);
     println!("lockfile={}", output_path.display());
     Ok(())
+}
+
+fn cli_equivalent_default_normalization() -> Result<NormalizationConfig, Box<dyn Error>> {
+    let cwd = env::current_dir()?.to_string_lossy().into_owned();
+    let home = env::var_os("HOME").map(|value| value.to_string_lossy().into_owned());
+    let workspace = if home.as_deref() == Some(cwd.as_str()) {
+        None
+    } else {
+        Some(cwd)
+    };
+
+    let mut tmp_roots = Vec::new();
+    if let Some(tmpdir) = env::var_os("TMPDIR") {
+        tmp_roots.push(tmpdir.to_string_lossy().into_owned());
+    }
+    if !tmp_roots.iter().any(|root| root == "/tmp") {
+        tmp_roots.push("/tmp".to_owned());
+    }
+
+    Ok(NormalizationConfig {
+        workspace,
+        home,
+        tmp_roots,
+        run_tmp: None,
+        caches: BTreeMap::new(),
+    })
 }
