@@ -1,0 +1,164 @@
+name: P3 V5-R2 R3 variance analysis and acceptance freeze
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - ".github/workflows/p3-v5-r2-r3-freeze.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  analyze-frozen-learning-set:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      SOURCE_LEARNING_RUN: "36569389464"
+      SOURCE_ARTIFACT_ID: "11032959833"
+      SOURCE_ARTIFACT_SHA256: "0129b5c77dfbb3d91967918e9a281dcfb135eff100023be77bd14096e5acae41"
+      EVIDENCE_ROOT: p3-v5-r2-r3-evidence
+    steps:
+      - name: Checkout isolated development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Freeze R3 source and predecessor references
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT/frozen-learning"
+          {
+            printf 'r3_source_sha=%s\n' "$(git rev-parse HEAD)"
+            printf 'learning_run=%s\n' "$SOURCE_LEARNING_RUN"
+            printf 'learning_artifact_id=%s\n' "$SOURCE_ARTIFACT_ID"
+            printf 'learning_artifact_sha256=%s\n' "$SOURCE_ARTIFACT_SHA256"
+          } | tee "$EVIDENCE_ROOT/r3-source.txt"
+          grep -q 'PREREGISTERED — NO MEASUREMENT MAY PRECEDE THIS FREEZE' docs/development/P3_V5R2_REAL_WORKLOAD_PROTOCOL.md
+
+      - name: Download exactly the frozen R2 evidence artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --location --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip" \
+            -o "$EVIDENCE_ROOT/frozen-learning.zip"
+          actual="$(sha256sum "$EVIDENCE_ROOT/frozen-learning.zip" | awk '{print $1}')"
+          printf 'downloaded_zip_sha256=%s\n' "$actual" | tee "$EVIDENCE_ROOT/downloaded-artifact-digest.txt"
+          test "$actual" = "$SOURCE_ARTIFACT_SHA256"
+          unzip -q "$EVIDENCE_ROOT/frozen-learning.zip" -d "$EVIDENCE_ROOT/frozen-learning"
+          grep -qx 'admitted=6/6' "$EVIDENCE_ROOT/frozen-learning/admission-summary.txt"
+          (cd "$EVIDENCE_ROOT/frozen-learning" && sha256sum -c SHA256SUMS)
+          test "$(find "$EVIDENCE_ROOT/frozen-learning" -maxdepth 1 -name 'fzf-learn-*.lock.json' | wc -l)" -eq 6
+
+      - name: Build existing preregistered variance analyzer without semantic edits
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile \
+            --manifest-path experiments/p3-v5-real-workload/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt \
+            --manifest-path experiments/p3-v5-real-workload/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked \
+            --manifest-path experiments/p3-v5-real-workload/Cargo.toml \
+            --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN build --locked \
+            --manifest-path experiments/p3-v5-real-workload/Cargo.toml
+
+      - name: R3 analyze exactly six frozen lockfiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          analyzer="experiments/p3-v5-real-workload/target/debug/p3-v5-analyze"
+          "$analyzer" \
+            "$EVIDENCE_ROOT/r3-report.json" \
+            "$EVIDENCE_ROOT/frozen-learning/fzf-learn-1.lock.json" \
+            "$EVIDENCE_ROOT/frozen-learning/fzf-learn-2.lock.json" \
+            "$EVIDENCE_ROOT/frozen-learning/fzf-learn-3.lock.json" \
+            "$EVIDENCE_ROOT/frozen-learning/fzf-learn-4.lock.json" \
+            "$EVIDENCE_ROOT/frozen-learning/fzf-learn-5.lock.json" \
+            "$EVIDENCE_ROOT/frozen-learning/fzf-learn-6.lock.json" \
+            2>&1 | tee "$EVIDENCE_ROOT/r3-analyzer.log"
+          test "$(python3 -c 'import json; print(json.load(open("'"$EVIDENCE_ROOT/r3-report.json"'"))["run_count"])')" -eq 6
+
+      - name: Anti-drift acceptance freeze checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$EVIDENCE_ROOT/r3-report.json" "$EVIDENCE_ROOT/r3-freeze.json" <<'PY'
+          import json, sys
+          report_path, freeze_path = sys.argv[1], sys.argv[2]
+          report = json.load(open(report_path))
+          assert report['run_count'] == 6
+          assert report['decision'] == 'P3_V5_REAL_WORKLOAD_VALUE_REQUALIFIED_BOUNDED', report['decision']
+          assert report['targeted_raw_variable_candidate_count'] > 0
+          assert report['non_target_raw_variable_candidate_count'] > 0
+          assert report['missing_or_changed_non_target_variables'] == []
+          assert report['lingering_targeted_random_paths'] == []
+          assert report['accepted_variable_effect_count'] == 0
+          freeze = {
+              'schema_version': 1,
+              'status': 'R3_ACCEPTANCE_FROZEN',
+              'learning_run_id': 36569389464,
+              'learning_artifact_id': 11032959833,
+              'learning_artifact_sha256': 'sha256:0129b5c77dfbb3d91967918e9a281dcfb135eff100023be77bd14096e5acae41',
+              'raw_learning_set_digest': report['raw_learning_set_digest'],
+              'projected_learning_set_digest': report['projected_learning_set_digest'],
+              'raw_variable_candidate_count': report['raw_variable_candidate_count'],
+              'targeted_raw_variable_candidate_count': report['targeted_raw_variable_candidate_count'],
+              'non_target_raw_variable_candidate_count': report['non_target_raw_variable_candidate_count'],
+              'projected_variable_candidate_count': report['projected_variable_candidate_count'],
+              'canonical_gcc_invariant_effect_count': report['canonical_gcc_invariant_effect_count'],
+              'explicit_accepted_variable_effects': [],
+              'frequency_authorizes': False,
+              'public_integration_authorized': False,
+              'r4_check_runs_authorized_only_after_repository_freeze_commit': True,
+          }
+          with open(freeze_path, 'w') as f:
+              json.dump(freeze, f, indent=2, sort_keys=True)
+              f.write('\n')
+          print('R3_ACCEPTANCE_FREEZE_PASS')
+          PY
+
+      - name: Preserve public contract boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity \
+            2>&1 | tee "$EVIDENCE_ROOT/public-m11-r3.log"
+
+      - name: Seal R3 evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload R3 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: p3-v5-r2-r3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE_ROOT }}
+          if-no-files-found: error
+          retention-days: 30
