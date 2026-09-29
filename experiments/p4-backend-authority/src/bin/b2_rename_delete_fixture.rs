@@ -88,7 +88,12 @@ fn raw_rmdir(target: &str) -> i64 {
 
 fn open_dir(path: &str) -> i32 {
     let path = cstring(path);
-    let fd = unsafe { libc::open(path.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
+    let fd = unsafe {
+        libc::open(
+            path.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
     if fd < 0 {
         eprintln!("open_dir failed: {}", io::Error::last_os_error());
         std::process::exit(44);
