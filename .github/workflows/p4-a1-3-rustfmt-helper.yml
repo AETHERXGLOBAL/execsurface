@@ -1,0 +1,62 @@
+name: P4 A1.3 rustfmt-only helper
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - '.github/workflows/p4-a1-3-rustfmt-helper.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  format-one-file:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout development branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install exact Rust formatter
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.90.0 --profile minimal
+          rustup component add --toolchain 1.90.0 rustfmt
+
+      - name: Format exactly the A1.3 adversarial test file
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET='experiments/p4-backend-authority/tests/ptrace_v2_adversarial.rs'
+          rustfmt +1.90.0 --edition 2021 "$TARGET"
+          mapfile -t changed < <(git diff --name-only)
+          if [ "${#changed[@]}" -eq 0 ]; then
+            echo 'No formatting changes required.'
+            exit 0
+          fi
+          if [ "${#changed[@]}" -ne 1 ] || [ "${changed[0]}" != "$TARGET" ]; then
+            printf 'Unexpected changed paths:\n'
+            printf '%s\n' "${changed[@]}"
+            exit 1
+          fi
+          git diff --check
+          git diff -- "$TARGET"
+
+      - name: Commit formatting-only correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET='experiments/p4-backend-authority/tests/ptrace_v2_adversarial.rs'
+          if git diff --quiet -- "$TARGET"; then
+            exit 0
+          fi
+          git config user.name 'AHMED YOUNIS'
+          git config user.email 'aether.x.eg@gmail.com'
+          git add -- "$TARGET"
+          git diff --cached --name-only | grep -qx "$TARGET"
+          git commit -m 'P4 A1.3: rustfmt-only adversarial test correction'
+          git push origin HEAD:development/post-alpha4-behavioral-integrity
