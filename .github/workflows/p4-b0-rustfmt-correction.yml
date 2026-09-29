@@ -1,0 +1,56 @@
+name: P4 B0 rustfmt-only correction
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - '.github/workflows/p4-b0-rustfmt-correction.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  rustfmt-only:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      SOURCE: experiments/p4-backend-authority/src/b0_success_evidence.rs
+      TESTS: experiments/p4-backend-authority/tests/b0_success_evidence.rs
+
+    steps:
+      - name: Checkout current development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install pinned rustfmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt
+
+      - name: Apply rustfmt only and prove path boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustfmt +$RUST_TOOLCHAIN --edition 2021 "$SOURCE" "$TESTS"
+          git diff --check
+          git diff --name-only | sort > /tmp/actual
+          printf '%s\n' "$SOURCE" "$TESTS" | sort > /tmp/expected
+          diff -u /tmp/expected /tmp/actual
+
+      - name: Commit rustfmt-only correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'AHMED YOUNIS'
+          git config user.email 'aether.x.eg@gmail.com'
+          git add -- "$SOURCE" "$TESTS"
+          git diff --cached --name-only | sort > /tmp/actual
+          printf '%s\n' "$SOURCE" "$TESTS" | sort > /tmp/expected
+          diff -u /tmp/expected /tmp/actual
+          git commit -m 'P4 B0: rustfmt-only success-evidence correction'
+          git push origin HEAD:development/post-alpha4-behavioral-integrity
