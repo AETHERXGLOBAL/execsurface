@@ -107,7 +107,10 @@ pub fn ptrace_raw_v2_matrix() -> Vec<AuthorityGapRow> {
         },
         AuthorityGapRow {
             proposition_id: "P4.FILE.OPEN_OBJECT",
-            raw_v2_sources: &["file_path_access/open", "file_descriptor_access only after covered IO"],
+            raw_v2_sources: &[
+                "file_path_access/open",
+                "file_descriptor_access only after covered IO",
+            ],
             mapped_shape: "no FileOpenObjectObserved record emitted",
             best_authority: AuthorityState::Unsupported,
             conditional_authority: None,
@@ -116,7 +119,10 @@ pub fn ptrace_raw_v2_matrix() -> Vec<AuthorityGapRow> {
             identity_basis: "pathname attempt only at open; later fd identity is not an open-object record",
             temporal_binding: "successful_open_binding absent",
             causal_binding: "open-attempt event only",
-            reason_codes: &["P4.FILE.OPEN_OBJECT", "successful_open_object_not_mapped_from_raw_v2"],
+            reason_codes: &[
+                "P4.FILE.OPEN_OBJECT",
+                "successful_open_object_not_mapped_from_raw_v2",
+            ],
             product_usable: false,
             primary_gap: GapClass::ObservationGap,
             missing_evidence: "successful open result, returned FD identity, and post-open object/path binding at the open transition",
@@ -125,11 +131,20 @@ pub fn ptrace_raw_v2_matrix() -> Vec<AuthorityGapRow> {
         },
         AuthorityGapRow {
             proposition_id: "P4.FD.IO_ATTRIBUTION",
-            raw_v2_sources: &["file_descriptor_access(read/write,fd,path)", "process_spawn mechanism"],
+            raw_v2_sources: &[
+                "file_descriptor_access(read/write,fd,path)",
+                "process_spawn mechanism",
+            ],
             mapped_shape: "FileFdEffectObserved",
             best_authority: AuthorityState::Direct,
-            conditional_authority: Some("direct+complete only when raw clone is absent; ambiguous/incomplete when clone is present"),
-            satisfied_completeness: &["session_scope", "object_identity when no clone", "fd_table_relation when no clone"],
+            conditional_authority: Some(
+                "direct+complete only when raw clone is absent; ambiguous/incomplete when clone is present",
+            ),
+            satisfied_completeness: &[
+                "session_scope",
+                "object_identity when no clone",
+                "fd_table_relation when no clone",
+            ],
             unproven_completeness: &["fd_table_relation under raw-v2 clone"],
             identity_basis: "runtime_fd_path_correlated",
             temporal_binding: "successful_operation_result + post_operation_derived_state",
@@ -182,7 +197,9 @@ pub fn ptrace_raw_v2_matrix() -> Vec<AuthorityGapRow> {
             raw_v2_sources: &["ordered spawn/exec raw events", "canonical execution_chain"],
             mapped_shape: "CausalExecLineageObserved",
             best_authority: AuthorityState::DerivedBounded,
-            conditional_authority: Some("bounded to the accepted canonical-exec-lineage-v2 derivation and complete observation"),
+            conditional_authority: Some(
+                "bounded to the accepted canonical-exec-lineage-v2 derivation and complete observation",
+            ),
             satisfied_completeness: &["session_scope", "causal_lineage"],
             unproven_completeness: &[],
             identity_basis: "canonical executable lineage",
@@ -200,13 +217,18 @@ pub fn ptrace_raw_v2_matrix() -> Vec<AuthorityGapRow> {
             raw_v2_sources: &["observation.complete", "observer warnings"],
             mapped_shape: "ObserverHealthObserved",
             best_authority: AuthorityState::Direct,
-            conditional_authority: Some("healthy observation maps direct+complete; detected loss maps lost+incomplete"),
+            conditional_authority: Some(
+                "healthy observation maps direct+complete; detected loss maps lost+incomplete",
+            ),
             satisfied_completeness: &["session_scope for declared/detected health state"],
             unproven_completeness: &[],
             identity_basis: "none",
             temporal_binding: "session health state",
             causal_binding: "direct evidence state",
-            reason_codes: &["warning codes preserved when present", "observation_incomplete when complete=false"],
+            reason_codes: &[
+                "warning codes preserved when present",
+                "observation_incomplete when complete=false",
+            ],
             product_usable: true,
             primary_gap: GapClass::NoGap,
             missing_evidence: "none for declared/detected health signals; no universal silent-loss claim",
@@ -218,13 +240,18 @@ pub fn ptrace_raw_v2_matrix() -> Vec<AuthorityGapRow> {
             raw_v2_sources: &["process_spawn mechanism"],
             mapped_shape: "FdTableRelationObserved",
             best_authority: AuthorityState::DerivedBounded,
-            conditional_authority: Some("fork/vfork -> independent_copy derived_bounded; clone -> unknown ambiguous/incomplete"),
+            conditional_authority: Some(
+                "fork/vfork -> independent_copy derived_bounded; clone -> unknown ambiguous/incomplete",
+            ),
             satisfied_completeness: &["fd_table_relation for fork/vfork bounded derivation"],
             unproven_completeness: &["fd_table_relation for clone"],
             identity_basis: "spawn mechanism; clone flags missing from raw-v2",
             temporal_binding: "lifecycle_transition",
             causal_binding: "direct event plus bounded fork/vfork derivation",
-            reason_codes: &["raw_v2_clone_flags_not_retained", "P4.FDTABLE.RELATION.EXACT_CLONE"],
+            reason_codes: &[
+                "raw_v2_clone_flags_not_retained",
+                "P4.FDTABLE.RELATION.EXACT_CLONE",
+            ],
             product_usable: false,
             primary_gap: GapClass::RepresentationGap,
             missing_evidence: "causally paired clone/clone3 CLONE_FILES flags retained in versioned evidence",
@@ -261,7 +288,10 @@ pub fn validate_matrix(rows: &[AuthorityGapRow]) -> Result<(), String> {
             return Err(format!("incomplete A2 metadata for {}", row.proposition_id));
         }
         if row.primary_gap == GapClass::NoGap && !row.product_usable {
-            return Err(format!("NO_GAP row is not product-usable: {}", row.proposition_id));
+            return Err(format!(
+                "NO_GAP row is not product-usable: {}",
+                row.proposition_id
+            ));
         }
     }
     Ok(())
