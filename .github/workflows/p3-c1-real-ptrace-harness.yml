@@ -1,0 +1,61 @@
+name: P3 C1 Real Ptrace Harness
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - scripts/p3_c1_harness_apply.py
+      - .github/workflows/p3-c1-real-ptrace-harness.yml
+
+permissions:
+  contents: write
+
+jobs:
+  real-ptrace-falsification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout current development branch
+        uses: actions/checkout@v4
+        with:
+          ref: development/post-alpha4-behavioral-integrity
+          fetch-depth: 0
+
+      - name: Apply real ptrace harness patch
+        run: python3 scripts/p3_c1_harness_apply.py
+
+      - name: Rustfmt
+        run: cargo fmt --all
+
+      - name: Format gate
+        run: cargo fmt --all -- --check
+
+      - name: Clippy gate
+        run: cargo clippy --locked -p execsurface-observe --all-targets -- -D warnings
+
+      - name: Real ptrace CLONE_FILES and private-clone harness
+        run: cargo test --locked -p execsurface-observe --lib c1_real_ptrace_clone_modes_are_certified -- --ignored --nocapture
+
+      - name: Full observe regression suite
+        run: cargo test --locked -p execsurface-observe --all-targets
+
+      - name: Workspace regression suite
+        run: cargo test --locked --workspace
+
+      - name: Diff integrity gate
+        run: |
+          set -euo pipefail
+          git diff --check
+          git status --short
+
+      - name: Commit only after all C1 harness gates pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AETHER X C1 Gate"
+          git config user.email "aether.x.eg@gmail.com"
+          git add crates/execsurface-observe/src/linux_ptrace.rs
+          git rm scripts/p3_c1_harness_apply.py .github/workflows/p3-c1-real-ptrace-harness.yml
+          git commit -m "P3 C1: add retained real ptrace clone certification harness"
+          git push origin HEAD:development/post-alpha4-behavioral-integrity
