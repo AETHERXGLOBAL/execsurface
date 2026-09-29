@@ -144,9 +144,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    use execsurface_model::canonical::{
-        NormalizationMetadata, OpenIntent, PathResolution,
-    };
+    use execsurface_model::canonical::{NormalizationMetadata, OpenIntent, PathResolution};
     use execsurface_normalize::{canonicalize_path, NormalizationConfig};
 
     const PRESERVED_GCC_PATHS: &[&str] = &[
@@ -219,11 +217,7 @@ mod tests {
         let actor = executable(actor);
         CanonicalEffect::FilePathAccess {
             actor: Some(actor.clone()),
-            execution_chain: vec![
-                executable("/bin/bash"),
-                executable("/usr/bin/go"),
-                actor,
-            ],
+            execution_chain: vec![executable("/bin/bash"), executable("/usr/bin/go"), actor],
             operation,
             target: canonical(target),
             open_intent,
@@ -318,10 +312,13 @@ mod tests {
         ));
         let input = surface(effects);
         assert!(eligible_gcc_temp_paths(&input).is_empty());
-        assert!(apply_candidate(&input).effects.iter().any(|effect| match effect {
-            CanonicalEffect::FilePathAccess { target, .. } => target.value == "$TMP/ccABC123.s",
-            _ => false,
-        }));
+        assert!(apply_candidate(&input)
+            .effects
+            .iter()
+            .any(|effect| match effect {
+                CanonicalEffect::FilePathAccess { target, .. } => target.value == "$TMP/ccABC123.s",
+                _ => false,
+            }));
     }
 
     #[test]
@@ -377,7 +374,10 @@ mod tests {
 
         for path in cases {
             let input = surface(gcc_temp_pair(path));
-            assert!(eligible_gcc_temp_paths(&input).is_empty(), "unexpected eligibility for {path}");
+            assert!(
+                eligible_gcc_temp_paths(&input).is_empty(),
+                "unexpected eligibility for {path}"
+            );
         }
     }
 
