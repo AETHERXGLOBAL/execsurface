@@ -1,0 +1,27 @@
+name: P3 variance lock diagnostic
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - ".github/workflows/p3-variance-lock-diagnostic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate-lock:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Generate nested experiment lockfile
+        run: cargo generate-lockfile --manifest-path experiments/p3-variance-analyzer/Cargo.toml
+
+      - name: Show exact generated lockfile delta
+        run: git diff -- experiments/p3-variance-analyzer/Cargo.lock
