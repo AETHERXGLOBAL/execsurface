@@ -1,0 +1,81 @@
+name: P4 A1.3U bounded authority-model correction
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - '.github/workflows/p4-a1-3u-model-correction.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  bounded-correction:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      TARGET: experiments/p4-backend-authority/src/lib.rs
+
+    steps:
+      - name: Checkout exact development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Apply only the preregistered A1.3U correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('experiments/p4-backend-authority/src/lib.rs')
+          s = p.read_text()
+          old_validate = '''        if matches!(self.authority, AuthorityState::DerivedBounded)\n            && self\n                .evidence\n                .derivation\n                .as_deref()\n                .is_none_or(str::is_empty)\n        {\n            return Err("derived_bounded authority requires derivation identity".to_owned());\n        }\n'''
+          new_validate = '''        if self.authority == AuthorityState::AttemptOnly\n            && !matches!(\n                self.proof.proposition,\n                Proposition::FilePathnameAttemptObserved { .. }\n                    | Proposition::FileRenameAttemptObserved { .. }\n                    | Proposition::NetworkConnectDestinationAttemptObserved { .. }\n            )\n        {\n            return Err("attempt_only authority requires an explicit attempt proposition".to_owned());\n        }\n        if matches!(self.authority, AuthorityState::DerivedBounded)\n            && self\n                .evidence\n                .derivation\n                .as_deref()\n                .is_none_or(str::is_empty)\n        {\n            return Err("derived_bounded authority requires derivation identity".to_owned());\n        }\n'''
+          old_admissible = '''            && matches!(\n                self.authority,\n                AuthorityState::Direct | AuthorityState::DerivedBounded\n            )\n            && self.proof.satisfies(requirement)\n'''
+          new_admissible = '''            && (matches!(\n                self.authority,\n                AuthorityState::Direct | AuthorityState::DerivedBounded\n            ) || (self.authority == AuthorityState::AttemptOnly\n                && self.proposition_id == "P4.PATH.ACCESS_ATTEMPT"\n                && matches!(\n                    self.proof.proposition,\n                    Proposition::FilePathnameAttemptObserved { .. }\n                )))\n            && self.proof.satisfies(requirement)\n'''
+          if s.count(old_validate) != 1:
+              raise SystemExit('validate replacement boundary not unique')
+          if s.count(old_admissible) != 1:
+              raise SystemExit('admissible replacement boundary not unique')
+          s = s.replace(old_validate, new_validate).replace(old_admissible, new_admissible)
+          p.write_text(s)
+          PY
+          rustfmt +$RUST_TOOLCHAIN --edition 2021 "$TARGET"
+          mapfile -t changed < <(git diff --name-only)
+          if [ "${#changed[@]}" -ne 1 ] || [ "${changed[0]}" != "$TARGET" ]; then
+            printf 'Unexpected changed paths:\n'
+            printf '%s\n' "${changed[@]}"
+            exit 1
+          fi
+          git diff --check
+          git diff -- "$TARGET"
+
+      - name: Prove frozen A1.3U cases before commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p4-backend-authority/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --all-targets -- --nocapture
+
+      - name: Commit bounded research-only correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'AHMED YOUNIS'
+          git config user.email 'aether.x.eg@gmail.com'
+          git add -- "$TARGET"
+          git diff --cached --name-only | grep -qx "$TARGET"
+          git commit -m 'P4 A1.3U: constrain and enable attempt-scoped authority'
+          git push origin HEAD:development/post-alpha4-behavioral-integrity
