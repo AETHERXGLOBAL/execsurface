@@ -3,7 +3,9 @@ pub use execsurface_p4_backend_authority::AuthorityState;
 #[path = "../src/a2_matrix.rs"]
 mod a2_matrix;
 
-use a2_matrix::{deterministic_json, ptrace_raw_v2_matrix, validate_matrix, GapClass, A2_PROPOSITION_IDS};
+use a2_matrix::{
+    deterministic_json, ptrace_raw_v2_matrix, validate_matrix, GapClass, A2_PROPOSITION_IDS,
+};
 
 fn row(id: &str) -> a2_matrix::AuthorityGapRow {
     ptrace_raw_v2_matrix()
@@ -16,7 +18,10 @@ fn row(id: &str) -> a2_matrix::AuthorityGapRow {
 fn a2_matrix_exactly_matches_frozen_ten_propositions_in_order() {
     let rows = ptrace_raw_v2_matrix();
     validate_matrix(&rows).expect("valid frozen matrix");
-    let ids = rows.iter().map(|row| row.proposition_id).collect::<Vec<_>>();
+    let ids = rows
+        .iter()
+        .map(|row| row.proposition_id)
+        .collect::<Vec<_>>();
     assert_eq!(ids, A2_PROPOSITION_IDS);
 }
 
@@ -62,7 +67,9 @@ fn a2_fd_io_is_not_globally_direct_when_clone_relation_is_unknown() {
     assert_eq!(row.best_authority, AuthorityState::Direct);
     assert_eq!(row.primary_gap, GapClass::RepresentationGap);
     assert!(!row.product_usable);
-    assert!(row.reason_codes.contains(&"raw_v2_clone_flags_not_retained"));
+    assert!(row
+        .reason_codes
+        .contains(&"raw_v2_clone_flags_not_retained"));
     assert!(row.conditional_authority.is_some());
 }
 
@@ -96,7 +103,9 @@ fn a2_observer_health_is_bounded_no_gap_not_universal_completeness() {
     assert_eq!(row.best_authority, AuthorityState::Direct);
     assert_eq!(row.primary_gap, GapClass::NoGap);
     assert!(row.product_usable);
-    assert!(row.missing_evidence.contains("no universal silent-loss claim"));
+    assert!(row
+        .missing_evidence
+        .contains("no universal silent-loss claim"));
 }
 
 #[test]
@@ -105,20 +114,30 @@ fn a2_clone_fd_table_relation_remains_representation_gap() {
     assert_eq!(row.best_authority, AuthorityState::DerivedBounded);
     assert_eq!(row.primary_gap, GapClass::RepresentationGap);
     assert!(!row.product_usable);
-    assert!(row.reason_codes.contains(&"raw_v2_clone_flags_not_retained"));
+    assert!(row
+        .reason_codes
+        .contains(&"raw_v2_clone_flags_not_retained"));
 }
 
 #[test]
 fn a2_gap_rows_name_missing_evidence_and_strengthening_source() {
     for row in ptrace_raw_v2_matrix() {
         if row.primary_gap != GapClass::NoGap {
-            assert!(!row.missing_evidence.trim().is_empty(), "{}", row.proposition_id);
+            assert!(
+                !row.missing_evidence.trim().is_empty(),
+                "{}",
+                row.proposition_id
+            );
             assert!(
                 !row.plausible_strengthening_source.trim().is_empty(),
                 "{}",
                 row.proposition_id
             );
-            assert!(!row.prior_evidence.trim().is_empty(), "{}", row.proposition_id);
+            assert!(
+                !row.prior_evidence.trim().is_empty(),
+                "{}",
+                row.proposition_id
+            );
         }
     }
 }
