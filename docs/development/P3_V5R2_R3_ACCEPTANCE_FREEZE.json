@@ -1,0 +1,18 @@
+{
+  "canonical_gcc_invariant_effect_count": 2,
+  "explicit_accepted_variable_effects": [],
+  "frequency_authorizes": false,
+  "learning_artifact_id": 11032959833,
+  "learning_artifact_sha256": "sha256:0129b5c77dfbb3d91967918e9a281dcfb135eff100023be77bd14096e5acae41",
+  "learning_run_id": 36569389464,
+  "non_target_raw_variable_candidate_count": 47,
+  "projected_learning_set_digest": "sha256:fb709483c817bb56662fc9c66217635dbc8a05dc7600786579b8300541c68418",
+  "projected_variable_candidate_count": 47,
+  "public_integration_authorized": false,
+  "r4_check_runs_authorized_only_after_repository_freeze_commit": true,
+  "raw_learning_set_digest": "sha256:610af055160e5c67f1c3a0e47973aa9f6c93dafcea893b312b2c3e7be308dd1e",
+  "raw_variable_candidate_count": 59,
+  "schema_version": 1,
+  "status": "R3_ACCEPTANCE_FROZEN",
+  "targeted_raw_variable_candidate_count": 12
+}
