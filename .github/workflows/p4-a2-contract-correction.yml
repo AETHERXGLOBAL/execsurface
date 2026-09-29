@@ -44,12 +44,12 @@ jobs:
           matrix = Path('experiments/p4-backend-authority/src/a2_matrix.rs')
           s = matrix.read_text()
 
-          # The matrix is emitted as deterministic evidence only. Deserialization of
-          # borrowed static slices is neither required by A2 nor supported by serde.
-          serde_import = 'use serde::{Deserialize, Serialize};'
-          if s.count(serde_import) != 1:
-              raise SystemExit('serialize/deserialize import boundary not unique')
-          s = s.replace(serde_import, 'use serde::Serialize;')
+          # A2 emits deterministic evidence; it does not deserialize borrowed rows.
+          old_import = 'use serde::{Deserialize, Serialize};'
+          if old_import in s:
+              s = s.replace(old_import, 'use serde::Serialize;')
+          elif 'use serde::Serialize;' not in s:
+              raise SystemExit('serialize-only import boundary missing')
           s = s.replace(
               '#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]',
               '#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]',
@@ -59,69 +59,77 @@ jobs:
               '#[derive(Debug, Clone, PartialEq, Eq, Serialize)]',
           )
 
-          needle = '    pub product_usable: bool,\n    pub primary_gap: GapClass,\n'
-          repl = '    pub product_usable: bool,\n    pub second_backend_plausible: bool,\n    pub primary_gap: GapClass,\n'
-          if s.count(needle) != 1:
-              raise SystemExit('matrix struct boundary not unique')
-          s = s.replace(needle, repl)
+          if 'pub second_backend_plausible: bool,' not in s:
+              needle = '    pub product_usable: bool,\n    pub primary_gap: GapClass,\n'
+              repl = '    pub product_usable: bool,\n    pub second_backend_plausible: bool,\n    pub primary_gap: GapClass,\n'
+              if s.count(needle) != 1:
+                  raise SystemExit('matrix struct boundary not unique')
+              s = s.replace(needle, repl)
 
-          plausible = {
-              'P4.PROC.CREATE_RELATION': False,
-              'P4.EXEC.SUCCESS': False,
-              'P4.PATH.ACCESS_ATTEMPT': False,
-              'P4.FILE.OPEN_OBJECT': True,
-              'P4.FD.IO_ATTRIBUTION': False,
-              'P4.FILE.RENAME_DELETE': True,
-              'P4.NET.CONNECT_DESTINATION': True,
-              'P4.CAUSAL.EXEC_LINEAGE': False,
-              'P4.OBSERVER.HEALTH_LOSS': False,
-              'P4.FDTABLE.RELATION': False,
-          }
-          lines = s.splitlines()
-          out = []
-          current = None
-          inserted = set()
-          for line in lines:
-              stripped = line.strip()
-              if stripped.startswith('proposition_id: "'):
-                  current = stripped.split('"')[1]
-              out.append(line)
-              if stripped.startswith('product_usable:'):
-                  if current not in plausible:
-                      raise SystemExit(f'unknown proposition around product_usable: {current!r}')
-                  value = 'true' if plausible[current] else 'false'
-                  indent = line[:len(line)-len(line.lstrip())]
-                  out.append(f'{indent}second_backend_plausible: {value},')
-                  inserted.add(current)
-          if inserted != set(plausible):
-              raise SystemExit(f'missing second-backend fields: {set(plausible)-inserted}')
-          matrix.write_text('\n'.join(out) + '\n')
+              plausible = {
+                  'P4.PROC.CREATE_RELATION': False,
+                  'P4.EXEC.SUCCESS': False,
+                  'P4.PATH.ACCESS_ATTEMPT': False,
+                  'P4.FILE.OPEN_OBJECT': True,
+                  'P4.FD.IO_ATTRIBUTION': False,
+                  'P4.FILE.RENAME_DELETE': True,
+                  'P4.NET.CONNECT_DESTINATION': True,
+                  'P4.CAUSAL.EXEC_LINEAGE': False,
+                  'P4.OBSERVER.HEALTH_LOSS': False,
+                  'P4.FDTABLE.RELATION': False,
+              }
+              lines = s.splitlines()
+              out = []
+              current = None
+              inserted = set()
+              for line in lines:
+                  stripped = line.strip()
+                  if stripped.startswith('proposition_id: "'):
+                      current = stripped.split('"')[1]
+                  out.append(line)
+                  if stripped.startswith('product_usable:'):
+                      if current not in plausible:
+                          raise SystemExit(f'unknown proposition around product_usable: {current!r}')
+                      value = 'true' if plausible[current] else 'false'
+                      indent = line[:len(line)-len(line.lstrip())]
+                      out.append(f'{indent}second_backend_plausible: {value},')
+                      inserted.add(current)
+              if inserted != set(plausible):
+                  raise SystemExit(f'missing second-backend fields: {set(plausible)-inserted}')
+              s = '\n'.join(out) + '\n'
+          matrix.write_text(s)
 
           tests = Path('experiments/p4-backend-authority/tests/a2_authority_gap_matrix.rs')
           t = tests.read_text()
-          anchor = '''#[test]\nfn a2_matrix_serialization_is_deterministic_and_gap_preserving() {\n'''
-          if t.count(anchor) != 1:
-              raise SystemExit('A2 test insertion boundary not unique')
-          new_test = '''#[test]\nfn a2_second_backend_plausibility_is_explicit_and_never_inferred_from_any_gap() {\n    let plausible = ptrace_raw_v2_matrix()\n        .into_iter()\n        .filter(|row| row.second_backend_plausible)\n        .map(|row| row.proposition_id)\n        .collect::<std::collections::BTreeSet<_>>();\n    assert_eq!(\n        plausible,\n        std::collections::BTreeSet::from([\n            "P4.FILE.OPEN_OBJECT",\n            "P4.FILE.RENAME_DELETE",\n            "P4.NET.CONNECT_DESTINATION",\n        ])\n    );\n\n    for id in [\n        "P4.PROC.CREATE_RELATION",\n        "P4.EXEC.SUCCESS",\n        "P4.FD.IO_ATTRIBUTION",\n        "P4.FDTABLE.RELATION",\n    ] {\n        assert!(!row(id).second_backend_plausible, "{id}");\n    }\n}\n\n'''
-          t = t.replace(anchor, new_test + anchor)
+          test_name = 'fn a2_second_backend_plausibility_is_explicit_and_never_inferred_from_any_gap()'
+          if test_name not in t:
+              anchor = '''#[test]\nfn a2_matrix_serialization_is_deterministic_and_gap_preserving() {\n'''
+              if t.count(anchor) != 1:
+                  raise SystemExit('A2 test insertion boundary not unique')
+              new_test = '''#[test]\nfn a2_second_backend_plausibility_is_explicit_and_never_inferred_from_any_gap() {\n    let plausible = ptrace_raw_v2_matrix()\n        .into_iter()\n        .filter(|row| row.second_backend_plausible)\n        .map(|row| row.proposition_id)\n        .collect::<std::collections::BTreeSet<_>>();\n    assert_eq!(\n        plausible,\n        std::collections::BTreeSet::from([\n            "P4.FILE.OPEN_OBJECT",\n            "P4.FILE.RENAME_DELETE",\n            "P4.NET.CONNECT_DESTINATION",\n        ])\n    );\n\n    for id in [\n        "P4.PROC.CREATE_RELATION",\n        "P4.EXEC.SUCCESS",\n        "P4.FD.IO_ATTRIBUTION",\n        "P4.FDTABLE.RELATION",\n    ] {\n        assert!(!row(id).second_backend_plausible, "{id}");\n    }\n}\n\n'''
+              t = t.replace(anchor, new_test + anchor)
           tests.write_text(t)
 
           workflow = Path('.github/workflows/p4-a2-authority-gap.yml')
           w = workflow.read_text()
           old_source = 'A1_4_ACCEPTED_SOURCE: 28a5bfdb4682bc9aaa9d3580b9085e697bd91980'
           new_source = 'A1_4_ACCEPTED_SOURCE: 08969deddf8c0cac154e73922672c60b8c0d3660'
-          if w.count(old_source) != 1:
-              raise SystemExit('old A1.4 boundary not found exactly once')
-          w = w.replace(old_source, new_source)
-          w = w.replace("grep -q 'test result: ok. 14 passed; 0 failed' \"$EVIDENCE_ROOT/a2-matrix.log\"",
-                        "grep -q 'test result: ok. 15 passed; 0 failed' \"$EVIDENCE_ROOT/a2-matrix.log\"")
-          w = w.replace("grep -q 'test result: ok. 14 passed; 0 failed' \"$EVIDENCE_ROOT/a1-reproof.log\"",
-                        "grep -q 'test result: ok. 15 passed; 0 failed' \"$EVIDENCE_ROOT/a1-reproof.log\"")
+          if old_source in w:
+              w = w.replace(old_source, new_source)
+          elif new_source not in w:
+              raise SystemExit('A1.4 accepted-source boundary missing')
+
+          w = w.replace("grep -q 'test result: ok. 15 passed; 0 failed' \"$EVIDENCE_ROOT/a2-matrix.log\"",
+                        "grep -q 'test result: ok. 16 passed; 0 failed' \"$EVIDENCE_ROOT/a2-matrix.log\"")
+          w = w.replace("grep -q 'test result: ok. 15 passed; 0 failed' \"$EVIDENCE_ROOT/a1-reproof.log\"",
+                        "grep -q 'test result: ok. 16 passed; 0 failed' \"$EVIDENCE_ROOT/a1-reproof.log\"")
+
           boundary = "grep -q 'PREREGISTERED — MATRIX IMPLEMENTATION MAY START' docs/development/P4_A2_AUTHORITY_GAP_PROTOCOL.md\n"
-          replacement = boundary + "          git merge-base --is-ancestor \"$A1_4_ACCEPTED_SOURCE\" HEAD\n          grep -q 'P4_A1_PTRACE_ADAPTER_PASS_RESEARCH_ONLY' docs/development/P4_A1_4_PUBLIC_ANTIDRIFT_RESULT.md\n"
-          if w.count(boundary) != 1:
-              raise SystemExit('A2 boundary insertion point not unique')
-          w = w.replace(boundary, replacement)
+          stronger = "          git merge-base --is-ancestor \"$A1_4_ACCEPTED_SOURCE\" HEAD\n          grep -q 'P4_A1_PTRACE_ADAPTER_PASS_RESEARCH_ONLY' docs/development/P4_A1_4_PUBLIC_ANTIDRIFT_RESULT.md\n"
+          if 'git merge-base --is-ancestor "$A1_4_ACCEPTED_SOURCE" HEAD' not in w:
+              if w.count(boundary) != 1:
+                  raise SystemExit('A2 boundary insertion point not unique')
+              w = w.replace(boundary, boundary + stronger)
           workflow.write_text(w)
           PY
 
