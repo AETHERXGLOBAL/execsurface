@@ -340,10 +340,10 @@ fn b1_lost_observation_never_becomes_success() {
 
 #[test]
 fn b1_entry_exit_actor_substitution_never_reaches_success() {
-    let actor = actor(4242, 'c');
+    let expected_actor = actor(4242, 'c');
     let attempt = open_attempt(
         OperationKind::Open,
-        actor.clone(),
+        expected_actor.clone(),
         200,
         "$WORKSPACE/substitute",
         digest('a'),
