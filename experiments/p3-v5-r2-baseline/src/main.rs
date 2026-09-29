@@ -106,7 +106,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     println!(
         "semantic_roots={}",
-        lock.payload.canonical_surface.normalization.semantic_roots.join(",")
+        lock.payload
+            .canonical_surface
+            .normalization
+            .semantic_roots
+            .join(",")
     );
     println!("warnings={}", observation.warnings.len());
     println!("complete={}", observation.complete);
