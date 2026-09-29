@@ -1,0 +1,54 @@
+name: P4 B1 one-shot rustfmt correction
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - '.github/workflows/p4-b1-one-shot-rustfmt.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  format-research-only:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout development branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install pinned formatter
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.90.0 --profile minimal
+          rustup component add --toolchain 1.90.0 rustfmt
+
+      - name: Apply rustfmt only to isolated P4 experiment
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.90.0 fmt --manifest-path experiments/p4-backend-authority/Cargo.toml
+          changed="$(git diff --name-only)"
+          printf '%s\n' "$changed"
+          if [ -z "$changed" ]; then
+            echo 'No formatting delta.'
+            exit 0
+          fi
+          if printf '%s\n' "$changed" | grep -Ev '^experiments/p4-backend-authority/'; then
+            echo 'Refusing formatter delta outside isolated research experiment.' >&2
+            exit 1
+          fi
+          if printf '%s\n' "$changed" | grep -q '^crates/'; then
+            echo 'Refusing public/runtime crate drift.' >&2
+            exit 1
+          fi
+          git diff --check
+          git config user.name 'aetherxeg-source'
+          git config user.email 'aether.x.eg@gmail.com'
+          git add experiments/p4-backend-authority
+          git commit -m 'P4 B1: rustfmt-only live ptrace research harness'
+          git push origin HEAD:development/post-alpha4-behavioral-integrity
