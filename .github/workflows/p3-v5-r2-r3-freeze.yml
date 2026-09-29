@@ -66,7 +66,7 @@ jobs:
           test "$actual" = "$SOURCE_ARTIFACT_SHA256"
           unzip -q "$EVIDENCE_ROOT/frozen-learning.zip" -d "$EVIDENCE_ROOT/frozen-learning"
           grep -qx 'admitted=6/6' "$EVIDENCE_ROOT/frozen-learning/admission-summary.txt"
-          (cd "$EVIDENCE_ROOT/frozen-learning" && sha256sum -c SHA256SUMS)
+          (cd "$EVIDENCE_ROOT/frozen-learning" && sed 's#  p3-v5-r2-learning-evidence/#  #' SHA256SUMS | sha256sum -c -)
           test "$(find "$EVIDENCE_ROOT/frozen-learning" -maxdepth 1 -name 'fzf-learn-*.lock.json' | wc -l)" -eq 6
 
       - name: Build existing preregistered variance analyzer without semantic edits
