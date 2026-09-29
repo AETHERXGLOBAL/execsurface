@@ -98,11 +98,7 @@ pub fn map_ptrace_v2(
                     lifecycle_completeness(),
                     &evidence_digest,
                 )?);
-                records.push(fd_table_record(
-                    actor,
-                    mechanism,
-                    &evidence_digest,
-                )?);
+                records.push(fd_table_record(actor, mechanism, &evidence_digest)?);
                 if mechanism == SpawnMechanism::Clone {
                     capability_gaps.insert("P4.FDTABLE.RELATION.EXACT_CLONE".to_owned());
                 }
@@ -225,8 +221,8 @@ fn profile() -> BackendSemanticProfile {
 }
 
 fn observation_digest(observation: &Observation) -> Result<String, PtraceMappingError> {
-    let bytes =
-        serde_json::to_vec(observation).map_err(|error| PtraceMappingError::Serialize(error.to_string()))?;
+    let bytes = serde_json::to_vec(observation)
+        .map_err(|error| PtraceMappingError::Serialize(error.to_string()))?;
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
 }
 
@@ -250,9 +246,7 @@ fn direct_record(
         },
         reason_codes: BTreeSet::new(),
     };
-    record
-        .validate()
-        .map_err(PtraceMappingError::Record)?;
+    record.validate().map_err(PtraceMappingError::Record)?;
     Ok(record)
 }
 
@@ -284,9 +278,7 @@ fn attempt_record(
         },
         reason_codes: BTreeSet::new(),
     };
-    record
-        .validate()
-        .map_err(PtraceMappingError::Record)?;
+    record.validate().map_err(PtraceMappingError::Record)?;
     Ok(record)
 }
 
@@ -299,7 +291,8 @@ fn health_record(
         complete,
         warning_codes: warning_codes.clone(),
     };
-    let mut proof = ProofCarryingObservation::new(proposition, EvidenceGuarantees::default(), profile());
+    let mut proof =
+        ProofCarryingObservation::new(proposition, EvidenceGuarantees::default(), profile());
 
     if complete && warning_codes.is_empty() {
         proof.completeness = completeness_map([
@@ -323,9 +316,7 @@ fn health_record(
             },
             reason_codes: BTreeSet::new(),
         };
-        record
-            .validate()
-            .map_err(PtraceMappingError::Record)?;
+        record.validate().map_err(PtraceMappingError::Record)?;
         return Ok(record);
     }
 
@@ -359,9 +350,7 @@ fn health_record(
         },
         reason_codes: reasons,
     };
-    record
-        .validate()
-        .map_err(PtraceMappingError::Record)?;
+    record.validate().map_err(PtraceMappingError::Record)?;
     Ok(record)
 }
 
@@ -400,9 +389,7 @@ fn fd_table_record(
                 },
                 reason_codes: BTreeSet::new(),
             };
-            record
-                .validate()
-                .map_err(PtraceMappingError::Record)?;
+            record.validate().map_err(PtraceMappingError::Record)?;
             Ok(record)
         }
         SpawnMechanism::Clone => {
@@ -432,9 +419,7 @@ fn fd_table_record(
                 },
                 reason_codes: BTreeSet::from([reason]),
             };
-            record
-                .validate()
-                .map_err(PtraceMappingError::Record)?;
+            record.validate().map_err(PtraceMappingError::Record)?;
             Ok(record)
         }
     }
@@ -487,9 +472,7 @@ fn fd_effect_record(
             },
             reason_codes: BTreeSet::from([reason]),
         };
-        record
-            .validate()
-            .map_err(PtraceMappingError::Record)?;
+        record.validate().map_err(PtraceMappingError::Record)?;
         return Ok(record);
     }
 
@@ -522,9 +505,7 @@ fn fd_effect_record(
         },
         reason_codes: BTreeSet::new(),
     };
-    record
-        .validate()
-        .map_err(PtraceMappingError::Record)?;
+    record.validate().map_err(PtraceMappingError::Record)?;
     Ok(record)
 }
 
@@ -566,9 +547,7 @@ fn add_lineage(
         },
         reason_codes: BTreeSet::new(),
     };
-    record
-        .validate()
-        .map_err(PtraceMappingError::Record)?;
+    record.validate().map_err(PtraceMappingError::Record)?;
     records.push(record);
     Ok(())
 }
@@ -697,7 +676,11 @@ mod tests {
     }
 
     fn event(sequence: u64, tid: i32, kind: RawEventKind) -> RawEvent {
-        RawEvent { sequence, tid, kind }
+        RawEvent {
+            sequence,
+            tid,
+            kind,
+        }
     }
 
     fn mapped(events: Vec<RawEvent>) -> PtraceMapping {
@@ -873,13 +856,11 @@ mod tests {
             },
         )]);
         input.complete = false;
-        let mapping = map_ptrace_v2(&input, &NormalizationConfig::default()).expect("map incomplete");
+        let mapping =
+            map_ptrace_v2(&input, &NormalizationConfig::default()).expect("map incomplete");
         assert_eq!(mapping.records.len(), 1);
         assert_eq!(mapping.records[0].authority, AuthorityState::Lost);
-        assert_eq!(
-            mapping.records[0].proposition_id,
-            "P4.OBSERVER.HEALTH_LOSS"
-        );
+        assert_eq!(mapping.records[0].proposition_id, "P4.OBSERVER.HEALTH_LOSS");
     }
 
     #[test]
