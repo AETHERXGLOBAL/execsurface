@@ -45,7 +45,6 @@ insert = r'''    #[test]
         observation.events.push(execsurface_model::RawEvent {
             sequence: 1,
             tid: 7,
-            executable: None,
             kind: execsurface_model::RawEventKind::ProcessSpawn {
                 child_tid: 8,
                 mechanism: execsurface_model::SpawnMechanism::Clone,
