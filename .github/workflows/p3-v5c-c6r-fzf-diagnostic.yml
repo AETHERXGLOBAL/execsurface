@@ -1,0 +1,169 @@
+name: P3 V5-C C6R pinned FZF research diagnostic
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - .github/workflows/p3-v5c-c6r-fzf-diagnostic.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-fzf-research-finalizer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      FZF_SHA: b1be3a8be1b833ce5b92fbbac11637643d60a046
+      WORK_ROOT: /tmp/execsurface-p3-c6r-fzf
+      EVIDENCE_DIR: p3-v5c-c6r-evidence
+    steps:
+      - name: Checkout isolated development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Freeze environment and verify public isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          {
+            printf 'execsurface_sha=%s\n' "$(git rev-parse HEAD)"
+            printf 'fzf_sha=%s\n' "$FZF_SHA"
+            printf 'go=%s\n' "$(go version)"
+            printf 'rustc=%s\n' "$(rustc +$RUST_TOOLCHAIN --version)"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } | tee "$EVIDENCE_DIR/environment.txt"
+          grep -q 'PtraceSharedFdGuardPolicy::LegacyConservative' crates/execsurface-observe/src/lib.rs
+          grep -q 'CertificateAwareResearch' crates/execsurface-observe/src/lib.rs
+          grep -q 'C6_COMPATIBILITY_REGRESSION' docs/development/P3_V5C_C6_DIRECT_INTEGRATION_RESULT.md
+
+      - name: Inject diagnostic-only research finalizer test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('crates/execsurface-observe/src/lib.rs')
+          text=p.read_text()
+          anchor='''    #[test]\n    fn shared_fd_ambiguity_is_never_pass_eligible() {\n'''
+          assert text.count(anchor)==1
+          test=r'''    #[test]
+              #[ignore = "C6R pinned FZF diagnostic only; dedicated workflow"]
+              fn c6r_pinned_fzf_research_finalizer_is_complete() {
+                  let root = std::env::var_os("EXECSURFACE_C6R_FZF_ROOT")
+                      .expect("EXECSURFACE_C6R_FZF_ROOT must be set");
+                  let spec = CommandSpec::new("/bin/bash")
+                      .args([
+                          "-lc",
+                          "cd -- \"$1\" && go test ./... >/dev/null 2>&1",
+                          "bash",
+                      ])
+                      .arg(root);
+                  let ptrace = linux_ptrace::observe(&spec, ObserveOptions::default())
+                      .expect("C6R pinned FZF ptrace observation");
+                  let certified = ptrace.clone_fd_certification.fully_certified();
+                  let observation = finalize_ptrace_observation(
+                      ptrace.observation,
+                      certified,
+                      PtraceSharedFdGuardPolicy::CertificateAwareResearch,
+                  );
+                  eprintln!(
+                      "C6R_FZF_RESEARCH complete={} warnings={} events={} certified={}",
+                      observation.complete,
+                      observation.warnings.len(),
+                      observation.events.len(),
+                      certified,
+                  );
+                  for warning in &observation.warnings {
+                      eprintln!("C6R_FZF_WARNING code={} tid={:?} message={}", warning.code, warning.tid, warning.message);
+                  }
+                  assert_eq!(observation.outcome.exit_code, Some(0));
+                  assert!(certified, "pinned FZF clone/fd semantics must be positively certified");
+                  assert!(observation.complete, "research finalizer must remain incomplete if any independent warning exists: {:?}", observation.warnings);
+                  assert!(observation.warnings.is_empty(), "no warning is admissible in C6R pinned diagnostic: {:?}", observation.warnings);
+                  eprintln!("C6R_FZF_RESEARCH_PASS");
+              }
+
+          '''
+          p.write_text(text.replace(anchor,test+anchor,1))
+          PY
+          cargo +$RUST_TOOLCHAIN fmt --all
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-observe --all-targets -- -D warnings
+
+      - name: Checkout pinned unmodified FZF
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: junegunn/fzf
+          ref: ${{ env.FZF_SHA }}
+          path: external/fzf-c6r
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Freeze pinned workload copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$WORK_ROOT"
+          cp -a external/fzf-c6r "$WORK_ROOT"
+          test "$(git -C "$WORK_ROOT" rev-parse HEAD)" = "$FZF_SHA"
+          test -z "$(git -C "$WORK_ROOT" status --porcelain)"
+
+      - name: Execute exactly three direct priming runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in 1 2 3; do
+            (cd "$WORK_ROOT" && go test ./...) \
+              > "$GITHUB_WORKSPACE/$EVIDENCE_DIR/direct-prime-${n}.stdout" \
+              2> "$GITHUB_WORKSPACE/$EVIDENCE_DIR/direct-prime-${n}.stderr"
+            printf 'prime_%s=pass\n' "$n" | tee -a "$GITHUB_WORKSPACE/$EVIDENCE_DIR/priming-status.txt"
+          done
+          test -z "$(git -C "$WORK_ROOT" status --porcelain --untracked-files=no)"
+
+      - name: Run exactly one C6R diagnostic observation
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXECSURFACE_C6R_FZF_ROOT="$WORK_ROOT" \
+            cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --lib \
+              c6r_pinned_fzf_research_finalizer_is_complete \
+              -- --ignored --nocapture 2>&1 | tee "$EVIDENCE_DIR/research-finalizer.log"
+          grep -q 'C6R_FZF_RESEARCH_PASS' "$EVIDENCE_DIR/research-finalizer.log"
+
+      - name: Prove default public contract remains unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity 2>&1 | tee "$EVIDENCE_DIR/public-m11-regression.log"
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          find "$EVIDENCE_DIR" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_DIR/SHA256SUMS"
+
+      - name: Upload C6R evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: p3-v5c-c6r-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 30
