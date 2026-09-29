@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/p3-v5-r2-r3-freeze.yml"
       - "experiments/p3-v5-real-workload/src/main.rs"
+      - "experiments/p3-v5-r2-baseline/**"
   workflow_dispatch:
 
 permissions:
@@ -41,12 +42,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$EVIDENCE_ROOT/frozen-learning"
+          mkdir -p "$EVIDENCE_ROOT/frozen-learning" "$EVIDENCE_ROOT/corrected-locks"
           {
             printf 'r3_source_sha=%s\n' "$(git rev-parse HEAD)"
             printf 'learning_run=%s\n' "$SOURCE_LEARNING_RUN"
             printf 'learning_artifact_id=%s\n' "$SOURCE_ARTIFACT_ID"
             printf 'learning_artifact_sha256=%s\n' "$SOURCE_ARTIFACT_SHA256"
+            printf 'correction=CLI-equivalent-default-normalization-rebaseline-from-same-raw-observations\n'
           } | tee "$EVIDENCE_ROOT/r3-source.txt"
           grep -q 'PREREGISTERED — NO MEASUREMENT MAY PRECEDE THIS FREEZE' docs/development/P3_V5R2_REAL_WORKLOAD_PROTOCOL.md
 
@@ -68,12 +70,22 @@ jobs:
           unzip -q "$EVIDENCE_ROOT/frozen-learning.zip" -d "$EVIDENCE_ROOT/frozen-learning"
           grep -qx 'admitted=6/6' "$EVIDENCE_ROOT/frozen-learning/admission-summary.txt"
           (cd "$EVIDENCE_ROOT/frozen-learning" && sed 's#  p3-v5-r2-learning-evidence/#  #' SHA256SUMS | sha256sum -c -)
-          test "$(find "$EVIDENCE_ROOT/frozen-learning" -maxdepth 1 -name 'fzf-learn-*.lock.json' | wc -l)" -eq 6
+          test "$(find "$EVIDENCE_ROOT/frozen-learning" -maxdepth 1 -name 'observation-*.json' | wc -l)" -eq 6
 
-      - name: Build existing preregistered variance analyzer without semantic edits
+      - name: Build corrected research baseline helper and existing analyzer
         shell: bash
         run: |
           set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile \
+            --manifest-path experiments/p3-v5-r2-baseline/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt \
+            --manifest-path experiments/p3-v5-r2-baseline/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked \
+            --manifest-path experiments/p3-v5-r2-baseline/Cargo.toml \
+            --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN build --locked \
+            --manifest-path experiments/p3-v5-r2-baseline/Cargo.toml
+
           cargo +$RUST_TOOLCHAIN generate-lockfile \
             --manifest-path experiments/p3-v5-real-workload/Cargo.toml
           cargo +$RUST_TOOLCHAIN fmt \
@@ -84,19 +96,56 @@ jobs:
           cargo +$RUST_TOOLCHAIN build --locked \
             --manifest-path experiments/p3-v5-real-workload/Cargo.toml
 
-      - name: R3 analyze exactly six frozen lockfiles
+      - name: Rebuild six baselines from the same immutable raw observations only
+        shell: bash
+        run: |
+          set -euo pipefail
+          helper="experiments/p3-v5-r2-baseline/target/debug/p3-v5-r2-baseline"
+          : > "$EVIDENCE_ROOT/corrected-baseline-summary.txt"
+          for n in 1 2 3 4 5 6; do
+            "$helper" \
+              "$EVIDENCE_ROOT/frozen-learning/observation-${n}.json" \
+              "$EVIDENCE_ROOT/corrected-locks/fzf-learn-${n}.lock.json" \
+              4 \
+              > "$EVIDENCE_ROOT/corrected-baseline-${n}.stdout" \
+              2> "$EVIDENCE_ROOT/corrected-baseline-${n}.stderr"
+            grep '^baseline_digest=' "$EVIDENCE_ROOT/corrected-baseline-${n}.stdout" >> "$EVIDENCE_ROOT/corrected-baseline-summary.txt"
+            grep '^canonical_effects=' "$EVIDENCE_ROOT/corrected-baseline-${n}.stdout" >> "$EVIDENCE_ROOT/corrected-baseline-summary.txt"
+            grep '^semantic_roots=' "$EVIDENCE_ROOT/corrected-baseline-${n}.stdout" >> "$EVIDENCE_ROOT/corrected-baseline-summary.txt"
+            grep -q '^semantic_roots=.*tmp' "$EVIDENCE_ROOT/corrected-baseline-${n}.stdout"
+            sha256sum "$EVIDENCE_ROOT/corrected-locks/fzf-learn-${n}.lock.json" >> "$EVIDENCE_ROOT/corrected-lockfile-sha256.txt"
+          done
+          test "$(wc -l < "$EVIDENCE_ROOT/corrected-lockfile-sha256.txt")" -eq 6
+
+          python3 - "$EVIDENCE_ROOT/corrected-locks" <<'PY'
+          import json, pathlib, sys
+          root=pathlib.Path(sys.argv[1])
+          for n in range(1,7):
+              lock=json.loads((root/f'fzf-learn-{n}.lock.json').read_text())
+              roots=set(lock['payload']['canonical_surface']['normalization']['semantic_roots'])
+              assert 'tmp' in roots, (n, roots)
+              effects=lock['payload']['canonical_surface']['effects']
+              gcc=[e for e in effects if e.get('event_type')=='file_path_access'
+                   and (e.get('actor') or {}).get('family')=='gcc'
+                   and (e.get('target') or {}).get('value','').startswith('$TMP/cc')
+                   and (e.get('target') or {}).get('value','').endswith('.s')]
+              assert gcc, f'run {n}: expected preserved GCC temp evidence after CLI-equivalent normalization'
+          print('R3_PROFILE_PARITY_AND_GCC_EVIDENCE_PASS')
+          PY
+
+      - name: R3 analyze exactly six corrected baselines from frozen observations
         shell: bash
         run: |
           set -euo pipefail
           analyzer="experiments/p3-v5-real-workload/target/debug/p3-v5-analyze"
           "$analyzer" \
             "$EVIDENCE_ROOT/r3-report.json" \
-            "$EVIDENCE_ROOT/frozen-learning/fzf-learn-1.lock.json" \
-            "$EVIDENCE_ROOT/frozen-learning/fzf-learn-2.lock.json" \
-            "$EVIDENCE_ROOT/frozen-learning/fzf-learn-3.lock.json" \
-            "$EVIDENCE_ROOT/frozen-learning/fzf-learn-4.lock.json" \
-            "$EVIDENCE_ROOT/frozen-learning/fzf-learn-5.lock.json" \
-            "$EVIDENCE_ROOT/frozen-learning/fzf-learn-6.lock.json" \
+            "$EVIDENCE_ROOT/corrected-locks/fzf-learn-1.lock.json" \
+            "$EVIDENCE_ROOT/corrected-locks/fzf-learn-2.lock.json" \
+            "$EVIDENCE_ROOT/corrected-locks/fzf-learn-3.lock.json" \
+            "$EVIDENCE_ROOT/corrected-locks/fzf-learn-4.lock.json" \
+            "$EVIDENCE_ROOT/corrected-locks/fzf-learn-5.lock.json" \
+            "$EVIDENCE_ROOT/corrected-locks/fzf-learn-6.lock.json" \
             2>&1 | tee "$EVIDENCE_ROOT/r3-analyzer.log"
           test "$(python3 -c 'import json; print(json.load(open("'"$EVIDENCE_ROOT/r3-report.json"'"))["run_count"])')" -eq 6
 
@@ -152,7 +201,7 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p "$EVIDENCE_ROOT"
-          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+          find "$EVIDENCE_ROOT" -maxdepth 2 -type f ! -name SHA256SUMS -print0 \
             | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
 
       - name: Upload R3 evidence
