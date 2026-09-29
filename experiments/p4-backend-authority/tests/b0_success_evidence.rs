@@ -56,6 +56,22 @@ fn b0_operation_must_match_target_proposition() {
         "127.0.0.1:443",
     );
     assert!(bad.validate().is_err());
+
+    for (operation, sequence, target) in [
+        (OperationKind::RenameAt, 2, "$WORKSPACE/a->$WORKSPACE/b"),
+        (OperationKind::Unlink, 3, "$WORKSPACE/file"),
+        (OperationKind::Rmdir, 4, "$WORKSPACE/dir"),
+    ] {
+        assert!(attempt(
+            TargetProposition::FileRenameDelete,
+            operation,
+            11,
+            sequence,
+            target,
+        )
+        .validate()
+        .is_ok());
+    }
 }
 
 #[test]
