@@ -1,0 +1,64 @@
+name: P4 A0-A1 authority model
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - ".github/workflows/p4-a0-a1-authority.yml"
+      - "experiments/p4-backend-authority/**"
+      - "docs/development/P4_BACKEND_AUTHORITY_PROTOCOL.md"
+      - "docs/development/P4_A0_PROPOSITION_INVENTORY.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authority-model:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+    steps:
+      - name: Checkout isolated development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Verify P4 frozen boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'PREREGISTERED — P4-A0 CONTRACT FREEZE' docs/development/P4_BACKEND_AUTHORITY_PROTOCOL.md
+          grep -q 'FROZEN FOR A0 REVIEW — IMPLEMENTATION NOT YET AUTHORIZED' docs/development/P4_A0_PROPOSITION_INVENTORY.md
+          test "$(git rev-parse --abbrev-ref HEAD)" = "development/post-alpha4-behavioral-integrity"
+
+      - name: A0-A1 isolated authority falsification
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p4-backend-authority/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml -- --nocapture
+
+      - name: Re-prove Semantics v3 model
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --all-targets
+
+      - name: Re-prove public shared-FD contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity
