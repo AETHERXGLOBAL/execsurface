@@ -1,0 +1,83 @@
+name: P3 V5-C C6R isolated research guard gate
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - scripts/p3_v5c_c6r_apply.py
+      - .github/workflows/p3-v5c-c6r-isolated-gate.yml
+
+permissions:
+  contents: write
+
+jobs:
+  isolate-and-falsify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout isolated development branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          ref: development/post-alpha4-behavioral-integrity
+          fetch-depth: 0
+
+      - name: Verify closed C6 failure and C6R protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'C6_COMPATIBILITY_REGRESSION' docs/development/P3_V5C_C6_DIRECT_INTEGRATION_RESULT.md
+          test -f docs/development/P3_V5C_C6R_ISOLATED_RESEARCH_GUARD_PROTOCOL.md
+          git log -1 --oneline
+
+      - name: Apply isolated research policy
+        run: python3 scripts/p3_v5c_c6r_apply.py
+
+      - name: Rustfmt and clippy
+        run: |
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo clippy --locked -p execsurface-observe --all-targets -- -D warnings
+
+      - name: Research-policy falsifiers
+        run: |
+          cargo test --locked -p execsurface-observe --lib c6r_default_policy_remains_legacy_even_with_positive_certificate -- --nocapture
+          cargo test --locked -p execsurface-observe --lib c6r_uncertified_research_mode_remains_fail_closed -- --nocapture
+          cargo test --locked -p execsurface-observe --lib c6r_certified_research_mode_skips_only_synthetic_clone_guard -- --nocapture
+          cargo test --locked -p execsurface-observe --lib c6r_certificate_never_clears_independent_incompleteness -- --nocapture
+
+      - name: Live ptrace routing falsifiers
+        run: |
+          cargo test --locked -p execsurface-observe --lib c3_clone_sigchld_fork_event_keeps_clone_fd_authority -- --ignored --nocapture
+          cargo test --locked -p execsurface-observe --lib c3_clone_vfork_event_keeps_clone_fd_authority -- --ignored --nocapture
+          cargo test --locked -p execsurface-observe --lib c1_real_ptrace_clone_modes_are_certified -- --ignored --nocapture
+
+      - name: Full public-contract observe regressions
+        run: cargo test --locked -p execsurface-observe --all-targets
+
+      - name: Full workspace regressions
+        run: cargo test --locked --workspace
+
+      - name: Anti-drift public-path boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -q 'PtraceSharedFdGuardPolicy::LegacyConservative' crates/execsurface-observe/src/lib.rs
+          if grep -n 'CertificateAwareResearch' crates/execsurface-observe/src/lib.rs | grep -v '#\[cfg(test)\]' >/tmp/c6r-research-refs.txt; then
+            cat /tmp/c6r-research-refs.txt
+          fi
+          test "$(git diff -- crates/execsurface-model/src/lib.rs | wc -l)" -eq 0
+          git status --short
+
+      - name: Commit only after all C6R gates pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AETHER X C6R Gate"
+          git config user.email "aether.x.eg@gmail.com"
+          git add crates/execsurface-observe/src/lib.rs
+          git rm scripts/p3_v5c_c6r_apply.py .github/workflows/p3-v5c-c6r-isolated-gate.yml
+          git rm -f scripts/p3_v5c_c6_apply.py .github/workflows/p3-v5c-c6-guard-gate.yml || true
+          git commit -m "P3 V5-C C6R: isolate certificate-aware guard from public path"
+          git push origin HEAD:development/post-alpha4-behavioral-integrity
