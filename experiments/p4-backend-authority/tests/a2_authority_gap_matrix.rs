@@ -161,6 +161,35 @@ fn a2_gap_rows_name_missing_evidence_and_strengthening_source() {
 }
 
 #[test]
+fn a2_second_backend_plausibility_is_explicit_and_not_inferred_from_any_gap() {
+    let plausible = ptrace_raw_v2_matrix()
+        .into_iter()
+        .filter(|row| row.second_backend_plausible)
+        .map(|row| row.proposition_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        plausible,
+        std::collections::BTreeSet::from([
+            "P4.FILE.OPEN_OBJECT",
+            "P4.FILE.RENAME_DELETE",
+            "P4.NET.CONNECT_DESTINATION",
+        ])
+    );
+
+    for id in [
+        "P4.PROC.CREATE_RELATION",
+        "P4.EXEC.SUCCESS",
+        "P4.PATH.ACCESS_ATTEMPT",
+        "P4.FD.IO_ATTRIBUTION",
+        "P4.CAUSAL.EXEC_LINEAGE",
+        "P4.OBSERVER.HEALTH_LOSS",
+        "P4.FDTABLE.RELATION",
+    ] {
+        assert!(!row(id).second_backend_plausible, "{id}");
+    }
+}
+
+#[test]
 fn a2_matrix_serialization_is_deterministic_and_gap_preserving() {
     let first = ptrace_raw_v2_matrix();
     let second = ptrace_raw_v2_matrix();
