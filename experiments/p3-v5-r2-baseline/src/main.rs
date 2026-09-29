@@ -99,7 +99,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("P3_V5R2_BASELINE_PASS");
     println!("baseline_digest={}", lock.baseline_digest);
     println!("raw_events={}", observation.events.len());
-    println!("canonical_effects={}", lock.payload.canonical_surface.effects.len());
+    println!(
+        "canonical_effects={}",
+        lock.payload.canonical_surface.effects.len()
+    );
     println!("warnings={}", observation.warnings.len());
     println!("complete={}", observation.complete);
     println!("lockfile={}", output_path.display());
