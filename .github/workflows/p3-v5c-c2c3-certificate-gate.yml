@@ -6,6 +6,7 @@ on:
       - development/post-alpha4-behavioral-integrity
     paths:
       - scripts/p3_v5c_c2c3_apply.py
+      - scripts/p3_v5c_c2c3_public_compat_fix.py
       - .github/workflows/p3-v5c-c2c3-certificate-gate.yml
   workflow_dispatch:
 
@@ -33,6 +34,9 @@ jobs:
 
       - name: Apply syscall-origin certificate refinement
         run: python3 scripts/p3_v5c_c2c3_apply.py
+
+      - name: Preserve public raw-v2 spawn compatibility
+        run: python3 scripts/p3_v5c_c2c3_public_compat_fix.py
 
       - name: Rustfmt-only normalization
         run: cargo fmt --all
@@ -74,6 +78,6 @@ jobs:
           git config user.name "AETHER X C2C3 Gate"
           git config user.email "aether.x.eg@gmail.com"
           git add crates/execsurface-observe/src/linux_ptrace.rs
-          git rm scripts/p3_v5c_c2c3_apply.py .github/workflows/p3-v5c-c2c3-certificate-gate.yml
+          git rm scripts/p3_v5c_c2c3_apply.py scripts/p3_v5c_c2c3_public_compat_fix.py .github/workflows/p3-v5c-c2c3-certificate-gate.yml
           git commit -m "P3 V5-C C2/C3: bind clone fd certificate to syscall origin"
           git push origin HEAD:development/post-alpha4-behavioral-integrity
