@@ -1,0 +1,23 @@
+{
+  "accepted_variable_effects": [],
+  "canonical_gcc_invariant_effect_count": 2,
+  "decision": "P3_V5_REAL_WORKLOAD_VALUE_REQUALIFIED_BOUNDED",
+  "frequency_authorizes": false,
+  "learning_artifact_id": 11035133723,
+  "learning_artifact_sha256": "sha256:a98a1f022e601f0b0653474df8c4500f33fa5670f7e25f105740b2e79bd2fd26",
+  "learning_run_id": 36573676797,
+  "non_target_raw_variable_candidate_count": 102,
+  "projected_learning_set_digest": "sha256:16e8519c83ea374359d1e44872d570ccc15be88b7ccf8f9e3b54b5e3d6b7ab30",
+  "projected_variable_candidate_count": 102,
+  "public_integration_authorized": false,
+  "r4_authorized": true,
+  "r4_rule": "exactly six fresh unchanged checks; no replacement; preserve non-target variability; no frequency-based authorization",
+  "raw_learning_set_digest": "sha256:437a9f8fca9f0ff4c8573c1cfee06b46cb325d1d1a890649ba536acd8e2e648d",
+  "raw_variable_candidate_count": 114,
+  "r3c_artifact_id": 11036313569,
+  "r3c_artifact_sha256": "sha256:ce364994c57bcb14a38ca625f46abed4f4a42542691230c56e1d3fdc8c5f388b",
+  "r3c_run_id": 36574213979,
+  "schema_version": 1,
+  "status": "R3C_ACCEPTANCE_FROZEN",
+  "targeted_raw_variable_candidate_count": 12
+}
