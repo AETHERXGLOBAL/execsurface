@@ -1,0 +1,146 @@
+name: P3 V5 Stage L trusted learning collection
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - .github/workflows/p3-v5-learning-collection.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      FZF_SHA: b1be3a8be1b833ce5b92fbbac11637643d60a046
+      WORK_ROOT: /tmp/execsurface-p3-v5-fzf
+      EVIDENCE_DIR: p3-v5-learning-evidence
+    steps:
+      - name: Checkout ExecSurface development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified fzf
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: junegunn/fzf
+          ref: ${{ env.FZF_SHA }}
+          path: external/fzf
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build frozen observer and prepare workload
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          cargo "+$RUST_TOOLCHAIN" build --locked -p execsurface
+          rm -rf "$WORK_ROOT" "$EVIDENCE_DIR"
+          cp -a external/fzf "$WORK_ROOT"
+          test "$(git -C "$WORK_ROOT" rev-parse HEAD)" = "$FZF_SHA"
+          test -z "$(git -C "$WORK_ROOT" status --porcelain)"
+          mkdir -p "$EVIDENCE_DIR"
+          {
+            printf 'execsurface_sha=%s\n' "$GITHUB_SHA"
+            printf 'fzf_sha=%s\n' "$FZF_SHA"
+            printf 'go=%s\n' "$(go version)"
+            printf 'rustc=%s\n' "$(rustc +$RUST_TOOLCHAIN --version)"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+            printf 'runner_image=%s\n' "${ImageOS:-unknown}"
+          } > "$EVIDENCE_DIR/environment.txt"
+
+      - name: Execute exactly three direct priming runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in 1 2 3; do
+            (cd "$WORK_ROOT" && go test ./...) \
+              > "$GITHUB_WORKSPACE/$EVIDENCE_DIR/direct-prime-${n}.stdout" \
+              2> "$GITHUB_WORKSPACE/$EVIDENCE_DIR/direct-prime-${n}.stderr"
+          done
+
+      - name: Collect exactly six trusted learning attempts without replacement
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmd="cd '$WORK_ROOT' && go test ./... >/dev/null 2>&1"
+          : > "$EVIDENCE_DIR/learning-summary.tsv"
+          for n in 1 2 3 4 5 6; do
+            lock="$EVIDENCE_DIR/learn-${n}.lock.json"
+            set +e
+            target/debug/execsurface learn \
+              --output "$lock" \
+              -- /bin/bash -lc "$cmd" \
+              > "$EVIDENCE_DIR/learn-${n}.stdout" \
+              2> "$EVIDENCE_DIR/learn-${n}.stderr"
+            rc=$?
+            set -e
+            if [ -f "$lock" ]; then
+              lock_present=1
+              lock_sha="$(sha256sum "$lock" | awk '{print $1}')"
+            else
+              lock_present=0
+              lock_sha="-"
+            fi
+            printf '%s\t%s\t%s\t%s\n' "$n" "$rc" "$lock_present" "$lock_sha" \
+              | tee -a "$EVIDENCE_DIR/learning-summary.tsv"
+          done
+
+      - name: Classify Stage L admissibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          rows=[]
+          for line in Path('p3-v5-learning-evidence/learning-summary.tsv').read_text().splitlines():
+              n, rc, present, sha = line.split('\t')
+              rows.append({'run': int(n), 'rc': int(rc), 'lock_present': present == '1', 'lock_sha256': sha})
+          admitted = len(rows) == 6 and all(r['rc'] == 0 and r['lock_present'] for r in rows)
+          result = {
+              'expected_learning_runs': 6,
+              'observed_learning_runs': len(rows),
+              'all_learning_attempts_admitted': admitted,
+              'rows': rows,
+              'classification': 'STAGE_L_ADMISSIBLE' if admitted else 'P3_INCOMPLETE_EVIDENCE',
+          }
+          Path('p3-v5-learning-evidence/stage-l-result.json').write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
+          print(json.dumps(result, sort_keys=True))
+          PY
+
+      - name: Seal Stage L evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          find "$EVIDENCE_DIR" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > "$EVIDENCE_DIR/SHA256SUMS"
+
+      - name: Upload Stage L evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: p3-v5-learning-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p3-v5-learning-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce Stage L admission gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result=json.loads(Path('p3-v5-learning-evidence/stage-l-result.json').read_text())
+          if result['classification'] != 'STAGE_L_ADMISSIBLE':
+              raise SystemExit('P3_INCOMPLETE_EVIDENCE: one or more preregistered learning attempts were inadmissible; no replacement is allowed')
+          PY
