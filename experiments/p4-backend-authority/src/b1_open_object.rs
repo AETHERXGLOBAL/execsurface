@@ -8,6 +8,8 @@ use crate::b0_success_evidence::{EvidenceState, SuccessEvidenceRecord, TargetPro
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PostOpenBinding {
     pub fd: i32,
+    pub fd_generation: u64,
+    pub originating_entry_sequence: u64,
     pub binding_sequence: u64,
     pub object_identity: String,
     pub actor_tid: i32,
@@ -19,8 +21,14 @@ impl PostOpenBinding {
         if self.fd < 0 {
             return Err("post-open binding fd must be non-negative".to_owned());
         }
-        if self.binding_sequence == 0 {
+        if self.fd_generation == 0 {
+            return Err("post-open binding requires non-zero fd generation".to_owned());
+        }
+        if self.originating_entry_sequence == 0 || self.binding_sequence == 0 {
             return Err("post-open binding sequence must be non-zero".to_owned());
+        }
+        if self.binding_sequence <= self.originating_entry_sequence {
+            return Err("post-open binding must follow originating entry".to_owned());
         }
         if self.object_identity.trim().is_empty() {
             return Err("post-open object identity must not be empty".to_owned());
@@ -72,6 +80,12 @@ impl OpenObjectRecord {
                     if binding.fd != *returned_fd {
                         OpenObjectAuthority::Ambiguous {
                             reason_codes: BTreeSet::from(["returned_fd_binding_mismatch".to_owned()]),
+                        }
+                    } else if binding.originating_entry_sequence
+                        != success_evidence.attempt.entry_sequence
+                    {
+                        OpenObjectAuthority::Ambiguous {
+                            reason_codes: BTreeSet::from(["post_open_entry_mismatch".to_owned()]),
                         }
                     } else if binding.actor_tid != success_evidence.attempt.actor.tid {
                         OpenObjectAuthority::Ambiguous {
