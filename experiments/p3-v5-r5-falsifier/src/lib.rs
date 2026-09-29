@@ -238,11 +238,7 @@ mod tests {
             schema_version: 2,
             normalization: NormalizationMetadata {
                 profile_version: 3,
-                semantic_roots: vec![
-                    "home".to_owned(),
-                    "tmp".to_owned(),
-                    "workspace".to_owned(),
-                ],
+                semantic_roots: vec!["home".to_owned(), "tmp".to_owned(), "workspace".to_owned()],
             },
             effects: vec![gcc_open, gcc_delete, sentinel.clone(), other.clone()],
         };
