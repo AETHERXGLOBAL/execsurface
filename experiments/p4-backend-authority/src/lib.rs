@@ -1,5 +1,6 @@
 pub mod b0_success_evidence;
 pub mod b1_open_object;
+pub mod b2_rename_delete;
 
 use std::collections::{BTreeMap, BTreeSet};
 
