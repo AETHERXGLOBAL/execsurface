@@ -43,6 +43,22 @@ jobs:
 
           matrix = Path('experiments/p4-backend-authority/src/a2_matrix.rs')
           s = matrix.read_text()
+
+          # The matrix is emitted as deterministic evidence only. Deserialization of
+          # borrowed static slices is neither required by A2 nor supported by serde.
+          serde_import = 'use serde::{Deserialize, Serialize};'
+          if s.count(serde_import) != 1:
+              raise SystemExit('serialize/deserialize import boundary not unique')
+          s = s.replace(serde_import, 'use serde::Serialize;')
+          s = s.replace(
+              '#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]',
+              '#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]',
+          )
+          s = s.replace(
+              '#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]',
+              '#[derive(Debug, Clone, PartialEq, Eq, Serialize)]',
+          )
+
           needle = '    pub product_usable: bool,\n    pub primary_gap: GapClass,\n'
           repl = '    pub product_usable: bool,\n    pub second_backend_plausible: bool,\n    pub primary_gap: GapClass,\n'
           if s.count(needle) != 1:
