@@ -27,6 +27,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Install pinned Rust toolchain components
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
       - name: Freeze source and environment
         shell: bash
         run: |
@@ -36,6 +43,7 @@ jobs:
             printf 'execsurface_sha=%s\n' "$(git rev-parse HEAD)"
             printf 'fzf_sha=%s\n' "$FZF_SHA"
             printf 'go=%s\n' "$(go version)"
+            printf 'rustc=%s\n' "$(rustc +$RUST_TOOLCHAIN --version)"
             printf 'kernel=%s\n' "$(uname -srmo)"
           } | tee "$EVIDENCE_DIR/environment.txt"
           test -f docs/development/P3_V5C_C2_C3_PROTOCOL.md
