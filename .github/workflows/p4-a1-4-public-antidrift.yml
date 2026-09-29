@@ -1,5 +1,5 @@
 name: P4 A1.4 public anti-drift
-# Fresh anti-drift reproof after accepted A1.3U bounded correction.
+# Post-A1.3U public anti-drift reproof.
 
 on:
   push:
@@ -9,6 +9,7 @@ on:
       - '.github/workflows/p4-a1-4-public-antidrift.yml'
       - 'docs/development/P4_A1_4_PUBLIC_ANTIDRIFT_PROTOCOL.md'
       - 'docs/development/P4_A1_3_ADVERSARIAL_RESULT.md'
+      - 'docs/development/P4_A1_3U_ATTEMPT_AUTHORITY_RESULT.md'
   workflow_dispatch:
 
 permissions:
@@ -22,6 +23,7 @@ jobs:
       RUST_TOOLCHAIN: 1.90.0
       EVIDENCE_ROOT: p4-a1-4-antidrift-evidence
       A1_2_ACCEPTED_SOURCE: 8ad1fcf1d9ab474fd6a0d007f198844aef4694fb
+      A1_3U_CORRECTION_SOURCE: 7dfdd3958ac7e6c38cb52859d883035fa6e9ace2
       ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
 
     steps:
@@ -44,17 +46,20 @@ jobs:
           set -euo pipefail
           mkdir -p "$EVIDENCE_ROOT"
           test "$(git rev-parse --abbrev-ref HEAD)" = 'development/post-alpha4-behavioral-integrity'
-          grep -q 'PREREGISTERED — PUBLIC ANTI-DRIFT REPROOF MAY START' docs/development/P4_A1_4_PUBLIC_ANTIDRIFT_PROTOCOL.md
+          grep -q 'PREREGISTERED — POST-A1.3U PUBLIC ANTI-DRIFT REPROOF REQUIRED' docs/development/P4_A1_4_PUBLIC_ANTIDRIFT_PROTOCOL.md
           grep -q 'P4_A1_3_FALSIFICATION_PASS_BOUNDED' docs/development/P4_A1_3_ADVERSARIAL_RESULT.md
+          grep -q 'P4_A1_3U_ATTEMPT_AUTHORITY_PASS_BOUNDED' docs/development/P4_A1_3U_ATTEMPT_AUTHORITY_RESULT.md
+          git merge-base --is-ancestor "$A1_3U_CORRECTION_SOURCE" HEAD
           test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
           test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
           {
             printf 'source_sha=%s\n' "$(git rev-parse HEAD)"
+            printf 'a1_3u_correction_source=%s\n' "$A1_3U_CORRECTION_SOURCE"
             printf 'alpha4_source=%s\n' "$(git rev-parse 'v0.1.0-alpha.4^{commit}')"
             printf 'stable_v0_1_source=%s\n' "$(git rev-parse 'v0.1^{commit}')"
           } | tee "$EVIDENCE_ROOT/source-and-tags.txt"
 
-      - name: A1.3 path anti-drift audit
+      - name: A1 post-A1.2 path anti-drift audit
         shell: bash
         run: |
           set -euo pipefail
@@ -63,7 +68,7 @@ jobs:
             echo 'Public/runtime crate changed after accepted A1.2 source.' >&2
             exit 1
           fi
-          printf 'A1_3_PUBLIC_RUNTIME_PATH_DRIFT=0\n' | tee "$EVIDENCE_ROOT/path-audit-decision.txt"
+          printf 'A1_PUBLIC_RUNTIME_PATH_DRIFT=0\n' | tee "$EVIDENCE_ROOT/path-audit-decision.txt"
 
       - name: Compile bounded M12 fixtures
         shell: bash
