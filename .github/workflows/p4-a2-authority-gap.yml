@@ -21,7 +21,7 @@ jobs:
     env:
       RUST_TOOLCHAIN: 1.90.0
       EVIDENCE_ROOT: p4-a2-authority-gap-evidence
-      A1_4_ACCEPTED_SOURCE: 28a5bfdb4682bc9aaa9d3580b9085e697bd91980
+      A1_4_ACCEPTED_SOURCE: 08969deddf8c0cac154e73922672c60b8c0d3660
       ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
 
     steps:
@@ -45,14 +45,17 @@ jobs:
           mkdir -p "$EVIDENCE_ROOT"
           test "$(git rev-parse --abbrev-ref HEAD)" = 'development/post-alpha4-behavioral-integrity'
           grep -q 'PREREGISTERED — MATRIX IMPLEMENTATION MAY START' docs/development/P4_A2_AUTHORITY_GAP_PROTOCOL.md
+          grep -q 'P4_A1_PTRACE_ADAPTER_PASS_RESEARCH_ONLY' docs/development/P4_A1_4_PUBLIC_ANTIDRIFT_RESULT.md
+          git merge-base --is-ancestor "$A1_4_ACCEPTED_SOURCE" HEAD
           test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
           test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
           git diff --name-only "$A1_4_ACCEPTED_SOURCE"..HEAD | tee "$EVIDENCE_ROOT/post-a1.4-paths.txt"
           if git diff --name-only "$A1_4_ACCEPTED_SOURCE"..HEAD | grep -q '^crates/'; then
-            echo 'Public/runtime crate drift detected after A1.4 accepted source.' >&2
+            echo 'Public/runtime crate drift detected after strongest A1.4 source.' >&2
             exit 1
           fi
           printf 'source_sha=%s\n' "$(git rev-parse HEAD)" | tee "$EVIDENCE_ROOT/source.txt"
+          printf 'a1_4_accepted_source=%s\n' "$A1_4_ACCEPTED_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
           printf 'canonical_matrix=experiments/p4-backend-authority/src/a2_matrix.rs\n' | tee -a "$EVIDENCE_ROOT/source.txt"
 
       - name: Generate isolated lock
@@ -73,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test a2_authority_gap_matrix -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/a2-matrix.log"
-          grep -q 'test result: ok. 15 passed; 0 failed' "$EVIDENCE_ROOT/a2-matrix.log"
+          grep -q 'test result: ok. 16 passed; 0 failed' "$EVIDENCE_ROOT/a2-matrix.log"
           grep -q 'A2_MATRIX_JSON_BEGIN' "$EVIDENCE_ROOT/a2-matrix.log"
           grep -q 'A2_MATRIX_JSON_END' "$EVIDENCE_ROOT/a2-matrix.log"
           awk '/A2_MATRIX_JSON_BEGIN/{capture=1;next}/A2_MATRIX_JSON_END/{capture=0}capture' "$EVIDENCE_ROOT/a2-matrix.log" > "$EVIDENCE_ROOT/A2_MATRIX.json"
@@ -88,7 +91,7 @@ jobs:
           grep -q 'test result: ok. 5 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
           grep -q 'test result: ok. 18 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
           grep -q 'test result: ok. 10 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
-          grep -q 'test result: ok. 15 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
+          grep -q 'test result: ok. 16 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
 
       - name: Re-prove Semantics v3 and public M11 boundary
         shell: bash
