@@ -175,6 +175,10 @@ fn read_tracee_c_string(pid: libc::pid_t, address: u64) -> Result<String, String
     Err("unterminated_path".to_owned())
 }
 
+fn signed_i32_syscall_arg(value: u64) -> i64 {
+    i64::from(value as u32 as i32)
+}
+
 fn known_rename_flags(flags: u32) -> bool {
     flags & !(RENAME_NOREPLACE | RENAME_EXCHANGE | RENAME_WHITEOUT) == 0
 }
@@ -203,8 +207,8 @@ fn decode_entry(
             operation: OperationKind::RenameAt,
             source: read_tracee_c_string(pid, regs.rsi)?,
             target: read_tracee_c_string(pid, regs.r10)?,
-            source_dirfd: Some(regs.rdi as i64),
-            target_dirfd: Some(regs.rdx as i64),
+            source_dirfd: Some(signed_i32_syscall_arg(regs.rdi)),
+            target_dirfd: Some(signed_i32_syscall_arg(regs.rdx)),
             flags: None,
             flags_classified: true,
         })
@@ -214,8 +218,8 @@ fn decode_entry(
             operation: OperationKind::RenameAt2,
             source: read_tracee_c_string(pid, regs.rsi)?,
             target: read_tracee_c_string(pid, regs.r10)?,
-            source_dirfd: Some(regs.rdi as i64),
-            target_dirfd: Some(regs.rdx as i64),
+            source_dirfd: Some(signed_i32_syscall_arg(regs.rdi)),
+            target_dirfd: Some(signed_i32_syscall_arg(regs.rdx)),
             flags: Some(flags),
             flags_classified: known_rename_flags(flags),
         })
@@ -232,7 +236,7 @@ fn decode_entry(
         Some(RenameDeleteContext::Delete {
             operation: OperationKind::UnlinkAt,
             target: read_tracee_c_string(pid, regs.rsi)?,
-            dirfd: Some(regs.rdi as i64),
+            dirfd: Some(signed_i32_syscall_arg(regs.rdi)),
             flags: Some(flags),
             flags_classified: known_unlinkat_flags(flags),
         })
