@@ -77,3 +77,24 @@ Monitor inbound replies and public references. For each response:
 3. perform privacy review before retaining artifacts;
 4. do not provide material execution assistance if independence is to be preserved;
 5. if a genuine independent run is produced, validate it prospectively under the existing M9 evidence validators and record its exact scope without generalizing to production readiness or universal adoption.
+
+---
+
+## 2026-09-29 additive routing update — Rust Foundation
+
+Abi Broom, Director of Finance & Operations at the Rust Foundation, replied that the Foundation does not generally provide project reviews and pointed AETHER X to the official Rust Users Forum `code review` category as the most relevant Rust Project space for review.
+
+Classification:
+
+`ROUTED_TO_COMMUNITY_REVIEW — NO TECHNICAL EVALUATION YET`
+
+This does not change the historical M9.2 result and is not Rust Foundation validation or endorsement.
+
+Since the original outreach, ExecSurface advanced to `v0.1.0-alpha.4`. Any new Rust-community review must target the then-current public release and must not reuse the alpha.3 version claim without verification.
+
+Operational tracking for the routed review is now in:
+
+- `docs/external/RUST_CODE_REVIEW_ENGAGEMENT.md`
+- GitHub issue `#102`
+
+The prepared review request focuses on the Rust/Linux FFI and ptrace implementation boundary, including unsafe blocks, post-fork assumptions, lifecycle state handling, fd/shared-FD modeling, fail-closed completeness, and auditability. Negative findings remain first-class evidence.
