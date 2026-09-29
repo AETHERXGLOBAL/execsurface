@@ -1,0 +1,134 @@
+name: P4 A1.3U bounded authority correction
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - .github/workflows/p4-a1-3u-bounded-correction.yml
+
+permissions:
+  contents: write
+
+jobs:
+  bounded-correction:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact development branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: development/post-alpha4-behavioral-integrity
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply only preregistered A1.3U correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('experiments/p4-backend-authority/src/lib.rs')
+          s = p.read_text()
+          old = '''        if matches!(self.authority, AuthorityState::DerivedBounded)
+              && self
+                  .evidence
+                  .derivation
+                  .as_deref()
+                  .is_none_or(str::is_empty)
+          {
+              return Err("derived_bounded authority requires derivation identity".to_owned());
+          }
+          if matches!(
+              self.authority,
+              AuthorityState::Ambiguous | AuthorityState::Lost
+          ) && self.reason_codes.is_empty()
+          {
+              return Err("ambiguous/lost records require explicit reason code".to_owned());
+          }
+          Ok(())
+      }
+  
+      pub fn admissible_for(&self, requirement: &ProofRequirement) -> bool {
+          self.validate().is_ok()
+              && self.completeness == PropositionCompleteness::Complete
+              && matches!(
+                  self.authority,
+                  AuthorityState::Direct | AuthorityState::DerivedBounded
+              )
+              && self.proof.satisfies(requirement)
+      }
+  }'''
+          new = '''        if matches!(self.authority, AuthorityState::DerivedBounded)
+              && self
+                  .evidence
+                  .derivation
+                  .as_deref()
+                  .is_none_or(str::is_empty)
+          {
+              return Err("derived_bounded authority requires derivation identity".to_owned());
+          }
+          if matches!(self.authority, AuthorityState::AttemptOnly)
+              && !self.is_attempt_proposition()
+          {
+              return Err("attempt_only authority requires explicit attempt proposition".to_owned());
+          }
+          if matches!(
+              self.authority,
+              AuthorityState::Ambiguous | AuthorityState::Lost
+          ) && self.reason_codes.is_empty()
+          {
+              return Err("ambiguous/lost records require explicit reason code".to_owned());
+          }
+          Ok(())
+      }
+  
+      fn is_attempt_proposition(&self) -> bool {
+          matches!(
+              &self.proof.proposition,
+              Proposition::FilePathnameAttemptObserved { .. }
+                  | Proposition::FileRenameAttemptObserved { .. }
+                  | Proposition::NetworkConnectDestinationAttemptObserved { .. }
+          )
+      }
+  
+      fn is_explicit_attempt_scope(&self) -> bool {
+          self.proposition_id == "P4.PATH.ACCESS_ATTEMPT"
+              && matches!(
+                  &self.proof.proposition,
+                  Proposition::FilePathnameAttemptObserved { .. }
+              )
+      }
+  
+      pub fn admissible_for(&self, requirement: &ProofRequirement) -> bool {
+          let authority_admissible = matches!(
+              self.authority,
+              AuthorityState::Direct | AuthorityState::DerivedBounded
+          ) || (self.authority == AuthorityState::AttemptOnly && self.is_explicit_attempt_scope());
+  
+          self.validate().is_ok()
+              && self.completeness == PropositionCompleteness::Complete
+              && authority_admissible
+              && self.proof.satisfies(requirement)
+      }
+  }'''
+          if old not in s:
+              raise SystemExit('expected frozen source block not found; refusing correction')
+          s2 = s.replace(old, new, 1)
+          if s2 == s:
+              raise SystemExit('no change produced')
+          p.write_text(s2)
+          PY
+          git diff --check
+          mapfile -t changed < <(git diff --name-only)
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = "experiments/p4-backend-authority/src/lib.rs"
+
+      - name: Commit bounded correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'AHMED YOUNIS'
+          git config user.email 'aether.x.eg@gmail.com'
+          git add experiments/p4-backend-authority/src/lib.rs
+          git commit -m 'P4 A1.3U: bound attempt-only admissibility to explicit attempt scope'
+          git push origin HEAD:development/post-alpha4-behavioral-integrity
