@@ -74,7 +74,9 @@ impl LiveEffect {
         }
     }
 
-    fn evidence(&self) -> execsurface_p4_backend_authority::b0_success_evidence::SuccessEvidenceRecord {
+    fn evidence(
+        &self,
+    ) -> execsurface_p4_backend_authority::b0_success_evidence::SuccessEvidenceRecord {
         let actor = self.actor();
         let attempt = AttemptEvidence {
             proposition: TargetProposition::FileRenameDelete,
@@ -268,7 +270,12 @@ fn trace_fixture(scenario: &str, args: &[String]) -> TraceOutcome {
             options,
         )
     };
-    assert_eq!(rc, 0, "PTRACE_SETOPTIONS: {}", std::io::Error::last_os_error());
+    assert_eq!(
+        rc,
+        0,
+        "PTRACE_SETOPTIONS: {}",
+        std::io::Error::last_os_error()
+    );
 
     let mut entering = true;
     let mut sequence = 0u64;
