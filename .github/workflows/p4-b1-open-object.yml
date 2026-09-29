@@ -7,9 +7,11 @@ on:
     paths:
       - 'docs/development/P4_B1_FILE_OPEN_OBJECT_PROTOCOL.md'
       - 'docs/development/P4_B0_SUCCESS_EVIDENCE_RESULT.md'
+      - 'experiments/p4-backend-authority/Cargo.toml'
       - 'experiments/p4-backend-authority/src/lib.rs'
       - 'experiments/p4-backend-authority/src/b0_success_evidence.rs'
       - 'experiments/p4-backend-authority/src/b1_open_object.rs'
+      - 'experiments/p4-backend-authority/src/bin/b1_open_fixture.rs'
       - 'experiments/p4-backend-authority/tests/b0_success_evidence.rs'
       - 'experiments/p4-backend-authority/tests/b1_open_object.rs'
       - '.github/workflows/p4-b1-open-object.yml'
