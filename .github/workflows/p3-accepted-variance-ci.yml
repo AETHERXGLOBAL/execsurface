@@ -1,0 +1,35 @@
+name: P3 accepted variance contract CI
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - "experiments/p3-accepted-variance/**"
+      - "experiments/p3-variance-analyzer/**"
+      - ".github/workflows/p3-accepted-variance-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  accepted-variance-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Generate isolated lockfile
+        run: cargo generate-lockfile --manifest-path experiments/p3-accepted-variance/Cargo.toml
+
+      - name: Rust formatting
+        run: cargo fmt --manifest-path experiments/p3-accepted-variance/Cargo.toml -- --check
+
+      - name: Contract clippy
+        run: cargo clippy --locked --manifest-path experiments/p3-accepted-variance/Cargo.toml --all-targets -- -D warnings
+
+      - name: Contract tests
+        run: cargo test --locked --manifest-path experiments/p3-accepted-variance/Cargo.toml --all-targets
