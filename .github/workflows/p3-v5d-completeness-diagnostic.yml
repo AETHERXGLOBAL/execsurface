@@ -1,0 +1,112 @@
+name: P3 V5-D completeness attribution diagnostic
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - .github/workflows/p3-v5d-completeness-diagnostic.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      FZF_SHA: b1be3a8be1b833ce5b92fbbac11637643d60a046
+      WORK_ROOT: /tmp/execsurface-p3-v5d-fzf
+      EVIDENCE_DIR: p3-v5d-evidence
+    steps:
+      - name: Checkout ExecSurface development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified fzf
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: junegunn/fzf
+          ref: ${{ env.FZF_SHA }}
+          path: external/fzf
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prepare diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rm -rf "$WORK_ROOT" "$EVIDENCE_DIR"
+          cp -a external/fzf "$WORK_ROOT"
+          test "$(git -C "$WORK_ROOT" rev-parse HEAD)" = "$FZF_SHA"
+          test -z "$(git -C "$WORK_ROOT" status --porcelain)"
+          mkdir -p "$EVIDENCE_DIR"
+          cargo "+$RUST_TOOLCHAIN" generate-lockfile --manifest-path experiments/p3-v5-completeness-diagnostic/Cargo.toml
+          cargo "+$RUST_TOOLCHAIN" fmt --manifest-path experiments/p3-v5-completeness-diagnostic/Cargo.toml -- --check
+          cargo "+$RUST_TOOLCHAIN" clippy --locked --manifest-path experiments/p3-v5-completeness-diagnostic/Cargo.toml --all-targets -- -D warnings
+          cargo "+$RUST_TOOLCHAIN" build --locked --manifest-path experiments/p3-v5-completeness-diagnostic/Cargo.toml
+          {
+            printf 'execsurface_sha=%s\n' "$GITHUB_SHA"
+            printf 'fzf_sha=%s\n' "$FZF_SHA"
+            printf 'go=%s\n' "$(go version)"
+            printf 'rustc=%s\n' "$(rustc +$RUST_TOOLCHAIN --version)"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > "$EVIDENCE_DIR/environment.txt"
+
+      - name: Execute exactly three direct priming runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in 1 2 3; do
+            (cd "$WORK_ROOT" && go test ./...) \
+              > "$GITHUB_WORKSPACE/$EVIDENCE_DIR/direct-prime-${n}.stdout" \
+              2> "$GITHUB_WORKSPACE/$EVIDENCE_DIR/direct-prime-${n}.stderr"
+          done
+
+      - name: Capture raw observer completeness and warnings
+        shell: bash
+        run: |
+          set -euo pipefail
+          experiments/p3-v5-completeness-diagnostic/target/debug/execsurface-p3-v5-completeness-diagnostic "$WORK_ROOT" \
+            | tee "$EVIDENCE_DIR/diagnostic.txt"
+
+      - name: Classify diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee "$EVIDENCE_DIR/classification.txt"
+          from pathlib import Path
+          text=Path('p3-v5d-evidence/diagnostic.txt').read_text()
+          complete='complete=true' in text
+          codes=[line.split('=',1)[1] for line in text.splitlines() if '.code=' in line]
+          if complete:
+              result='V5D_NOT_REPRODUCED'
+          elif 'shared_fd_table_ambiguity' in codes:
+              other=[c for c in codes if c != 'shared_fd_table_ambiguity']
+              result='V5D_MULTI_CAUSE_INCOMPLETENESS' if other else 'V5D_SHARED_FD_AMBIGUITY_CONFIRMED'
+          else:
+              result='V5D_OTHER_INCOMPLETENESS_CONFIRMED'
+          print(f'classification={result}')
+          print('warning_codes=' + ','.join(codes))
+          PY
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          find "$EVIDENCE_DIR" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > "$EVIDENCE_DIR/SHA256SUMS"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: p3-v5d-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p3-v5d-evidence
+          if-no-files-found: error
+          retention-days: 30
