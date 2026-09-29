@@ -17,7 +17,13 @@ fn cstring(value: &str) -> CString {
 
 fn raw_open(path: &str) -> i64 {
     let path = cstring(path);
-    unsafe { libc::syscall(libc::SYS_open, path.as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) as i64 }
+    unsafe {
+        libc::syscall(
+            libc::SYS_open,
+            path.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC,
+        ) as i64
+    }
 }
 
 fn raw_openat(dirfd: i32, path: &str) -> i64 {

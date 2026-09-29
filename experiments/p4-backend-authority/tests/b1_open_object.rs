@@ -218,10 +218,8 @@ fn b1_zero_fd_generation_is_rejected() {
 #[test]
 fn b1_empty_object_identity_is_rejected() {
     let evidence = successful_open(OperationKind::Open, "$WORKSPACE/object", 19, 120);
-    let result = OpenObjectRecord::build(
-        evidence.clone(),
-        Some(binding(&evidence, 19, 1, 122, "")),
-    );
+    let result =
+        OpenObjectRecord::build(evidence.clone(), Some(binding(&evidence, 19, 1, 122, "")));
     assert!(result.is_err());
 }
 
@@ -337,10 +335,7 @@ fn b1_lost_observation_never_becomes_success() {
     let fake_binding = binding(&lost, 23, 1, 192, "fd-object:/target");
     let record = OpenObjectRecord::build(lost, Some(fake_binding)).expect("record");
     assert!(!record.is_success_authority());
-    assert!(matches!(
-        record.authority,
-        OpenObjectAuthority::Lost { .. }
-    ));
+    assert!(matches!(record.authority, OpenObjectAuthority::Lost { .. }));
 }
 
 #[test]
@@ -365,10 +360,7 @@ fn b1_entry_exit_actor_substitution_never_reaches_success() {
             ObservationHealth::healthy(),
         )
         .expect("ambiguous evidence");
-    assert!(matches!(
-        evidence.state,
-        EvidenceState::Ambiguous { .. }
-    ));
+    assert!(matches!(evidence.state, EvidenceState::Ambiguous { .. }));
     let record = OpenObjectRecord::build(evidence, None).expect("record");
     assert!(!record.is_success_authority());
 }
@@ -391,11 +383,7 @@ fn b1_duplicate_pairing_is_rejected_before_object_authority() {
     };
     let mut ledger = EvidenceLedger::default();
     assert!(ledger
-        .classify_pair(
-            attempt.clone(),
-            exit.clone(),
-            ObservationHealth::healthy()
-        )
+        .classify_pair(attempt.clone(), exit.clone(), ObservationHealth::healthy())
         .is_ok());
     assert!(ledger
         .classify_pair(attempt, exit, ObservationHealth::healthy())

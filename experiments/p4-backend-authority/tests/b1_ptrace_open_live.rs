@@ -141,7 +141,10 @@ fn read_tracee_c_string(pid: libc::pid_t, address: u64) -> Result<String, String
             )
         };
         if word == -1 && bytes.is_empty() {
-            return Err(format!("peekdata_failed: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "peekdata_failed: {}",
+                std::io::Error::last_os_error()
+            ));
         }
         for byte in word.to_ne_bytes() {
             if byte == 0 {
@@ -175,7 +178,10 @@ fn task_count(pid: libc::pid_t) -> Result<usize, String> {
         .map(|entries| entries.count())
 }
 
-fn object_identity(pid: libc::pid_t, fd: i32) -> Result<(KernelObjectIdentity, Option<String>), String> {
+fn object_identity(
+    pid: libc::pid_t,
+    fd: i32,
+) -> Result<(KernelObjectIdentity, Option<String>), String> {
     let fd_path = PathBuf::from(format!("/proc/{pid}/fd/{fd}"));
     let metadata = fs::metadata(&fd_path).map_err(|error| format!("fd_metadata_failed:{error}"))?;
     let identity = KernelObjectIdentity {
@@ -259,11 +265,13 @@ fn trace_fixture(
             if entering {
                 pending = open_entry(&regs).and_then(|(operation, pointer)| {
                     let path_argument = read_tracee_c_string(pid, pointer).ok()?;
-                    expected.contains(path_argument.as_str()).then_some(PendingOpen {
-                        operation,
-                        path_argument,
-                        entry_sequence: sequence,
-                    })
+                    expected
+                        .contains(path_argument.as_str())
+                        .then_some(PendingOpen {
+                            operation,
+                            path_argument,
+                            entry_sequence: sequence,
+                        })
                 });
             } else if let Some(open) = pending.take() {
                 let raw_return = regs.rax as i64;
@@ -374,7 +382,12 @@ fn b1_live_open_binds_returned_fd_to_kernel_object_identity() {
     let target = dir.path().join("input");
     write_file(&target, b"open");
     let target_text = target.to_string_lossy().into_owned();
-    let events = trace_fixture("open", std::slice::from_ref(&target_text), std::slice::from_ref(&target_text), None);
+    let events = trace_fixture(
+        "open",
+        std::slice::from_ref(&target_text),
+        std::slice::from_ref(&target_text),
+        None,
+    );
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].operation, "open");
     assert_eq!(events[0].success_object(), &identity_of_path(&target));
@@ -387,7 +400,12 @@ fn b1_live_openat_cwd_binds_kernel_object() {
     let target = dir.path().join("input");
     write_file(&target, b"openat");
     let target_text = target.to_string_lossy().into_owned();
-    let events = trace_fixture("openat-cwd", std::slice::from_ref(&target_text), std::slice::from_ref(&target_text), None);
+    let events = trace_fixture(
+        "openat-cwd",
+        std::slice::from_ref(&target_text),
+        std::slice::from_ref(&target_text),
+        None,
+    );
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].operation, "openat");
     assert_eq!(events[0].success_object(), &identity_of_path(&target));
@@ -417,7 +435,12 @@ fn b1_live_openat2_success_is_bound_on_current_runner_kernel() {
     let target = dir.path().join("input");
     write_file(&target, b"openat2");
     let target_text = target.to_string_lossy().into_owned();
-    let events = trace_fixture("openat2", std::slice::from_ref(&target_text), std::slice::from_ref(&target_text), None);
+    let events = trace_fixture(
+        "openat2",
+        std::slice::from_ref(&target_text),
+        std::slice::from_ref(&target_text),
+        None,
+    );
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].operation, "openat2");
     assert_eq!(events[0].success_object(), &identity_of_path(&target));
@@ -429,7 +452,12 @@ fn b1_live_immediate_close_needs_no_later_io() {
     let target = dir.path().join("input");
     write_file(&target, b"close");
     let target_text = target.to_string_lossy().into_owned();
-    let events = trace_fixture("immediate-close", std::slice::from_ref(&target_text), std::slice::from_ref(&target_text), None);
+    let events = trace_fixture(
+        "immediate-close",
+        std::slice::from_ref(&target_text),
+        std::slice::from_ref(&target_text),
+        None,
+    );
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].success_object(), &identity_of_path(&target));
 }
@@ -439,9 +467,19 @@ fn b1_live_enoent_remains_failure_without_object_identity() {
     let dir = TempDir::new("missing");
     let missing = dir.path().join("does-not-exist");
     let missing_text = missing.to_string_lossy().into_owned();
-    let events = trace_fixture("missing", std::slice::from_ref(&missing_text), std::slice::from_ref(&missing_text), None);
+    let events = trace_fixture(
+        "missing",
+        std::slice::from_ref(&missing_text),
+        std::slice::from_ref(&missing_text),
+        None,
+    );
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].authority, LiveAuthority::Failure { errno: libc::ENOENT });
+    assert_eq!(
+        events[0].authority,
+        LiveAuthority::Failure {
+            errno: libc::ENOENT
+        }
+    );
     assert!(events[0].object.is_none());
 }
 
@@ -461,7 +499,10 @@ fn b1_live_fd_number_reuse_gets_new_generation_and_new_object_identity() {
         None,
     );
     assert_eq!(events.len(), 2);
-    assert_eq!(events[0].fd, events[1].fd, "fixture should exercise numeric FD reuse");
+    assert_eq!(
+        events[0].fd, events[1].fd,
+        "fixture should exercise numeric FD reuse"
+    );
     assert_ne!(events[0].fd_generation, events[1].fd_generation);
     assert_ne!(events[0].success_object(), events[1].success_object());
 }
@@ -474,7 +515,12 @@ fn b1_live_hardlink_path_differs_while_kernel_identity_matches() {
     write_file(&original, b"hardlink");
     fs::hard_link(&original, &alias).expect("create hard link");
     let alias_text = alias.to_string_lossy().into_owned();
-    let events = trace_fixture("open", std::slice::from_ref(&alias_text), std::slice::from_ref(&alias_text), None);
+    let events = trace_fixture(
+        "open",
+        std::slice::from_ref(&alias_text),
+        std::slice::from_ref(&alias_text),
+        None,
+    );
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].success_object(), &identity_of_path(&original));
     assert_ne!(original, alias);
@@ -508,7 +554,12 @@ fn b1_live_multitask_fd_table_uncertainty_fails_closed() {
     let target = dir.path().join("input");
     write_file(&target, b"threaded");
     let target_text = target.to_string_lossy().into_owned();
-    let events = trace_fixture("threaded", std::slice::from_ref(&target_text), std::slice::from_ref(&target_text), None);
+    let events = trace_fixture(
+        "threaded",
+        std::slice::from_ref(&target_text),
+        std::slice::from_ref(&target_text),
+        None,
+    );
     assert_eq!(events.len(), 1);
     assert!(events[0].task_count > 1);
     assert_eq!(
