@@ -202,7 +202,10 @@ fn b2_entry_without_exit_is_attempt_only() {
         )
         .expect("attempt evidence");
     let record = RenameDeleteRecord::build(evidence, context).expect("record");
-    assert!(matches!(record.authority, RenameDeleteAuthority::AttemptOnly));
+    assert!(matches!(
+        record.authority,
+        RenameDeleteAuthority::AttemptOnly
+    ));
 }
 
 #[test]
@@ -288,11 +291,7 @@ fn b2_duplicate_replayed_pairing_is_rejected() {
     };
     let mut ledger = EvidenceLedger::default();
     assert!(ledger
-        .classify_pair(
-            attempt.clone(),
-            exit.clone(),
-            ObservationHealth::healthy()
-        )
+        .classify_pair(attempt.clone(), exit.clone(), ObservationHealth::healthy())
         .is_ok());
     assert!(ledger
         .classify_pair(attempt, exit, ObservationHealth::healthy())
@@ -404,7 +403,10 @@ fn b2_context_digest_changes_when_rename_flags_change() {
     if let RenameDeleteContext::Rename { flags, .. } = &mut second {
         *flags = Some(2);
     }
-    assert_ne!(first.digest().expect("first"), second.digest().expect("second"));
+    assert_ne!(
+        first.digest().expect("first"),
+        second.digest().expect("second")
+    );
 }
 
 #[test]
