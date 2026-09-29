@@ -1,4 +1,5 @@
 name: P4 A0-A1 authority model
+# A1.2 direct rerun trigger after bounded rustfmt-only correction.
 
 on:
   push:
