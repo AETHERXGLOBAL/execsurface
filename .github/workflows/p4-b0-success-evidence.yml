@@ -121,3 +121,5 @@ jobs:
           path: p4-b0-success-evidence
           if-no-files-found: error
           retention-days: 30
+
+# Rerun marker: source/test files were rustfmt-only corrected by run 36592211736.
