@@ -109,7 +109,10 @@ fn b0_failed_open_is_failure_never_success() {
     let record = EvidenceLedger::default()
         .classify_pair(attempt, exit, ObservationHealth::healthy())
         .expect("open failure");
-    assert!(matches!(record.state, EvidenceState::FailureObserved { errno: 2 }));
+    assert!(matches!(
+        record.state,
+        EvidenceState::FailureObserved { errno: 2 }
+    ));
     assert!(!record.state.is_success());
 }
 

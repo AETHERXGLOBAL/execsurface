@@ -214,13 +214,16 @@ impl SuccessEvidenceRecord {
                     return Err("success return does not match exit".to_owned());
                 }
                 if self.attempt.operation.is_open() {
-                    let fd = returned_fd.ok_or_else(|| "successful open requires returned fd".to_owned())?;
+                    let fd = returned_fd
+                        .ok_or_else(|| "successful open requires returned fd".to_owned())?;
                     if i64::from(fd) != *raw_return {
                         return Err("returned fd must equal successful open return".to_owned());
                     }
                 } else if self.attempt.operation.is_zero_success() {
                     if *raw_return != 0 || returned_fd.is_some() {
-                        return Err("zero-success operation requires rc=0 and no returned fd".to_owned());
+                        return Err(
+                            "zero-success operation requires rc=0 and no returned fd".to_owned()
+                        );
                     }
                 }
             }
@@ -254,7 +257,9 @@ impl SuccessEvidenceRecord {
                     return Err("lost evidence requires reason code".to_owned());
                 }
                 if self.health.is_healthy() {
-                    return Err("lost state requires incomplete or warning-bearing health".to_owned());
+                    return Err(
+                        "lost state requires incomplete or warning-bearing health".to_owned()
+                    );
                 }
             }
         }
@@ -263,7 +268,9 @@ impl SuccessEvidenceRecord {
 
     fn require_healthy_matched_exit(&self) -> Result<(), String> {
         if !self.health.is_healthy() {
-            return Err("success/failure/pending authority requires healthy observation".to_owned());
+            return Err(
+                "success/failure/pending authority requires healthy observation".to_owned(),
+            );
         }
         let exit = self
             .exit
@@ -289,7 +296,11 @@ pub struct EvidenceLedger {
 }
 
 impl EvidenceLedger {
-    pub fn attempt_only(&self, attempt: AttemptEvidence, health: ObservationHealth) -> Result<SuccessEvidenceRecord, String> {
+    pub fn attempt_only(
+        &self,
+        attempt: AttemptEvidence,
+        health: ObservationHealth,
+    ) -> Result<SuccessEvidenceRecord, String> {
         let pairing_identity = attempt.pairing_identity()?;
         let record = SuccessEvidenceRecord {
             pairing_identity,
@@ -327,7 +338,9 @@ impl EvidenceLedger {
             if reasons.is_empty() {
                 reasons.insert("observer_health_not_healthy".to_owned());
             }
-            record.state = EvidenceState::Lost { reason_codes: reasons };
+            record.state = EvidenceState::Lost {
+                reason_codes: reasons,
+            };
             record.validate()?;
             self.consume(&pairing_identity)?;
             return Ok(record);
