@@ -1,0 +1,64 @@
+name: P3 C1 Internal Certification Gate
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - scripts/p3_c1_apply.py
+      - .github/workflows/p3-c1-apply.yml
+
+permissions:
+  contents: write
+
+jobs:
+  implement-and-falsify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout frozen development branch
+        uses: actions/checkout@v4
+        with:
+          ref: development/post-alpha4-behavioral-integrity
+          fetch-depth: 0
+
+      - name: Verify expected C1 parent state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f docs/development/P3_C1_SHARED_FD_COMPLETENESS_CERTIFICATION_PROTOCOL.md
+          git log -1 --oneline
+
+      - name: Apply internal certificate patch
+        run: python3 scripts/p3_c1_apply.py
+
+      - name: Rust format gate
+        run: cargo fmt --all -- --check
+
+      - name: Observe crate clippy gate
+        run: cargo clippy --locked -p execsurface-observe --all-targets -- -D warnings
+
+      - name: Observe crate full test gate
+        run: cargo test --locked -p execsurface-observe --all-targets
+
+      - name: Workspace regression test gate
+        run: cargo test --locked --workspace
+
+      - name: Diff integrity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git status --short
+          git diff -- crates/execsurface-observe/src/lib.rs crates/execsurface-observe/src/linux_ptrace.rs
+
+      - name: Commit only after all gates pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AETHER X C1 Gate"
+          git config user.email "aether.x.eg@gmail.com"
+          git add crates/execsurface-observe/src/lib.rs crates/execsurface-observe/src/linux_ptrace.rs
+          git rm scripts/p3_c1_apply.py .github/workflows/p3-c1-apply.yml
+          git commit -m "P3 C1: retain internal clone fd completeness certificate"
+          git push origin HEAD:development/post-alpha4-behavioral-integrity
