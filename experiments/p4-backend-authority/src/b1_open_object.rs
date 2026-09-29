@@ -89,7 +89,7 @@ impl OpenObjectRecord {
                     if binding.fd != *returned_fd {
                         OpenObjectAuthority::Ambiguous {
                             reason_codes: BTreeSet::from([
-                                "returned_fd_binding_mismatch".to_owned(),
+                                "returned_fd_binding_mismatch".to_owned()
                             ]),
                         }
                     } else if binding.originating_entry_sequence
@@ -107,14 +107,12 @@ impl OpenObjectRecord {
                     {
                         OpenObjectAuthority::Ambiguous {
                             reason_codes: BTreeSet::from([
-                                "post_open_causal_chain_mismatch".to_owned(),
+                                "post_open_causal_chain_mismatch".to_owned()
                             ]),
                         }
                     } else if binding.fd_table_relation == FdTableRelation::Unknown {
                         OpenObjectAuthority::Ambiguous {
-                            reason_codes: BTreeSet::from([
-                                "fd_table_relation_unknown".to_owned(),
-                            ]),
+                            reason_codes: BTreeSet::from(["fd_table_relation_unknown".to_owned()]),
                         }
                     } else if binding.binding_sequence
                         <= success_evidence
@@ -156,10 +154,7 @@ impl OpenObjectRecord {
     }
 
     pub fn is_success_authority(&self) -> bool {
-        matches!(
-            self.authority,
-            OpenObjectAuthority::SuccessBounded { .. }
-        )
+        matches!(self.authority, OpenObjectAuthority::SuccessBounded { .. })
     }
 }
 
