@@ -257,7 +257,8 @@ fn a2_attempt_scope_is_useful_but_never_laundered_into_success_rows() {
 
 #[test]
 fn a2_successful_open_object_remains_an_observation_gap_not_path_authority() {
-    let row = by_id(&matrix(), "P4.FILE.OPEN_OBJECT");
+    let rows = matrix();
+    let row = by_id(&rows, "P4.FILE.OPEN_OBJECT");
     assert_eq!(row.best_authority, AuthorityState::Unsupported);
     assert_eq!(row.primary_gap, GapClass::ObservationGap);
     assert!(!row.usable_for_frozen_product_question);
@@ -282,8 +283,9 @@ fn a2_clone_fd_dependencies_remain_representation_gaps_not_false_completeness() 
 
 #[test]
 fn a2_representation_gap_prefers_retained_existing_evidence_over_new_backend_work() {
+    let rows = matrix();
     for id in ["P4.FD.IO_ATTRIBUTION", "P4.FDTABLE.RELATION"] {
-        let row = by_id(&matrix(), id);
+        let row = by_id(&rows, id);
         assert_eq!(row.primary_gap, GapClass::RepresentationGap);
         assert!(!row.second_backend_could_plausibly_strengthen);
         assert!(row.exact_missing_evidence.contains("retain"));
@@ -292,7 +294,8 @@ fn a2_representation_gap_prefers_retained_existing_evidence_over_new_backend_wor
 
 #[test]
 fn a2_observer_loss_is_preserved_as_first_class_fail_closed_state() {
-    let row = by_id(&matrix(), "P4.OBSERVER.HEALTH_LOSS");
+    let rows = matrix();
+    let row = by_id(&rows, "P4.OBSERVER.HEALTH_LOSS");
     assert_eq!(row.best_authority, AuthorityState::Lost);
     assert_eq!(row.primary_gap, GapClass::NoGap);
     assert!(row.usable_for_frozen_product_question);
