@@ -1,4 +1,5 @@
 name: P4 B1 open-object authority
+# B1-M trigger: strict model falsification must pass before live requalification is accepted.
 
 on:
   push:
