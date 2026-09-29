@@ -4,7 +4,9 @@ Date: 2026-09-29
 Tracking: #105
 Parent: #103 / #100
 Branch: `development/post-alpha4-behavioral-integrity`
-Status: **CLOSED — P3_NO_MATERIAL_VALUE (BOUNDED TO PREREGISTERED V5-R2 QUESTION)**
+Status: **SUPERSEDED — CLASSIFICATION INVALIDATED BY NORMALIZATION-CONFIG MISMATCH**
+
+> This file preserves the first completed R3 analysis and its metrics as negative evidence. Its prior interpretation `P3_NO_MATERIAL_VALUE` is **not an accepted final scientific decision**. Anti-drift review found that the R2 research baseline collector used `NormalizationConfig::default()` and therefore emitted `semantic_roots=[]`, while the public CLI default normalization derives workspace/home and adds `/tmp` (plus `$TMPDIR` when present). The already-frozen V2 GCC classifier requires `PathClass::Temp` / `$TMP/cc<token>.s`. Real GCC `/tmp/cc*.s` effects were present in the frozen evidence but were structurally ineligible under the mismatched R2 normalization metadata.
 
 ## Team
 
@@ -24,7 +26,7 @@ Dynamic specialists used:
 
 ## Frozen predecessor evidence
 
-R0/R1/R2 completed successfully under issue #105.
+R0/R1/R2 originally completed under issue #105.
 
 Accepted learning source:
 `dd496fef9f62f452368c908c71b78149b2046d75`
@@ -50,10 +52,7 @@ Three failures occurred before scientific analysis and remain retained:
 
 None changed the frozen learning evidence, algorithm, threshold, metric, workload, acceptance rule or expected result.
 
-The compile correction was exactly one structural derive change at commit:
-`539cfa821b8092f77d5316a70623172060ce9822`.
-
-## Accepted R3 scientific attempt
+## First completed R3 attempt — retained but not decision-valid
 
 Workflow:
 `36570775457`
@@ -70,17 +69,7 @@ Evidence artifact:
 Artifact upload SHA-256:
 `9850ef23aa6e95c709ab534c8832e3738b4a5a28a25a4d49a55f0f6409d8872e`
 
-Before analysis:
-- frozen R2 artifact ZIP digest matched exactly;
-- every extracted file checksum verified;
-- analyzer rustfmt PASS;
-- analyzer clippy `-D warnings` PASS;
-- analyzer build PASS.
-
-The analyzer then executed over exactly the six frozen lockfiles.
-
-## Observed R3 metrics
-
+Observed analyzer metrics:
 - run count: **6**
 - raw variable candidates: **2,075**
 - targeted GCC raw variable candidates: **0**
@@ -94,32 +83,36 @@ The analyzer then executed over exactly the six frozen lockfiles.
 Analyzer classification:
 `P3_V5_TARGETED_VARIANCE_NOT_REPRODUCED`
 
-## Preregistered gate interpretation
+## Anti-drift counterexample
 
-The R3 value condition required **at least one targeted GCC ephemeral variable to be reproduced in raw evidence** before the bounded GCC projection could establish value.
+Inspection of the same frozen R3 artifact found variable GCC effects including `/tmp/cc*.s` with `/usr/bin/gcc` actor and matching create/write-capable open + delete roles.
 
-That prerequisite was not met.
+However the R2 locks contain:
+- `normalization.semantic_roots=[]`;
+- `/tmp/cc*.s` target class `outside_declared_roots`;
+- raw `/tmp/...` values rather than `$TMP/...`.
 
-Therefore:
-- R4 unchanged checks are **not authorized**;
-- R5 falsification for a positive variance-value claim is **not reached**;
-- no accepted-variable set is created;
-- no frequency-based authorization is permitted;
-- no broad Go/cache/module/stdlib normalization is introduced;
-- no public integration or release change is authorized.
+The V2 classifier intentionally requires:
+- `PathClass::Temp`;
+- `$TMP/cc<6 alphanumeric>.s` identity;
+- bounded `/usr/bin/gcc` actor and chain-tail;
+- create+write open + delete;
+- no conflicting actor/operation.
 
-The presence of 2,075 non-target variable candidates is retained as evidence of substantial genuine/non-target run-to-run variability. It does not itself justify accepting any of those effects.
+Therefore zero targeted candidates was not a valid test of whether the GCC variance existed under the intended normalization semantics.
 
-## Formal decision
+## Corrected scientific status
 
-For the exact preregistered V5-R2 research question and declared environment:
+The first R3 result is classified:
 
-`P3_NO_MATERIAL_VALUE`
+`P3_V5R2_R3_INVALID_NORMALIZATION_COMPARABILITY`
 
-This decision is **bounded**. It means the campaign did not reproduce the previously targeted GCC ephemeral-identity variance and therefore cannot establish the intended material value from that mechanism in this run set. It does not prove that all multi-run variance modeling lacks value on every workload or environment.
+Consequences:
+- the earlier `P3_NO_MATERIAL_VALUE` interpretation is superseded;
+- R4/R5 remain forbidden;
+- the old six R2 lockfiles remain immutable evidence and are not post-hoc re-canonicalized into replacement samples;
+- #105 is reopened;
+- a fresh preregistered learning campaign from a new source SHA is required after correcting only the research baseline normalization configuration to match public CLI default semantics;
+- no grammar, threshold, workload, acceptance rule or success criterion changes.
 
-## Anti-drift conclusion
-
-The correct response is to retain the negative result, stop V5-R2 before R4, and move to the already-planned P3 V6 product decision. V6 may inspect whether the retained 2,075 non-target variable candidates justify a new narrowly preregistered research question, but it must not retroactively redefine V5-R2 success or authorize behavior by recurrence alone.
-
-Public `v0.1.0-alpha.4`, `main`, stable `@v0.1`, raw/canonical/baseline v2 semantics and the frozen original V5 failure remain unchanged.
+Public `v0.1.0-alpha.4`, `main`, stable `@v0.1`, public v2 semantics, the original V5 failure and C6 compatibility failure remain unchanged.
