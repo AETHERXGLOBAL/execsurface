@@ -1,0 +1,133 @@
+name: P4 B2 live ptrace rename-delete
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - 'docs/development/P4_B2_RENAME_DELETE_PROTOCOL.md'
+      - 'experiments/p4-backend-authority/Cargo.toml'
+      - 'experiments/p4-backend-authority/src/bin/b2_rename_delete_fixture.rs'
+      - 'experiments/p4-backend-authority/tests/b2_ptrace_rename_delete_live.rs'
+      - '.github/workflows/p4-b2-live-ptrace.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  b2-live-ptrace:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      EVIDENCE_ROOT: p4-b2-live-ptrace-evidence
+      B2_MODEL_SOURCE: 85f5b18cfb2186b5b15a194b76c67433e306aeeb
+      B1_ACCEPTED_RESULT: d51267e032b547582cc690b0c47c1ce8fb8d3ab7
+      ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+
+    steps:
+      - name: Checkout isolated development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Verify B2 live boundary and public isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          test "$(git rev-parse --abbrev-ref HEAD)" = 'development/post-alpha4-behavioral-integrity'
+          grep -q 'Mandatory live Linux ptrace gate' docs/development/P4_B2_RENAME_DELETE_PROTOCOL.md
+          git merge-base --is-ancestor "$B2_MODEL_SOURCE" HEAD
+          git merge-base --is-ancestor "$B1_ACCEPTED_RESULT" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          if git diff --name-only "$B1_ACCEPTED_RESULT"..HEAD | grep -q '^crates/'; then
+            echo 'Public/runtime crate drift detected during B2 live gate.' >&2
+            exit 1
+          fi
+          printf 'source_sha=%s\n' "$(git rev-parse HEAD)" | tee "$EVIDENCE_ROOT/source.txt"
+          printf 'kernel=%s\n' "$(uname -a)" | tee "$EVIDENCE_ROOT/kernel.txt"
+
+      - name: Generate isolated dependency lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml 2>&1 | tee "$EVIDENCE_ROOT/lock.log"
+
+      - name: Rustfmt and clippy deny warnings
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p4-backend-authority/Cargo.toml -- --check 2>&1 | tee "$EVIDENCE_ROOT/rustfmt.log"
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --all-targets -- -D warnings 2>&1 | tee "$EVIDENCE_ROOT/clippy.log"
+
+      - name: Execute mandatory live ptrace rename-delete falsification
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b2_ptrace_rename_delete_live -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/b2-live.log"
+          grep -q 'test result: ok. 10 passed; 0 failed' "$EVIDENCE_ROOT/b2-live.log"
+
+      - name: Re-prove B2 and B1 models
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b2_rename_delete -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/b2-model.log"
+          grep -q 'test result: ok. 23 passed; 0 failed' "$EVIDENCE_ROOT/b2-model.log"
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b1_open_object -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/b1-model.log"
+          grep -q 'test result: ok. 24 passed; 0 failed' "$EVIDENCE_ROOT/b1-model.log"
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b0_success_evidence -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/b0.log"
+          grep -q 'test result: ok. 18 passed; 0 failed' "$EVIDENCE_ROOT/b0.log"
+
+      - name: Re-prove P4 authority boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test a2_authority_gap_matrix -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/a2.log"
+          grep -q 'test result: ok. 16 passed; 0 failed' "$EVIDENCE_ROOT/a2.log"
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test attempt_authority_contract 2>&1 | tee "$EVIDENCE_ROOT/a1-attempt.log"
+          grep -q 'test result: ok. 5 passed; 0 failed' "$EVIDENCE_ROOT/a1-attempt.log"
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test ptrace_v2_adversarial 2>&1 | tee "$EVIDENCE_ROOT/a1-adversarial.log"
+          grep -q 'test result: ok. 18 passed; 0 failed' "$EVIDENCE_ROOT/a1-adversarial.log"
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test ptrace_v2_mapping 2>&1 | tee "$EVIDENCE_ROOT/a1-mapping.log"
+          grep -q 'test result: ok. 10 passed; 0 failed' "$EVIDENCE_ROOT/a1-mapping.log"
+
+      - name: Re-prove Semantics v3 and public M11 boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --all-targets 2>&1 | tee "$EVIDENCE_ROOT/semantics-v3.log"
+          grep -q 'test result: ok. 7 passed; 0 failed' "$EVIDENCE_ROOT/semantics-v3.log"
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity 2>&1 | tee "$EVIDENCE_ROOT/public-m11.log"
+          grep -q 'test result: ok. 6 passed; 0 failed' "$EVIDENCE_ROOT/public-m11.log"
+
+      - name: Record bounded B2 live decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'P4_B2_FILE_RENAME_DELETE_PASS_BOUNDED_RESEARCH_ONLY\n' | tee "$EVIDENCE_ROOT/B2_DECISION.txt"
+          printf 'NO_PUBLIC_INTEGRATION_OR_SECOND_BACKEND_AUTHORIZED\n' | tee "$EVIDENCE_ROOT/B2_BOUNDARY.txt"
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload B2 live evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p4-b2-live-ptrace-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p4-b2-live-ptrace-evidence
+          if-no-files-found: error
+          retention-days: 30
