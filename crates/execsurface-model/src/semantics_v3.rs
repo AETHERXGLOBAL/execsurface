@@ -32,6 +32,9 @@ pub enum Proposition {
         from: Option<CanonicalExecutable>,
         executable: CanonicalExecutable,
     },
+    CausalExecLineageObserved {
+        execution_chain: Vec<CanonicalExecutable>,
+    },
     FilePathnameAttemptObserved {
         actor: Option<CanonicalExecutable>,
         execution_chain: Vec<CanonicalExecutable>,
