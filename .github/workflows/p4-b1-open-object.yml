@@ -1,0 +1,125 @@
+name: P4 B1 open-object authority
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - 'docs/development/P4_B1_FILE_OPEN_OBJECT_PROTOCOL.md'
+      - 'docs/development/P4_B0_SUCCESS_EVIDENCE_RESULT.md'
+      - 'experiments/p4-backend-authority/src/lib.rs'
+      - 'experiments/p4-backend-authority/src/b0_success_evidence.rs'
+      - 'experiments/p4-backend-authority/src/b1_open_object.rs'
+      - 'experiments/p4-backend-authority/tests/b0_success_evidence.rs'
+      - 'experiments/p4-backend-authority/tests/b1_open_object.rs'
+      - '.github/workflows/p4-b1-open-object.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  b1-open-object:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      EVIDENCE_ROOT: p4-b1-open-object-evidence
+      B0_ACCEPTED_SOURCE: 2246f7b5016fd7e17ceeeaeaa5ff35b53cd99b95
+      ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+
+    steps:
+      - name: Checkout isolated development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Verify B1 preregistration and public isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          test "$(git rev-parse --abbrev-ref HEAD)" = 'development/post-alpha4-behavioral-integrity'
+          grep -q 'PREREGISTERED — IMPLEMENTATION MAY START ONLY WITHIN THIS BOUNDED RESEARCH GATE' docs/development/P4_B1_FILE_OPEN_OBJECT_PROTOCOL.md
+          grep -q 'P4_B0_EVIDENCE_CONTRACT_PASS_RESEARCH_ONLY' docs/development/P4_B0_SUCCESS_EVIDENCE_RESULT.md
+          git merge-base --is-ancestor "$B0_ACCEPTED_SOURCE" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          if git diff --name-only "$B0_ACCEPTED_SOURCE"..HEAD | grep -q '^crates/'; then
+            echo 'Public/runtime crate drift detected during B1.' >&2
+            exit 1
+          fi
+          printf 'source_sha=%s\n' "$(git rev-parse HEAD)" | tee "$EVIDENCE_ROOT/source.txt"
+
+      - name: Generate isolated dependency lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml 2>&1 | tee "$EVIDENCE_ROOT/lock.log"
+
+      - name: Rustfmt and clippy deny warnings
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p4-backend-authority/Cargo.toml -- --check 2>&1 | tee "$EVIDENCE_ROOT/rustfmt.log"
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --all-targets -- -D warnings 2>&1 | tee "$EVIDENCE_ROOT/clippy.log"
+
+      - name: Execute B1 open-object model falsification
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b1_open_object -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/b1-model-tests.log"
+          grep -q 'test result: ok. 11 passed; 0 failed' "$EVIDENCE_ROOT/b1-model-tests.log"
+
+      - name: Re-prove B0 and P4 authority boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b0_success_evidence -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/b0-reproof.log"
+          grep -q 'test result: ok. 18 passed; 0 failed' "$EVIDENCE_ROOT/b0-reproof.log"
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test a2_authority_gap_matrix -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/a2-reproof.log"
+          grep -q 'test result: ok. 16 passed; 0 failed' "$EVIDENCE_ROOT/a2-reproof.log"
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test attempt_authority_contract 2>&1 | tee "$EVIDENCE_ROOT/a1-attempt.log"
+          grep -q 'test result: ok. 5 passed; 0 failed' "$EVIDENCE_ROOT/a1-attempt.log"
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test ptrace_v2_adversarial 2>&1 | tee "$EVIDENCE_ROOT/a1-adversarial.log"
+          grep -q 'test result: ok. 18 passed; 0 failed' "$EVIDENCE_ROOT/a1-adversarial.log"
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test ptrace_v2_mapping 2>&1 | tee "$EVIDENCE_ROOT/a1-mapping.log"
+          grep -q 'test result: ok. 10 passed; 0 failed' "$EVIDENCE_ROOT/a1-mapping.log"
+
+      - name: Re-prove Semantics v3 and public M11 boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --all-targets 2>&1 | tee "$EVIDENCE_ROOT/semantics-v3.log"
+          grep -q 'test result: ok. 7 passed; 0 failed' "$EVIDENCE_ROOT/semantics-v3.log"
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity 2>&1 | tee "$EVIDENCE_ROOT/public-m11.log"
+          grep -q 'test result: ok. 6 passed; 0 failed' "$EVIDENCE_ROOT/public-m11.log"
+
+      - name: Record B1 model-stage decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'P4_B1_MODEL_CONTRACT_PASS_RESEARCH_ONLY\n' | tee "$EVIDENCE_ROOT/B1_MODEL_DECISION.txt"
+          printf 'LIVE_PTRACE_REQUALIFICATION_STILL_REQUIRED\n' | tee "$EVIDENCE_ROOT/B1_BOUNDARY.txt"
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload B1 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p4-b1-open-object-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p4-b1-open-object-evidence
+          if-no-files-found: error
+          retention-days: 30
