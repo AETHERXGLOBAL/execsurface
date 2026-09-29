@@ -1,0 +1,21 @@
+[package]
+name = "execsurface-p3-v5-real-workload"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "p3-v5-analyze"
+path = "src/main.rs"
+
+[dependencies]
+execsurface-baseline = { path = "../../crates/execsurface-baseline" }
+execsurface-model = { path = "../../crates/execsurface-model" }
+execsurface-p3-variance-analyzer = { path = "../p3-variance-analyzer" }
+execsurface-p3-gcc-temp-grammar = { path = "../p3-gcc-temp-grammar" }
+execsurface-p3-accepted-variance = { path = "../p3-accepted-variance" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha2 = "=0.10.9"
+
+[workspace]
