@@ -1,0 +1,152 @@
+name: P4 A1.4 public anti-drift
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - '.github/workflows/p4-a1-4-public-antidrift.yml'
+      - 'docs/development/P4_A1_4_PUBLIC_ANTIDRIFT_PROTOCOL.md'
+      - 'docs/development/P4_A1_3_ADVERSARIAL_RESULT.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-antidrift:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      EVIDENCE_ROOT: p4-a1-4-antidrift-evidence
+      A1_2_ACCEPTED_SOURCE: 8ad1fcf1d9ab474fd6a0d007f198844aef4694fb
+      ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+
+    steps:
+      - name: Checkout isolated development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Verify frozen boundary and release tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          test "$(git rev-parse --abbrev-ref HEAD)" = 'development/post-alpha4-behavioral-integrity'
+          grep -q 'PREREGISTERED — PUBLIC ANTI-DRIFT REPROOF MAY START' docs/development/P4_A1_4_PUBLIC_ANTIDRIFT_PROTOCOL.md
+          grep -q 'P4_A1_3_FALSIFICATION_PASS_BOUNDED' docs/development/P4_A1_3_ADVERSARIAL_RESULT.md
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          {
+            printf 'source_sha=%s\n' "$(git rev-parse HEAD)"
+            printf 'alpha4_source=%s\n' "$(git rev-parse 'v0.1.0-alpha.4^{commit}')"
+            printf 'stable_v0_1_source=%s\n' "$(git rev-parse 'v0.1^{commit}')"
+          } | tee "$EVIDENCE_ROOT/source-and-tags.txt"
+
+      - name: A1.3 path anti-drift audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only "$A1_2_ACCEPTED_SOURCE"..HEAD | tee "$EVIDENCE_ROOT/a1-post-a1.2-paths.txt"
+          if git diff --name-only "$A1_2_ACCEPTED_SOURCE"..HEAD | grep -q '^crates/'; then
+            echo 'Public/runtime crate changed after accepted A1.2 source.' >&2
+            exit 1
+          fi
+          printf 'A1_3_PUBLIC_RUNTIME_PATH_DRIFT=0\n' | tee "$EVIDENCE_ROOT/path-audit-decision.txt"
+
+      - name: Compile bounded M12 fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/path_toctou_target.c -o "$RUNNER_TEMP/m12-path-toctou"
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/fd_share_race_target.c -o "$RUNNER_TEMP/m12-fd-share-race"
+          test -x "$RUNNER_TEMP/m12-path-toctou"
+          test -x "$RUNNER_TEMP/m12-fd-share-race"
+
+      - name: Full workspace rustfmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check 2>&1 | tee "$EVIDENCE_ROOT/rustfmt.log"
+
+      - name: Full workspace clippy deny warnings
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN clippy --locked --workspace --all-targets -- -D warnings 2>&1 | tee "$EVIDENCE_ROOT/clippy.log"
+
+      - name: Full observer regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --all-targets 2>&1 | tee "$EVIDENCE_ROOT/observer-all-targets.log"
+
+      - name: Explicit M11 shared-FD replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/m11.log"
+          grep -q 'test result: ok. 6 passed; 0 failed' "$EVIDENCE_ROOT/m11.log"
+
+      - name: Explicit M12 adversarial replay
+        shell: bash
+        env:
+          M12_PATH_TOCTOU_BIN: ${{ runner.temp }}/m12-path-toctou
+          M12_FD_SHARE_BIN: ${{ runner.temp }}/m12-fd-share-race
+          M12_PATH_RUNS: '300'
+          M12_RESULT_DIR: ${{ runner.temp }}/m12-adversarial-results
+        run: |
+          set -euo pipefail
+          mkdir -p "$M12_RESULT_DIR"
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m12_adversarial -- --test-threads=1 --nocapture 2>&1 | tee "$EVIDENCE_ROOT/m12.log"
+          grep -q 'test result: ok. 6 passed; 0 failed' "$EVIDENCE_ROOT/m12.log"
+          test -s "$M12_RESULT_DIR/path-toctou.json"
+          test -s "$M12_RESULT_DIR/shared-fd.json"
+          cp "$M12_RESULT_DIR/path-toctou.json" "$EVIDENCE_ROOT/"
+          cp "$M12_RESULT_DIR/shared-fd.json" "$EVIDENCE_ROOT/"
+
+      - name: Full workspace regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets 2>&1 | tee "$EVIDENCE_ROOT/workspace-tests.log"
+
+      - name: Cargo.lock integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- Cargo.lock
+          test -z "$(git status --porcelain -- Cargo.lock)"
+
+      - name: Record A1 bounded closure decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'P4_A1_PUBLIC_ANTIDRIFT_PASS\n' | tee "$EVIDENCE_ROOT/A1_4_DECISION.txt"
+          printf 'P4_A1_PTRACE_ADAPTER_PASS_RESEARCH_ONLY\n' | tee "$EVIDENCE_ROOT/A1_CLOSURE.txt"
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload A1.4 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p4-a1-4-antidrift-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p4-a1-4-antidrift-evidence
+          if-no-files-found: error
+          retention-days: 30
