@@ -15,6 +15,24 @@ fn row(id: &str) -> a2_matrix::AuthorityGapRow {
 }
 
 #[test]
+fn a2_gap_class_vocabulary_is_frozen_and_serializable() {
+    let classes = [
+        GapClass::NoGap,
+        GapClass::RepresentationGap,
+        GapClass::ObservationGap,
+        GapClass::SuccessSemanticsGap,
+        GapClass::IdentityGap,
+        GapClass::CompletenessGap,
+        GapClass::NoProductRequirement,
+    ];
+    let encoded = serde_json::to_string(&classes).expect("serialize gap vocabulary");
+    assert_eq!(
+        encoded,
+        r#"["no_gap","representation_gap","observation_gap","success_semantics_gap","identity_gap","completeness_gap","no_product_requirement"]"#
+    );
+}
+
+#[test]
 fn a2_matrix_exactly_matches_frozen_ten_propositions_in_order() {
     let rows = ptrace_raw_v2_matrix();
     validate_matrix(&rows).expect("valid frozen matrix");
