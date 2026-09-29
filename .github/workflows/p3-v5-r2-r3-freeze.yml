@@ -6,6 +6,7 @@ on:
       - development/post-alpha4-behavioral-integrity
     paths:
       - ".github/workflows/p3-v5-r2-r3-freeze.yml"
+      - "experiments/p3-v5-real-workload/src/main.rs"
   workflow_dispatch:
 
 permissions:
