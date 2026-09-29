@@ -1,0 +1,168 @@
+name: P3 V5-C C4 pinned FZF internal certificate diagnostic
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - .github/workflows/p3-v5c-c4-fzf-internal-certificate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fzf-internal-certificate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      FZF_SHA: b1be3a8be1b833ce5b92fbbac11637643d60a046
+      WORK_ROOT: /tmp/execsurface-p3-c4-fzf
+      EVIDENCE_DIR: p3-v5c-c4-evidence
+    steps:
+      - name: Checkout isolated development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Freeze source and environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          {
+            printf 'execsurface_sha=%s\n' "$(git rev-parse HEAD)"
+            printf 'fzf_sha=%s\n' "$FZF_SHA"
+            printf 'go=%s\n' "$(go version)"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } | tee "$EVIDENCE_DIR/environment.txt"
+          test -f docs/development/P3_V5C_C2_C3_PROTOCOL.md
+          grep -q 'clone_origin_fork_events' crates/execsurface-observe/src/linux_ptrace.rs
+          grep -q 'apply_shared_fd_ambiguity_guard(ptrace.observation)' crates/execsurface-observe/src/lib.rs
+
+      - name: Inject diagnostic-only internal certificate test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('crates/execsurface-observe/src/linux_ptrace.rs')
+          text=p.read_text()
+          anchor='''    #[test]\n    fn normalizes_only_the_tracees_own_proc_identity() {\n'''
+          assert text.count(anchor)==1
+          test=r'''    #[test]
+              #[ignore = "C4 pinned FZF diagnostic only; dedicated workflow"]
+              fn c4_pinned_fzf_internal_clone_fd_certificate_is_complete() {
+                  let root = std::env::var_os("EXECSURFACE_C4_FZF_ROOT")
+                      .expect("EXECSURFACE_C4_FZF_ROOT must be set by the dedicated workflow");
+                  let spec = CommandSpec::new("/bin/bash")
+                      .args([
+                          "-lc",
+                          "cd -- \"$1\" && go test ./... >/dev/null 2>&1",
+                          "bash",
+                      ])
+                      .arg(root);
+                  let observed = observe(&spec, ObserveOptions::default())
+                      .expect("C4 pinned FZF internal observation");
+
+                  eprintln!(
+                      "C4_FZF_INTERNAL events={} complete={} warnings={} clone_events={} correlated={} shared={} independent={} thread={} fork_routed={} vfork_routed={} certified={}",
+                      observed.observation.events.len(),
+                      observed.observation.complete,
+                      observed.observation.warnings.len(),
+                      observed.clone_fd_certification.clone_events,
+                      observed.clone_fd_certification.correlated_clone_flags,
+                      observed.clone_fd_certification.shared_fd_transitions,
+                      observed.clone_fd_certification.cloned_fd_transitions,
+                      observed.clone_fd_certification.clone_thread_transitions,
+                      observed.clone_fd_certification.clone_origin_fork_events,
+                      observed.clone_fd_certification.clone_origin_vfork_events,
+                      observed.clone_fd_certification.fully_certified(),
+                  );
+                  for warning in &observed.observation.warnings {
+                      eprintln!("C4_FZF_WARNING code={} tid={:?} message={}", warning.code, warning.tid, warning.message);
+                  }
+
+                  assert_eq!(observed.observation.outcome.exit_code, Some(0));
+                  assert!(observed.observation.complete, "internal raw observation must remain complete before the legacy post-collection guard: {:?}", observed.observation.warnings);
+                  assert!(observed.observation.warnings.is_empty(), "no internal observer warning is admissible: {:?}", observed.observation.warnings);
+                  assert!(observed.clone_fd_certification.fully_certified());
+                  assert!(observed.clone_fd_certification.clone_events > 0);
+                  assert_eq!(
+                      observed.clone_fd_certification.clone_events,
+                      observed.clone_fd_certification.correlated_clone_flags
+                  );
+                  assert_eq!(
+                      observed.clone_fd_certification.clone_events,
+                      observed.clone_fd_certification.shared_fd_transitions
+                          + observed.clone_fd_certification.cloned_fd_transitions
+                  );
+                  eprintln!("C4_FZF_INTERNAL_PASS");
+              }
+
+          '''
+          p.write_text(text.replace(anchor,test+anchor,1))
+          PY
+          cargo +$RUST_TOOLCHAIN fmt --all
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-observe --all-targets -- -D warnings
+
+      - name: Checkout pinned unmodified FZF
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: junegunn/fzf
+          ref: ${{ env.FZF_SHA }}
+          path: external/fzf-c4
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Freeze pinned workload copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$WORK_ROOT"
+          cp -a external/fzf-c4 "$WORK_ROOT"
+          test "$(git -C "$WORK_ROOT" rev-parse HEAD)" = "$FZF_SHA"
+          test -z "$(git -C "$WORK_ROOT" status --porcelain)"
+
+      - name: Execute exactly three direct priming runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in 1 2 3; do
+            (cd "$WORK_ROOT" && go test ./...) \
+              > "$GITHUB_WORKSPACE/$EVIDENCE_DIR/direct-prime-${n}.stdout" \
+              2> "$GITHUB_WORKSPACE/$EVIDENCE_DIR/direct-prime-${n}.stderr"
+            printf 'prime_%s=pass\n' "$n" | tee -a "$GITHUB_WORKSPACE/$EVIDENCE_DIR/priming-status.txt"
+          done
+          test -z "$(git -C "$WORK_ROOT" status --porcelain --untracked-files=no)"
+
+      - name: Run exactly one diagnostic-only internal observation
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXECSURFACE_C4_FZF_ROOT="$WORK_ROOT" \
+            cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --lib \
+              c4_pinned_fzf_internal_clone_fd_certificate_is_complete \
+              -- --ignored --nocapture 2>&1 | tee "$EVIDENCE_DIR/internal-certificate-test.log"
+          grep -q 'C4_FZF_INTERNAL_PASS' "$EVIDENCE_DIR/internal-certificate-test.log"
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          find "$EVIDENCE_DIR" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_DIR/SHA256SUMS"
+
+      - name: Upload C4 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: p3-v5c-c4-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 30
