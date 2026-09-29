@@ -31,18 +31,24 @@ new = '''            let ptrace = linux_ptrace::observe(spec, options)?;
 lib = replace_once(lib, old, new, "certificate-aware ptrace handoff")
 
 anchor = '''    #[test]
-    fn shared_fd_ambiguity_guard_marks_clone_observations_incomplete() {
+    fn shared_fd_ambiguity_is_never_pass_eligible() {
 '''
 insert = r'''    #[test]
     fn c6_uncertified_clone_still_uses_legacy_guard() {
-        let mut observation = Observation::empty(BackendKind::Ptrace);
-        observation.events.push(RawEvent {
+        let mut observation = Observation::empty(execsurface_model::BackendMetadata {
+            name: "linux-ptrace-metadata-v2".to_owned(),
+            platform: "linux".to_owned(),
+            architecture: "x86_64".to_owned(),
+            capabilities: Vec::new(),
+            limitations: Vec::new(),
+        });
+        observation.events.push(execsurface_model::RawEvent {
             sequence: 1,
             tid: 7,
             executable: None,
-            kind: RawEventKind::ProcessSpawn {
+            kind: execsurface_model::RawEventKind::ProcessSpawn {
                 child_tid: 8,
-                mechanism: SpawnMechanism::Clone,
+                mechanism: execsurface_model::SpawnMechanism::Clone,
             },
         });
         let guarded = apply_shared_fd_ambiguity_guard(observation);
