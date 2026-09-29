@@ -219,12 +219,12 @@ impl SuccessEvidenceRecord {
                     if i64::from(fd) != *raw_return {
                         return Err("returned fd must equal successful open return".to_owned());
                     }
-                } else if self.attempt.operation.is_zero_success() {
-                    if *raw_return != 0 || returned_fd.is_some() {
-                        return Err(
-                            "zero-success operation requires rc=0 and no returned fd".to_owned()
-                        );
-                    }
+                } else if self.attempt.operation.is_zero_success()
+                    && (*raw_return != 0 || returned_fd.is_some())
+                {
+                    return Err(
+                        "zero-success operation requires rc=0 and no returned fd".to_owned(),
+                    );
                 }
             }
             EvidenceState::FailureObserved { errno } => {
@@ -258,7 +258,7 @@ impl SuccessEvidenceRecord {
                 }
                 if self.health.is_healthy() {
                     return Err(
-                        "lost state requires incomplete or warning-bearing health".to_owned()
+                        "lost state requires incomplete or warning-bearing health".to_owned(),
                     );
                 }
             }
