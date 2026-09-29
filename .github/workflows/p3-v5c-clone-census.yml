@@ -40,7 +40,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
           cargo "+$RUST_TOOLCHAIN" generate-lockfile --manifest-path "$MANIFEST"
           cargo "+$RUST_TOOLCHAIN" fmt --manifest-path "$MANIFEST" -- --check
           cargo "+$RUST_TOOLCHAIN" clippy --locked --manifest-path "$MANIFEST" --all-targets -- -D warnings
@@ -142,8 +144,9 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          mkdir -p "$EVIDENCE_DIR"
           find "$EVIDENCE_DIR" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
-            | sort -z | xargs -0 sha256sum > "$EVIDENCE_DIR/SHA256SUMS"
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_DIR/SHA256SUMS"
 
       - name: Upload C1 evidence
         if: always()
