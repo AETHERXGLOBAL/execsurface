@@ -79,7 +79,9 @@ impl OpenObjectRecord {
                     binding.validate()?;
                     if binding.fd != *returned_fd {
                         OpenObjectAuthority::Ambiguous {
-                            reason_codes: BTreeSet::from(["returned_fd_binding_mismatch".to_owned()]),
+                            reason_codes: BTreeSet::from([
+                                "returned_fd_binding_mismatch".to_owned()
+                            ]),
                         }
                     } else if binding.originating_entry_sequence
                         != success_evidence.attempt.entry_sequence
@@ -95,7 +97,9 @@ impl OpenObjectRecord {
                         != success_evidence.attempt.actor.causal_chain_digest
                     {
                         OpenObjectAuthority::Ambiguous {
-                            reason_codes: BTreeSet::from(["post_open_causal_chain_mismatch".to_owned()]),
+                            reason_codes: BTreeSet::from([
+                                "post_open_causal_chain_mismatch".to_owned()
+                            ]),
                         }
                     } else if binding.binding_sequence
                         <= success_evidence
@@ -145,7 +149,8 @@ fn proof_digest(
     success_evidence: &SuccessEvidenceRecord,
     binding: &PostOpenBinding,
 ) -> Result<String, String> {
-    let bytes = serde_json::to_vec(&(success_evidence, binding)).map_err(|error| error.to_string())?;
+    let bytes =
+        serde_json::to_vec(&(success_evidence, binding)).map_err(|error| error.to_string())?;
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
 }
 
