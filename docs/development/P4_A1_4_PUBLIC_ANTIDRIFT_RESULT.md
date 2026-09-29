@@ -12,41 +12,65 @@ Status: **CLOSED — PASS**
 
 `P4_A1_PTRACE_ADAPTER_PASS_RESEARCH_ONLY`
 
-A fresh anti-drift reproof was executed after the accepted A1.3U attempt-authority correction. The result establishes that the research-only proposition-authority work did not alter the public/runtime crates or the immutable alpha.4 release references.
+A final anti-drift reproof was executed after the accepted A1.3U attempt-authority correction and after the A1.4 protocol was strengthened to require that correction explicitly. The result establishes that the research-only proposition-authority work did not alter the public/runtime crates or the immutable alpha.4 release references.
 
-## Accepted evidence
+## Strongest accepted evidence
 
 Accepted source:
-`28a5bfdb4682bc9aaa9d3580b9085e697bd91980`
+`08969deddf8c0cac154e73922672c60b8c0d3660`
 
 Workflow:
-`36587339898`
+`36587685968`
 
 Job:
-`109471050275`
+`109472277417`
 
 Artifact:
-`11042357244`
+`11042292788`
 
 Artifact SHA-256:
-`sha256:1187080e0d965ec6ada431b7515ae87a4dc04bee32281c27b67bccf80173b819`
+`sha256:5f51fae16e7ec7c2486d62fe8438df72c8e0178ec82ef5774df4e80317bd8597`
+
+Required A1.3U correction ancestor:
+`7dfdd3958ac7e6c38cb52859d883035fa6e9ace2`
 
 ## Gates passed
 
 - development branch boundary PASS;
-- `v0.1.0-alpha.4` still resolves to immutable source `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`;
-- stable `v0.1` still resolves to the same immutable alpha.4 source;
+- explicit A1.3 result boundary PASS;
+- explicit A1.3U result boundary PASS;
+- accepted A1.3U correction commit verified as an ancestor of the tested source;
+- `v0.1.0-alpha.4` resolves to immutable source `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`;
+- stable `v0.1` resolves to the same immutable alpha.4 source;
 - post-A1.2 path audit found **0 public/runtime crate drift**;
 - bounded M12 fixtures compiled successfully;
 - full workspace rustfmt PASS;
 - full workspace clippy `-D warnings` PASS;
 - full `execsurface-observe --all-targets` regression PASS;
+- observer unit suite: 21 passed, 0 failed, 3 dedicated-live tests ignored by the general gate;
+- ptrace Linux integration suite **11/11 PASS**;
 - explicit M11 shared-FD fail-closed replay **6/6 PASS**;
-- explicit M12 adversarial replay **6/6 PASS**;
+- explicit M12 adversarial replay **6/6 PASS** with `M12_PATH_RUNS=300`;
 - full workspace regression PASS;
+- Semantics v3 model tests **7/7 PASS** inside the workspace reproof;
 - `Cargo.lock` integrity PASS.
 
-The observer regression included the current fail-closed and research-certificate tests, while the public M11 and M12 contracts remained unchanged.
+The workflow explicitly recorded:
+
+`P4_A1_PUBLIC_ANTIDRIFT_PASS`
+
+`P4_A1_PTRACE_ADAPTER_PASS_RESEARCH_ONLY`
+
+## Retained earlier evidence and pre-test boundary failure
+
+The earlier successful A1.4 run is retained as supporting evidence:
+- source `28a5bfdb4682bc9aaa9d3580b9085e697bd91980`;
+- workflow `36587339898`;
+- job `109471050275`;
+- artifact `11042357244`;
+- artifact SHA-256 `sha256:1187080e0d965ec6ada431b7515ae87a4dc04bee32281c27b67bccf80173b819`.
+
+After the protocol was strengthened to require the A1.3U correction explicitly, workflow `36587517026` stopped before regression execution because the workflow still checked the older protocol marker. That attempt remains retained as a boundary-sync engineering failure; no scientific regression result was produced from it. The workflow boundary check was then corrected without changing any regression criterion.
 
 ## A1 closure interpretation
 
