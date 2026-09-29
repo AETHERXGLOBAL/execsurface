@@ -1,0 +1,17 @@
+[package]
+name = "execsurface-p3-v5-r2c-baseline"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "p3-v5-r2c-baseline"
+path = "src/main.rs"
+
+[dependencies]
+execsurface-baseline = { path = "../../crates/execsurface-baseline" }
+execsurface-model = { path = "../../crates/execsurface-model" }
+execsurface-normalize = { path = "../../crates/execsurface-normalize" }
+serde_json = "=1.0.151"
+
+[workspace]
