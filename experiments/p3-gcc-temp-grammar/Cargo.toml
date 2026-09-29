@@ -1,0 +1,11 @@
+[package]
+name = "execsurface-p3-gcc-temp-grammar"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+execsurface-model = { path = "../../crates/execsurface-model" }
+execsurface-normalize = { path = "../../crates/execsurface-normalize" }
+
+[workspace]
