@@ -116,16 +116,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let targeted_raw = raw_variables
         .iter()
         .filter(|record| {
-            effect_target(&record.effect)
-                .is_some_and(|target| all_eligible_paths.contains(target))
+            effect_target(&record.effect).is_some_and(|target| all_eligible_paths.contains(target))
         })
         .cloned()
         .collect::<Vec<_>>();
     let non_target_raw = raw_variables
         .iter()
         .filter(|record| {
-            !effect_target(&record.effect)
-                .is_some_and(|target| all_eligible_paths.contains(target))
+            !effect_target(&record.effect).is_some_and(|target| all_eligible_paths.contains(target))
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -161,8 +159,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let lingering_targeted = projected_variables
         .iter()
         .filter(|record| {
-            effect_target(&record.effect)
-                .is_some_and(|target| all_eligible_paths.contains(target))
+            effect_target(&record.effect).is_some_and(|target| all_eligible_paths.contains(target))
         })
         .cloned()
         .collect::<Vec<_>>();
