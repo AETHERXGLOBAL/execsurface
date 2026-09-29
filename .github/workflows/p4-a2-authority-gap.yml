@@ -1,0 +1,116 @@
+name: P4 A2 authority-gap matrix
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - '.github/workflows/p4-a2-authority-gap.yml'
+      - 'docs/development/P4_A2_AUTHORITY_GAP_PROTOCOL.md'
+      - 'experiments/p4-backend-authority/tests/authority_gap_matrix.rs'
+      - 'experiments/p4-backend-authority/src/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authority-gap-matrix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      EVIDENCE_ROOT: p4-a2-authority-gap-evidence
+      A1_4_ACCEPTED_SOURCE: 28a5bfdb4682bc9aaa9d3580b9085e697bd91980
+      ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+
+    steps:
+      - name: Checkout isolated development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Verify A2 frozen boundary and public isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          test "$(git rev-parse --abbrev-ref HEAD)" = 'development/post-alpha4-behavioral-integrity'
+          grep -q 'PREREGISTERED — MATRIX IMPLEMENTATION MAY START' docs/development/P4_A2_AUTHORITY_GAP_PROTOCOL.md
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          git diff --name-only "$A1_4_ACCEPTED_SOURCE"..HEAD | tee "$EVIDENCE_ROOT/post-a1.4-paths.txt"
+          if git diff --name-only "$A1_4_ACCEPTED_SOURCE"..HEAD | grep -q '^crates/'; then
+            echo 'Public/runtime crate drift detected after A1.4 accepted source.' >&2
+            exit 1
+          fi
+          printf 'source_sha=%s\n' "$(git rev-parse HEAD)" | tee "$EVIDENCE_ROOT/source.txt"
+
+      - name: Generate isolated lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml 2>&1 | tee "$EVIDENCE_ROOT/lock.log"
+
+      - name: Rustfmt and clippy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p4-backend-authority/Cargo.toml -- --check 2>&1 | tee "$EVIDENCE_ROOT/rustfmt.log"
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --all-targets -- -D warnings 2>&1 | tee "$EVIDENCE_ROOT/clippy.log"
+
+      - name: Execute A2 deterministic matrix audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test authority_gap_matrix -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/a2-matrix.log"
+          grep -q 'test result: ok. 10 passed; 0 failed' "$EVIDENCE_ROOT/a2-matrix.log"
+
+      - name: Re-run A1 falsification corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --all-targets -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/a1-reproof.log"
+          grep -q 'test result: ok. 8 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
+          grep -q 'test result: ok. 5 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
+          grep -q 'test result: ok. 18 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
+          grep -q 'test result: ok. 10 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
+
+      - name: Re-prove Semantics v3 and public M11 boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --all-targets 2>&1 | tee "$EVIDENCE_ROOT/semantics-v3.log"
+          grep -q 'test result: ok. 7 passed; 0 failed' "$EVIDENCE_ROOT/semantics-v3.log"
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity 2>&1 | tee "$EVIDENCE_ROOT/public-m11.log"
+          grep -q 'test result: ok. 6 passed; 0 failed' "$EVIDENCE_ROOT/public-m11.log"
+
+      - name: Record bounded A2 decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'P4_A2_PROPOSITION_GAPS_ESTABLISHED_BOUNDED\n' | tee "$EVIDENCE_ROOT/A2_DECISION.txt"
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload A2 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p4-a2-authority-gap-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p4-a2-authority-gap-evidence
+          if-no-files-found: error
+          retention-days: 30
