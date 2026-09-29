@@ -1,0 +1,371 @@
+name: P3 V5-R2 R4 six unchanged checks and sentinel
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - ".github/workflows/p3-v5-r4-checks-sentinel.yml"
+      - "experiments/p3-v5-r4-check/**"
+      - "docs/development/P3_V5R2_R4_CHECK_AND_SENTINEL_PROTOCOL.md"
+      - "docs/development/P3_V5R2_R3C_ACCEPTANCE_FREEZE.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  six-checks-and-sentinel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      FZF_SHA: b1be3a8be1b833ce5b92fbbac11637643d60a046
+      WORK_ROOT: /tmp/execsurface-p3-v5-r4-fzf
+      LEARNING_ARTIFACT_ID: "11035133723"
+      LEARNING_ARTIFACT_SHA256: "a98a1f022e601f0b0653474df8c4500f33fa5670f7e25f105740b2e79bd2fd26"
+      EVIDENCE_ROOT: p3-v5-r4-evidence
+      SENTINEL_PATH: /tmp/execsurface-p3-v5-sentinel-meaningful.txt
+    steps:
+      - name: Checkout isolated development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Freeze R4 source and verify committed acceptance boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT/learning"
+          {
+            printf 'r4_source_sha=%s\n' "$(git rev-parse HEAD)"
+            printf 'learning_artifact_id=%s\n' "$LEARNING_ARTIFACT_ID"
+            printf 'learning_artifact_sha256=%s\n' "$LEARNING_ARTIFACT_SHA256"
+            printf 'fzf_sha=%s\n' "$FZF_SHA"
+            printf 'sentinel_path=%s\n' "$SENTINEL_PATH"
+            printf 'go=%s\n' "$(go version)"
+            printf 'gcc=%s\n' "$(gcc --version | head -1)"
+            printf 'rustc=%s\n' "$(rustc +$RUST_TOOLCHAIN --version)"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } | tee "$EVIDENCE_ROOT/r4-source.txt"
+
+          grep -q 'PREREGISTERED — NO R4 CHECK MAY PRECEDE THIS FREEZE' \
+            docs/development/P3_V5R2_R4_CHECK_AND_SENTINEL_PROTOCOL.md
+          python3 - <<'PY'
+          import json
+          f=json.load(open('docs/development/P3_V5R2_R3C_ACCEPTANCE_FREEZE.json'))
+          assert f['status']=='R3C_ACCEPTANCE_FROZEN'
+          assert f['r4_authorized'] is True
+          assert f['frequency_authorizes'] is False
+          assert f['accepted_variable_effects']==[]
+          assert f['raw_learning_set_digest']=='sha256:437a9f8fca9f0ff4c8573c1cfee06b46cb325d1d1a890649ba536acd8e2e648d'
+          assert f['projected_learning_set_digest']=='sha256:16e8519c83ea374359d1e44872d570ccc15be88b7ccf8f9e3b54b5e3d6b7ab30'
+          print('R4_FREEZE_VERIFIED')
+          PY
+
+      - name: Download and verify frozen fresh learning artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --location --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${LEARNING_ARTIFACT_ID}/zip" \
+            -o "$EVIDENCE_ROOT/learning.zip"
+          actual="$(sha256sum "$EVIDENCE_ROOT/learning.zip" | awk '{print $1}')"
+          test "$actual" = "$LEARNING_ARTIFACT_SHA256"
+          unzip -q "$EVIDENCE_ROOT/learning.zip" -d "$EVIDENCE_ROOT/learning"
+          grep -qx 'admitted=6/6' "$EVIDENCE_ROOT/learning/admission-summary.txt"
+          (cd "$EVIDENCE_ROOT/learning" && sed 's#  p3-v5-r2c-learning-evidence/#  #' SHA256SUMS | sha256sum -c -)
+          test "$(find "$EVIDENCE_ROOT/learning" -maxdepth 1 -name 'fzf-learn-*.lock.json' | wc -l)" -eq 6
+
+          python3 - "$EVIDENCE_ROOT/learning" "$SENTINEL_PATH" <<'PY'
+          import json, pathlib, sys
+          root=pathlib.Path(sys.argv[1]); sentinel=sys.argv[2]
+          variants={sentinel, '$TMP/'+pathlib.Path(sentinel).name}
+          for n in range(1,7):
+              lock=json.loads((root/f'fzf-learn-{n}.lock.json').read_text())
+              for effect in lock['payload']['canonical_surface']['effects']:
+                  target=(effect.get('target') or {}).get('value')
+                  assert target not in variants, ('P3_R4_SENTINEL_COLLISION', n, target)
+          print('R4_SENTINEL_PRECHECK_NO_COLLISION')
+          PY
+
+      - name: Inject deterministic R4 research-only collector
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('crates/execsurface-observe/src/lib.rs')
+          text=p.read_text()
+          anchor='''    #[test]\n    fn shared_fd_ambiguity_is_never_pass_eligible() {\n'''
+          assert text.count(anchor)==1
+          test=r'''    #[test]
+              #[ignore = "R4 research-only observation collector; dedicated workflow"]
+              fn v5r4_write_certificate_aware_observation() {
+                  let root = std::env::var_os("EXECSURFACE_V5R4_FZF_ROOT")
+                      .expect("EXECSURFACE_V5R4_FZF_ROOT must be set");
+                  let output = std::env::var_os("EXECSURFACE_V5R4_OBS_PATH")
+                      .expect("EXECSURFACE_V5R4_OBS_PATH must be set");
+                  let mode = std::env::var("EXECSURFACE_V5R4_MODE").unwrap_or_else(|_| "check".to_owned());
+                  let script = if mode == "sentinel" {
+                      "cd -- \"$1\" && /usr/bin/cat /tmp/execsurface-p3-v5-sentinel-meaningful.txt >/dev/null && go test ./... >/dev/null 2>&1"
+                  } else {
+                      "cd -- \"$1\" && go test ./... >/dev/null 2>&1"
+                  };
+                  let spec = CommandSpec::new("/bin/bash")
+                      .args(["-lc", script, "bash"])
+                      .arg(root);
+                  let ptrace = linux_ptrace::observe(&spec, ObserveOptions::default())
+                      .expect("R4 ptrace observation");
+                  let certified = ptrace.clone_fd_certification.fully_certified();
+                  let observation = finalize_ptrace_observation(
+                      ptrace.observation,
+                      certified,
+                      PtraceSharedFdGuardPolicy::CertificateAwareResearch,
+                  );
+                  eprintln!(
+                      "V5R4_OBSERVATION mode={} complete={} warnings={} events={} certified={} exit={:?} signal={:?}",
+                      mode,
+                      observation.complete,
+                      observation.warnings.len(),
+                      observation.events.len(),
+                      certified,
+                      observation.outcome.exit_code,
+                      observation.outcome.signal,
+                  );
+                  for warning in &observation.warnings {
+                      eprintln!("V5R4_WARNING code={} tid={:?} message={}", warning.code, warning.tid, warning.message);
+                  }
+                  assert_eq!(observation.outcome.exit_code, Some(0));
+                  assert!(observation.outcome.signal.is_none());
+                  assert!(certified, "clone/fd relation must be positively certified");
+                  assert!(observation.complete, "R4 observation must be complete");
+                  assert!(observation.warnings.is_empty(), "R4 observation must be warning-free");
+                  let mut bytes=serde_json::to_vec_pretty(&observation).expect("serialize R4 observation");
+                  bytes.push(b'\n');
+                  std::fs::write(&output, bytes).expect("write R4 observation");
+                  eprintln!("V5R4_OBSERVATION_PASS");
+              }
+
+          '''
+          p.write_text(text.replace(anchor,test+anchor,1))
+          PY
+          cargo +$RUST_TOOLCHAIN fmt --all
+          git diff -- crates/execsurface-observe/src/lib.rs > "$EVIDENCE_ROOT/test-only-harness.diff"
+          sha256sum "$EVIDENCE_ROOT/test-only-harness.diff" > "$EVIDENCE_ROOT/test-only-harness.sha256"
+
+      - name: Build helpers/evaluator and run static adversarial gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-observe --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity \
+            2>&1 | tee "$EVIDENCE_ROOT/public-m11-before-r4.log"
+
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-v5-r2c-baseline/Cargo.toml
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p3-v5-r2c-baseline/Cargo.toml --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN build --locked --manifest-path experiments/p3-v5-r2c-baseline/Cargo.toml
+
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-v5-r4-check/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p3-v5-r4-check/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p3-v5-r4-check/Cargo.toml --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN build --locked --manifest-path experiments/p3-v5-r4-check/Cargo.toml
+
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml \
+            2>&1 | tee "$EVIDENCE_ROOT/v2-gcc-grammar-tests.log"
+
+      - name: Checkout pinned unmodified FZF
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: junegunn/fzf
+          ref: ${{ env.FZF_SHA }}
+          path: external/fzf-v5r4
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Freeze unchanged check tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$WORK_ROOT"
+          cp -a external/fzf-v5r4 "$WORK_ROOT"
+          test "$(git -C "$WORK_ROOT" rev-parse HEAD)" = "$FZF_SHA"
+          test -z "$(git -C "$WORK_ROOT" status --porcelain)"
+
+      - name: Execute exactly six fresh unchanged checks without replacement
+        shell: bash
+        run: |
+          set -u
+          helper="experiments/p3-v5-r2c-baseline/target/debug/p3-v5-r2c-baseline"
+          evaluator="experiments/p3-v5-r4-check/target/debug/p3-v5-r4-evaluate"
+          : > "$EVIDENCE_ROOT/check.status"
+          admitted=0
+          for n in 1 2 3 4 5 6; do
+            obs="$GITHUB_WORKSPACE/$EVIDENCE_ROOT/check-observation-${n}.json"
+            lock="$GITHUB_WORKSPACE/$EVIDENCE_ROOT/check-${n}.lock.json"
+            report="$GITHUB_WORKSPACE/$EVIDENCE_ROOT/check-${n}-report.json"
+            log="$GITHUB_WORKSPACE/$EVIDENCE_ROOT/check-${n}-observe.log"
+            rm -f "$obs" "$lock" "$report"
+
+            set +e
+            EXECSURFACE_V5R4_FZF_ROOT="$WORK_ROOT" \
+            EXECSURFACE_V5R4_OBS_PATH="$obs" \
+            EXECSURFACE_V5R4_MODE=check \
+              cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --lib \
+                v5r4_write_certificate_aware_observation -- --ignored --nocapture \
+                > "$log" 2>&1
+            observe_rc=$?
+            set -e
+
+            baseline_rc=99; eval_rc=99
+            if [ "$observe_rc" -eq 0 ] && [ -s "$obs" ] && grep -q 'V5R4_OBSERVATION_PASS' "$log"; then
+              set +e
+              "$helper" "$obs" "$lock" 4 "$WORK_ROOT" \
+                > "$EVIDENCE_ROOT/check-${n}-baseline.stdout" \
+                2> "$EVIDENCE_ROOT/check-${n}-baseline.stderr"
+              baseline_rc=$?
+              set -e
+            fi
+            if [ "$baseline_rc" -eq 0 ] && [ -s "$lock" ]; then
+              set +e
+              "$evaluator" "$report" "$lock" \
+                "$EVIDENCE_ROOT/learning/fzf-learn-1.lock.json" \
+                "$EVIDENCE_ROOT/learning/fzf-learn-2.lock.json" \
+                "$EVIDENCE_ROOT/learning/fzf-learn-3.lock.json" \
+                "$EVIDENCE_ROOT/learning/fzf-learn-4.lock.json" \
+                "$EVIDENCE_ROOT/learning/fzf-learn-5.lock.json" \
+                "$EVIDENCE_ROOT/learning/fzf-learn-6.lock.json" \
+                > "$EVIDENCE_ROOT/check-${n}-evaluation.stdout" \
+                2> "$EVIDENCE_ROOT/check-${n}-evaluation.stderr"
+              eval_rc=$?
+              set -e
+            fi
+
+            admitted_this=0
+            if [ "$observe_rc" -eq 0 ] && [ "$baseline_rc" -eq 0 ] && [ "$eval_rc" -eq 0 ] && [ -s "$report" ]; then
+              admitted_this=1; admitted=$((admitted+1))
+            fi
+            printf 'check_%s_observe_rc=%s baseline_rc=%s eval_rc=%s admitted=%s\n' \
+              "$n" "$observe_rc" "$baseline_rc" "$eval_rc" "$admitted_this" \
+              | tee -a "$EVIDENCE_ROOT/check.status"
+          done
+          printf 'admitted=%s/6\n' "$admitted" | tee "$EVIDENCE_ROOT/check-admission-summary.txt"
+          test "$admitted" -eq 6
+          test -z "$(git -C "$WORK_ROOT" status --porcelain --untracked-files=no)"
+
+      - name: Aggregate six unchanged check metrics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$EVIDENCE_ROOT" <<'PY'
+          import json, pathlib, statistics, sys
+          root=pathlib.Path(sys.argv[1])
+          reports=[json.loads((root/f'check-{n}-report.json').read_text()) for n in range(1,7)]
+          fields=['raw_single_baseline_findings','gcc_ephemeral_eligible_findings','invariant_core_matches','observed_variable_matches','explicitly_accepted_variable_matches','unseen_effects','residual_after_ephemeral_classification','residual_after_explicit_variance']
+          summary={f:[r[f] if isinstance(r[f],int) else len(r[f]) for r in reports] for f in fields}
+          for r in reports:
+              assert r['projected_gcc_random_findings']==0
+              assert r['gcc_ephemeral_eligible_findings']>0
+              assert r['non_target_projection_mismatches']==[]
+              assert r['explicitly_accepted_variable_matches']==[]
+          summary['median_raw_single_baseline_findings']=statistics.median(summary['raw_single_baseline_findings'])
+          summary['median_residual_after_ephemeral_classification']=statistics.median(summary['residual_after_ephemeral_classification'])
+          summary['median_residual_after_explicit_variance']=statistics.median(summary['residual_after_explicit_variance'])
+          summary['historical_raw_median']=14.5
+          summary['checks_explicit_lower_than_ephemeral']=sum(a<b for a,b in zip(summary['residual_after_explicit_variance'],summary['residual_after_ephemeral_classification']))
+          (root/'r4-summary.json').write_text(json.dumps(summary,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(summary,sort_keys=True))
+          print('R4_SIX_CHECKS_STRUCTURAL_PASS')
+          PY
+
+      - name: Execute preregistered meaningful-drift sentinel exactly once
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'execsurface-p3-v5-r2-sentinel\n' > "$SENTINEL_PATH"
+          obs="$GITHUB_WORKSPACE/$EVIDENCE_ROOT/sentinel-observation.json"
+          lock="$GITHUB_WORKSPACE/$EVIDENCE_ROOT/sentinel.lock.json"
+          report="$GITHUB_WORKSPACE/$EVIDENCE_ROOT/sentinel-report.json"
+
+          EXECSURFACE_V5R4_FZF_ROOT="$WORK_ROOT" \
+          EXECSURFACE_V5R4_OBS_PATH="$obs" \
+          EXECSURFACE_V5R4_MODE=sentinel \
+            cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --lib \
+              v5r4_write_certificate_aware_observation -- --ignored --nocapture \
+              > "$EVIDENCE_ROOT/sentinel-observe.log" 2>&1
+
+          experiments/p3-v5-r2c-baseline/target/debug/p3-v5-r2c-baseline \
+            "$obs" "$lock" 4 "$WORK_ROOT" \
+            > "$EVIDENCE_ROOT/sentinel-baseline.stdout" \
+            2> "$EVIDENCE_ROOT/sentinel-baseline.stderr"
+
+          experiments/p3-v5-r4-check/target/debug/p3-v5-r4-evaluate \
+            "$report" "$lock" \
+            "$EVIDENCE_ROOT/learning/fzf-learn-1.lock.json" \
+            "$EVIDENCE_ROOT/learning/fzf-learn-2.lock.json" \
+            "$EVIDENCE_ROOT/learning/fzf-learn-3.lock.json" \
+            "$EVIDENCE_ROOT/learning/fzf-learn-4.lock.json" \
+            "$EVIDENCE_ROOT/learning/fzf-learn-5.lock.json" \
+            "$EVIDENCE_ROOT/learning/fzf-learn-6.lock.json" \
+            > "$EVIDENCE_ROOT/sentinel-evaluation.stdout" \
+            2> "$EVIDENCE_ROOT/sentinel-evaluation.stderr"
+
+          python3 - "$report" <<'PY'
+          import json, sys
+          r=json.load(open(sys.argv[1]))
+          expected='$TMP/execsurface-p3-v5-sentinel-meaningful.txt'
+          matches=[]
+          for e in r['unseen_effects']:
+              target=(e.get('target') or {}).get('value')
+              actor=(e.get('actor') or {})
+              if target==expected and actor.get('family')=='cat':
+                  matches.append(e)
+          assert matches, 'P3_R4_SENTINEL_FALSE_PASS: sentinel cat effect was not unseen'
+          assert r['explicitly_accepted_variable_matches']==[]
+          assert r['residual_after_explicit_variance']>0
+          assert r['non_target_projection_mismatches']==[]
+          print(f'R4_SENTINEL_UNSEEN_MATCHES={len(matches)}')
+          print('R4_SENTINEL_PROTECTED')
+          PY
+
+      - name: Re-prove public contract after R4 and sentinel
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity \
+            2>&1 | tee "$EVIDENCE_ROOT/public-m11-after-r4.log"
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          find "$EVIDENCE_ROOT" -maxdepth 2 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload R4 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: p3-v5-r4-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE_ROOT }}
+          if-no-files-found: error
+          retention-days: 30
