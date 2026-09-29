@@ -1,0 +1,37 @@
+name: P3 V4 falsifier CI
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - "experiments/p3-v4-falsifier/**"
+      - "experiments/p3-variance-analyzer/**"
+      - "experiments/p3-gcc-temp-grammar/**"
+      - "experiments/p3-accepted-variance/**"
+      - ".github/workflows/p3-v4-falsifier-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  falsifier:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Generate isolated lockfile
+        run: cargo generate-lockfile --manifest-path experiments/p3-v4-falsifier/Cargo.toml
+
+      - name: Rust formatting
+        run: cargo fmt --manifest-path experiments/p3-v4-falsifier/Cargo.toml -- --check
+
+      - name: Falsifier clippy
+        run: cargo clippy --locked --manifest-path experiments/p3-v4-falsifier/Cargo.toml --all-targets -- -D warnings
+
+      - name: Falsifier tests
+        run: cargo test --locked --manifest-path experiments/p3-v4-falsifier/Cargo.toml --all-targets
