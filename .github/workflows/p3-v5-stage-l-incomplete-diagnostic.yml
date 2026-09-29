@@ -1,0 +1,174 @@
+name: P3 V5 Stage L incompleteness diagnostic
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - "docs/development/P3_V5_STAGE_L_INCOMPLETE_DIAGNOSTIC_PROTOCOL.md"
+      - ".github/workflows/p3-v5-stage-l-incomplete-diagnostic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      FZF_SHA: b1be3a8be1b833ce5b92fbbac11637643d60a046
+      WORK_ROOT: /tmp/execsurface-p3-v5-diag-fzf
+      EVIDENCE_DIR: p3-v5-stage-l-diagnostic-evidence
+
+    steps:
+      - name: Checkout current development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified fzf
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: junegunn/fzf
+          ref: ${{ env.FZF_SHA }}
+          path: external/fzf
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build current observer and freeze environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          cargo "+$RUST_TOOLCHAIN" build --locked -p execsurface
+          rm -rf "$WORK_ROOT" "$EVIDENCE_DIR"
+          cp -a external/fzf "$WORK_ROOT"
+          test "$(git -C "$WORK_ROOT" rev-parse HEAD)" = "$FZF_SHA"
+          test -z "$(git -C "$WORK_ROOT" status --porcelain)"
+          mkdir -p "$EVIDENCE_DIR"
+          {
+            printf 'execsurface_source_sha=%s\n' "$GITHUB_SHA"
+            printf 'fzf_sha=%s\n' "$FZF_SHA"
+            printf 'failed_stage_l_run=36559896295\n'
+            printf 'failed_stage_l_artifact=11028623425\n'
+            printf 'go=%s\n' "$(go version)"
+            printf 'rustc=%s\n' "$(rustc +$RUST_TOOLCHAIN --version)"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > "$EVIDENCE_DIR/environment.txt"
+
+      - name: Prime exactly three times
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in 1 2 3; do
+            (cd "$WORK_ROOT" && go test ./...) \
+              > "$EVIDENCE_DIR/direct-prime-${n}.stdout" \
+              2> "$EVIDENCE_DIR/direct-prime-${n}.stderr"
+          done
+          test -z "$(git -C "$WORK_ROOT" status --porcelain --untracked-files=no)"
+
+      - name: Capture one diagnostic raw observation
+        shell: bash
+        run: |
+          set +e
+          cmd="cd '$WORK_ROOT' && go test ./... >/dev/null 2>&1"
+          target/debug/execsurface observe -- /bin/bash -lc "$cmd" \
+            > "$EVIDENCE_DIR/observation.json" \
+            2> "$EVIDENCE_DIR/observe.stderr"
+          rc=$?
+          set -e
+          printf 'observe_rc=%s\n' "$rc" > "$EVIDENCE_DIR/observe.status"
+          exit 0
+
+      - name: Classify incompleteness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$EVIDENCE_DIR" <<'PY'
+          import json, sys
+          from pathlib import Path
+
+          root=Path(sys.argv[1])
+          rc=int((root/'observe.status').read_text().strip().split('=',1)[1])
+          result={'observe_rc':rc}
+          if rc != 0 or not (root/'observation.json').exists() or not (root/'observation.json').stat().st_size:
+              result.update({
+                  'classification':'P3_V5_DIAG_OBSERVER_EXECUTION_FAILED',
+                  'complete':None,
+                  'event_count':None,
+                  'warning_codes':[],
+                  'warnings':[],
+              })
+          else:
+              obs=json.loads((root/'observation.json').read_text())
+              warnings=obs.get('warnings') or []
+              codes=[w.get('code') for w in warnings]
+              complete=bool(obs.get('complete'))
+              if complete:
+                  classification='P3_V5_DIAG_UNEXPECTED_COMPLETE'
+              elif 'shared_fd_table_ambiguity' in codes:
+                  classification='P3_V5_DIAG_SHARED_FD_AMBIGUITY_CONFIRMED'
+              elif 'event_limit_exceeded' in codes:
+                  classification='P3_V5_DIAG_EVENT_LIMIT_CONFIRMED'
+              else:
+                  classification='P3_V5_DIAG_OTHER_INCOMPLETENESS'
+              result.update({
+                  'classification':classification,
+                  'complete':complete,
+                  'event_count':len(obs.get('events') or []),
+                  'warning_codes':codes,
+                  'warnings':warnings,
+                  'outcome':obs.get('outcome'),
+                  'backend':obs.get('backend'),
+              })
+          (root/'diagnostic-result.json').write_text(json.dumps(result, indent=2, sort_keys=True)+'\n')
+          (root/'diagnostic-summary.txt').write_text(
+              '\n'.join([
+                  f"classification={result['classification']}",
+                  f"observe_rc={result['observe_rc']}",
+                  f"complete={result.get('complete')}",
+                  f"event_count={result.get('event_count')}",
+                  'warning_codes=' + ','.join(str(x) for x in result.get('warning_codes',[])),
+              ])+'\n'
+          )
+          print((root/'diagnostic-summary.txt').read_text(), end='')
+          PY
+
+      - name: Seal diagnostic evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          find "$EVIDENCE_DIR" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > "$EVIDENCE_DIR/SHA256SUMS"
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p3-v5-stage-l-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Require a classified diagnostic result
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$EVIDENCE_DIR/diagnostic-result.json"
+          python3 - "$EVIDENCE_DIR/diagnostic-result.json" <<'PY'
+          import json, sys
+          result=json.load(open(sys.argv[1]))
+          allowed={
+              'P3_V5_DIAG_SHARED_FD_AMBIGUITY_CONFIRMED',
+              'P3_V5_DIAG_EVENT_LIMIT_CONFIRMED',
+              'P3_V5_DIAG_OTHER_INCOMPLETENESS',
+              'P3_V5_DIAG_UNEXPECTED_COMPLETE',
+          }
+          assert result['classification'] in allowed, result
+          assert result['observe_rc'] == 0, result
+          PY
