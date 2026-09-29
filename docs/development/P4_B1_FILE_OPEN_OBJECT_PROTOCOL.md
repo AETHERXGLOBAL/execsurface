@@ -201,3 +201,9 @@ Only the bounded PASS decision may authorize preregistration of B2. It still doe
 The first strict B1 model/live runs reached the frozen public-isolation and dependency-lock gates, then stopped at `rustfmt --check` before Clippy or any scientific test executed. These failures are retained as engineering evidence and are not counted as semantic falsification outcomes. A one-shot research-only formatter was permitted to change only `experiments/p4-backend-authority/**`; it refused any `crates/` drift and produced source commit `2985415a4d2f6b7b9314ded7506e4e775db33748`.
 
 This note changes no proposition, fixture, test count, authority rule, completeness rule, success criterion, or allowed B1 decision. The exact frozen model and live gates must now rerun on the formatted source before any B1 judgment.
+
+## Retained execution evidence — compile-fix attempt
+
+After formatting was corrected, the first rerun exposed a compile-only actor-name shadowing defect in the B1 model test harness. A temporary exact-fix helper was created and then removed because it was not a valid long-term path; the net tree returned to the same research code plus the minimal actor-shadowing correction at `92853b3b7821c03c573d25cac06caa3024b1ac45`.
+
+This retained engineering attempt changed no proposition, assertion, expected test count, authority rule, completeness requirement, or acceptance condition. The current frozen model/live workflows must execute from the present source before any B1 scientific judgment.
