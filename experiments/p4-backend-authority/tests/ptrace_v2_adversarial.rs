@@ -84,7 +84,10 @@ fn a1_3_path_toctou_cannot_launder_attempt_into_object_authority() {
     }));
     assert!(!mapping.records.iter().any(|record| {
         record.proposition_id == "P4.FILE.OPEN_OBJECT"
-            || matches!(record.proof.proposition, Proposition::FileOpenObjectObserved { .. })
+            || matches!(
+                record.proof.proposition,
+                Proposition::FileOpenObjectObserved { .. }
+            )
     }));
 }
 
@@ -245,8 +248,14 @@ fn a1_3_causal_chain_substitution_changes_proposition_identity() {
     let first_lineage = lineage_record(&first);
     let substituted_lineage = lineage_record(&substituted);
     assert_eq!(first_lineage.authority, AuthorityState::DerivedBounded);
-    assert_eq!(substituted_lineage.authority, AuthorityState::DerivedBounded);
-    assert_ne!(first_lineage.proof.proposition, substituted_lineage.proof.proposition);
+    assert_eq!(
+        substituted_lineage.authority,
+        AuthorityState::DerivedBounded
+    );
+    assert_ne!(
+        first_lineage.proof.proposition,
+        substituted_lineage.proof.proposition
+    );
 }
 
 #[test]
