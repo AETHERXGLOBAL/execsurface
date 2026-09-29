@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use execsurface_p4_backend_authority::b0_success_evidence::{
-    ActorIdentity, AttemptEvidence, EvidenceLedger, EvidenceState, ExitEvidence, ObservationHealth,
+    ActorIdentity, AttemptEvidence, EvidenceLedger, ExitEvidence, ObservationHealth,
     OperationKind, TargetProposition,
 };
 use execsurface_p4_backend_authority::b2_rename_delete::{
