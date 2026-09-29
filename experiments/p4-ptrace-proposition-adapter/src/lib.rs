@@ -103,17 +103,21 @@ impl PropositionRecord {
         {
             return Err(ValidationError::NotApplicableRequiresUnsupported);
         }
-        if matches!(self.authority, AuthorityState::Ambiguous | AuthorityState::Lost)
-            && self.completeness == CompletenessState::Complete
+        if matches!(
+            self.authority,
+            AuthorityState::Ambiguous | AuthorityState::Lost
+        ) && self.completeness == CompletenessState::Complete
         {
             return Err(ValidationError::AmbiguousOrLostCannotBeComplete);
         }
-        if matches!(self.authority, AuthorityState::Direct | AuthorityState::AttemptOnly)
-            && self
-                .evidence_reference
-                .as_deref()
-                .map(str::trim)
-                .is_none_or(str::is_empty)
+        if matches!(
+            self.authority,
+            AuthorityState::Direct | AuthorityState::AttemptOnly
+        ) && self
+            .evidence_reference
+            .as_deref()
+            .map(str::trim)
+            .is_none_or(str::is_empty)
         {
             return Err(ValidationError::DirectOrAttemptRequiresEvidenceReference);
         }
@@ -126,12 +130,14 @@ impl PropositionRecord {
         {
             return Err(ValidationError::DerivedRequiresDerivationReference);
         }
-        if matches!(self.authority, AuthorityState::Ambiguous | AuthorityState::Lost)
-            && self
-                .ambiguity_or_loss_reason
-                .as_deref()
-                .map(str::trim)
-                .is_none_or(str::is_empty)
+        if matches!(
+            self.authority,
+            AuthorityState::Ambiguous | AuthorityState::Lost
+        ) && self
+            .ambiguity_or_loss_reason
+            .as_deref()
+            .map(str::trim)
+            .is_none_or(str::is_empty)
         {
             return Err(ValidationError::AmbiguousOrLostRequiresReason);
         }
@@ -213,7 +219,10 @@ mod tests {
             first.canonical_json_bytes().expect("first bytes"),
             second.canonical_json_bytes().expect("second bytes")
         );
-        assert_eq!(first.sha256().expect("first hash"), second.sha256().expect("second hash"));
+        assert_eq!(
+            first.sha256().expect("first hash"),
+            second.sha256().expect("second hash")
+        );
     }
 
     #[test]
@@ -299,7 +308,9 @@ mod tests {
         record.completeness = CompletenessState::NotApplicable;
         record.evidence_reference = None;
         record.object_identity = None;
-        record.validate().expect("unsupported record remains explicit");
+        record
+            .validate()
+            .expect("unsupported record remains explicit");
         assert_eq!(record.authority, AuthorityState::Unsupported);
         assert_ne!(record.completeness, CompletenessState::Complete);
     }
@@ -309,7 +320,9 @@ mod tests {
         let mut record = base_record(PropositionId::FdTableRelation);
         record.completeness = CompletenessState::Incomplete;
         record.ambiguity_or_loss_reason = Some("dependent evidence incomplete".to_owned());
-        record.validate().expect("direct-but-incomplete remains representable");
+        record
+            .validate()
+            .expect("direct-but-incomplete remains representable");
         assert_eq!(record.authority, AuthorityState::Direct);
         assert_eq!(record.completeness, CompletenessState::Incomplete);
     }
