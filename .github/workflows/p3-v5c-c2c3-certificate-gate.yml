@@ -1,0 +1,79 @@
+name: P3 V5-C C2/C3 syscall-origin certificate gate
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - scripts/p3_v5c_c2c3_apply.py
+      - .github/workflows/p3-v5c-c2c3-certificate-gate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refine-and-falsify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout isolated development branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          ref: development/post-alpha4-behavioral-integrity
+          fetch-depth: 0
+
+      - name: Verify C2/C3 protocol exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f docs/development/P3_V5C_C2_C3_PROTOCOL.md
+          test -f docs/development/P3_V5C_C1_RESULT.md
+          git log -1 --oneline
+
+      - name: Apply syscall-origin certificate refinement
+        run: python3 scripts/p3_v5c_c2c3_apply.py
+
+      - name: Rustfmt-only normalization
+        run: cargo fmt --all
+
+      - name: Format gate
+        run: cargo fmt --all -- --check
+
+      - name: Observe crate clippy gate
+        run: cargo clippy --locked -p execsurface-observe --all-targets -- -D warnings
+
+      - name: C3 clone SIGCHLD to FORK routing falsifier
+        run: cargo test --locked -p execsurface-observe --lib c3_clone_sigchld_fork_event_keeps_clone_fd_authority -- --ignored --nocapture
+
+      - name: C3 clone VFORK routing falsifier
+        run: cargo test --locked -p execsurface-observe --lib c3_clone_vfork_event_keeps_clone_fd_authority -- --ignored --nocapture
+
+      - name: C1 ordinary private/shared clone live regression
+        run: cargo test --locked -p execsurface-observe --lib c1_real_ptrace_clone_modes_are_certified -- --ignored --nocapture
+
+      - name: Full observe regression suite
+        run: cargo test --locked -p execsurface-observe --all-targets
+
+      - name: Workspace regression suite
+        run: cargo test --locked --workspace
+
+      - name: Preserve public guard boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'apply_shared_fd_ambiguity_guard(ptrace.observation)' crates/execsurface-observe/src/lib.rs
+          git diff --check
+          git status --short
+          git diff -- crates/execsurface-observe/src/linux_ptrace.rs crates/execsurface-observe/src/lib.rs
+
+      - name: Commit only after all C2/C3 gates pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AETHER X C2C3 Gate"
+          git config user.email "aether.x.eg@gmail.com"
+          git add crates/execsurface-observe/src/linux_ptrace.rs
+          git rm scripts/p3_v5c_c2c3_apply.py .github/workflows/p3-v5c-c2c3-certificate-gate.yml
+          git commit -m "P3 V5-C C2/C3: bind clone fd certificate to syscall origin"
+          git push origin HEAD:development/post-alpha4-behavioral-integrity
