@@ -1,0 +1,59 @@
+name: P3 C1 Event Routing Red Team
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - scripts/p3_c1_redteam_event_routing.py
+      - .github/workflows/p3-c1-event-routing-redteam.yml
+
+permissions:
+  contents: write
+
+jobs:
+  event-routing-falsification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout current development branch
+        uses: actions/checkout@v4
+        with:
+          ref: development/post-alpha4-behavioral-integrity
+          fetch-depth: 0
+
+      - name: Apply event-routing hardening patch
+        run: python3 scripts/p3_c1_redteam_event_routing.py
+
+      - name: Rustfmt
+        run: cargo fmt --all
+
+      - name: Format and clippy gates
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked -p execsurface-observe --all-targets -- -D warnings
+
+      - name: Adversarial real ptrace routing harness
+        run: cargo test --locked -p execsurface-observe --lib c1_real_ptrace_clone_modes_are_certified -- --ignored --nocapture
+
+      - name: Observe and workspace regressions
+        run: |
+          cargo test --locked -p execsurface-observe --all-targets
+          cargo test --locked --workspace
+
+      - name: Diff integrity
+        run: |
+          set -euo pipefail
+          git diff --check
+          git status --short
+
+      - name: Commit only after red-team gates pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "AETHER X C1 Red Team"
+          git config user.email "aether.x.eg@gmail.com"
+          git add crates/execsurface-observe/src/linux_ptrace.rs
+          git rm scripts/p3_c1_redteam_event_routing.py .github/workflows/p3-c1-event-routing-redteam.yml
+          git commit -m "P3 C1: classify clone origin across ptrace event routing"
+          git push origin HEAD:development/post-alpha4-behavioral-integrity
