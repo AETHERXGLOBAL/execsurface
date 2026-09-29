@@ -91,7 +91,9 @@ impl fmt::Display for AnalyzeError {
             Self::UnsupportedManifestSchema(version) => {
                 write!(f, "unsupported learning manifest schema: {version}")
             }
-            Self::NeedAtLeastTwoRuns => write!(f, "at least two distinct trusted runs are required"),
+            Self::NeedAtLeastTwoRuns => {
+                write!(f, "at least two distinct trusted runs are required")
+            }
             Self::InvalidEvidenceDigest(digest) => {
                 write!(f, "invalid evidence digest: {digest}")
             }
@@ -99,7 +101,10 @@ impl fmt::Display for AnalyzeError {
                 write!(f, "duplicate evidence artifact: {digest}")
             }
             Self::IncompleteRun(digest) => {
-                write!(f, "incomplete observation cannot enter learning set: {digest}")
+                write!(
+                    f,
+                    "incomplete observation cannot enter learning set: {digest}"
+                )
             }
             Self::InvalidBaseline {
                 evidence_digest,
@@ -189,9 +194,7 @@ pub fn analyze(manifest: &TrustedLearningManifest) -> Result<VarianceReport, Ana
     let union_effects = support.keys().cloned().collect::<Vec<_>>();
     let invariant_effects = support
         .iter()
-        .filter_map(|(effect, sources)| {
-            (sources.len() == run_count).then_some(effect.clone())
-        })
+        .filter_map(|(effect, sources)| (sources.len() == run_count).then_some(effect.clone()))
         .collect::<Vec<_>>();
 
     let recurrence = support
@@ -255,11 +258,7 @@ fn profile_for(lock: &BaselineLock) -> ComparableProfile {
         platform: lock.payload.platform.clone(),
         observer,
         canonical_schema_version: lock.payload.canonical_surface.schema_version,
-        normalization_profile_version: lock
-            .payload
-            .canonical_surface
-            .normalization
-            .profile_version,
+        normalization_profile_version: lock.payload.canonical_surface.normalization.profile_version,
         semantic_roots,
     }
 }
@@ -298,7 +297,8 @@ fn digest_learning_set(sources: &[SourceRunRef]) -> Result<String, AnalyzeError>
 mod tests {
     use super::*;
     use execsurface_baseline::{
-        build_lock, BaselinePayload, CommandIdentity, ObserverIdentity, PlatformIdentity, ToolIdentity,
+        build_lock, BaselinePayload, CommandIdentity, ObserverIdentity, PlatformIdentity,
+        ToolIdentity,
     };
     use execsurface_model::canonical::{
         CanonicalExecutable, CanonicalPath, CanonicalSurface, NormalizationMetadata, PathClass,
