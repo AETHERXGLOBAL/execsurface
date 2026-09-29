@@ -41,7 +41,7 @@ struct V5Report {
     lingering_targeted_random_paths: Vec<EffectEvidence>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct EffectEvidence {
     effect: CanonicalEffect,
     support_count: usize,
