@@ -168,11 +168,7 @@ mod tests {
         }
     }
 
-    fn gcc_pair(
-        actor_path: &str,
-        actor_family: &str,
-        target: CanonicalPath,
-    ) -> CanonicalSurface {
+    fn gcc_pair(actor_path: &str, actor_family: &str, target: CanonicalPath) -> CanonicalSurface {
         CanonicalSurface {
             schema_version: 2,
             normalization: NormalizationMetadata {
@@ -260,7 +256,10 @@ mod tests {
     fn a3_duplicate_vote_inflation_is_rejected() {
         let duplicate = run(1, vec![read_effect("/stable")]);
         let result = analyze(&manifest(vec![duplicate.clone(), duplicate]));
-        assert!(matches!(result, Err(AnalyzeError::DuplicateEvidenceDigest(_))));
+        assert!(matches!(
+            result,
+            Err(AnalyzeError::DuplicateEvidenceDigest(_))
+        ));
     }
 
     #[test]
@@ -366,24 +365,12 @@ mod tests {
         let wrong_root = path("$WORKSPACE/ccABC123.s", PathClass::Workspace);
         let nested = path("$TMP/sub/ccABC123.s", PathClass::Temp);
 
-        assert!(eligible_gcc_temp_paths(&gcc_pair(
-            "/usr/bin/clang",
-            "clang",
-            matching.clone()
-        ))
-        .is_empty());
-        assert!(eligible_gcc_temp_paths(&gcc_pair(
-            "/usr/bin/gcc",
-            "gcc",
-            wrong_root
-        ))
-        .is_empty());
-        assert!(eligible_gcc_temp_paths(&gcc_pair(
-            "/usr/bin/gcc",
-            "gcc",
-            nested
-        ))
-        .is_empty());
+        assert!(
+            eligible_gcc_temp_paths(&gcc_pair("/usr/bin/clang", "clang", matching.clone()))
+                .is_empty()
+        );
+        assert!(eligible_gcc_temp_paths(&gcc_pair("/usr/bin/gcc", "gcc", wrong_root)).is_empty());
+        assert!(eligible_gcc_temp_paths(&gcc_pair("/usr/bin/gcc", "gcc", nested)).is_empty());
 
         let create_only = CanonicalSurface {
             schema_version: 2,
