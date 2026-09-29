@@ -1,0 +1,171 @@
+name: P3 V5-C clone relation census
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - .github/workflows/p3-v5c-clone-census.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  census:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      FZF_SHA: b1be3a8be1b833ce5b92fbbac11637643d60a046
+      WORK_ROOT: /tmp/execsurface-p3-v5c-fzf
+      EVIDENCE_DIR: p3-v5c-c1-evidence
+      MANIFEST: experiments/p3-v5c-clone-census/Cargo.toml
+    steps:
+      - name: Checkout development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified fzf
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          repository: junegunn/fzf
+          ref: ${{ env.FZF_SHA }}
+          path: external/fzf
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build and statically gate census tracer
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          cargo "+$RUST_TOOLCHAIN" generate-lockfile --manifest-path "$MANIFEST"
+          cargo "+$RUST_TOOLCHAIN" fmt --manifest-path "$MANIFEST" -- --check
+          cargo "+$RUST_TOOLCHAIN" clippy --locked --manifest-path "$MANIFEST" --all-targets -- -D warnings
+          cargo "+$RUST_TOOLCHAIN" build --locked --manifest-path "$MANIFEST"
+
+      - name: Freeze workload and environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$WORK_ROOT" "$EVIDENCE_DIR"
+          cp -a external/fzf "$WORK_ROOT"
+          test "$(git -C "$WORK_ROOT" rev-parse HEAD)" = "$FZF_SHA"
+          test -z "$(git -C "$WORK_ROOT" status --porcelain)"
+          mkdir -p "$EVIDENCE_DIR"
+          {
+            printf 'execsurface_sha=%s\n' "$GITHUB_SHA"
+            printf 'fzf_sha=%s\n' "$FZF_SHA"
+            printf 'go=%s\n' "$(go version)"
+            printf 'rustc=%s\n' "$(rustc +$RUST_TOOLCHAIN --version)"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+          } > "$EVIDENCE_DIR/environment.txt"
+
+      - name: Execute exactly three direct priming runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for n in 1 2 3; do
+            (cd "$WORK_ROOT" && go test ./...) \
+              > "$GITHUB_WORKSPACE/$EVIDENCE_DIR/direct-prime-${n}.stdout" \
+              2> "$GITHUB_WORKSPACE/$EVIDENCE_DIR/direct-prime-${n}.stderr"
+          done
+          test -z "$(git -C "$WORK_ROOT" status --porcelain --untracked-files=no)"
+
+      - name: Execute exactly three census runs without replacement
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > "$EVIDENCE_DIR/census-status.tsv"
+          BIN="experiments/p3-v5c-clone-census/target/debug/execsurface-p3-v5c-clone-census"
+          for n in 1 2 3; do
+            set +e
+            "$BIN" "$WORK_ROOT" \
+              > "$EVIDENCE_DIR/census-${n}.txt" \
+              2> "$EVIDENCE_DIR/census-${n}.stderr"
+            rc=$?
+            set -e
+            printf '%s\t%s\n' "$n" "$rc" | tee -a "$EVIDENCE_DIR/census-status.tsv"
+          done
+
+      - name: Aggregate frozen C1 classification
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+
+          root=Path('p3-v5c-c1-evidence')
+          statuses={int(n):int(rc) for n,rc in (line.split('\t') for line in (root/'census-status.tsv').read_text().splitlines())}
+          runs=[]
+          for n in (1,2,3):
+              path=root/f'census-{n}.txt'
+              values={}
+              if path.exists():
+                  for line in path.read_text().splitlines():
+                      if line.startswith('summary\t') and '=' in line:
+                          key,value=line.split('\t',1)[1].split('=',1)
+                          values[key]=value
+              runs.append({
+                  'run':n,
+                  'process_rc':statuses.get(n),
+                  'summary':values,
+                  'sha256':hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None,
+              })
+
+          execution_ok=(len(runs)==3 and all(r['process_rc']==0 and r['summary'].get('root_exit')=='0' for r in runs))
+          all_observable=execution_ok and all(
+              r['summary'].get('classification')=='C1_RELATION_OBSERVABLE'
+              and int(r['summary'].get('unknown','-1'))==0
+              and int(r['summary'].get('clone3_read_failures','-1'))==0
+              and int(r['summary'].get('unpaired','-1'))==0
+              and int(r['summary'].get('origin_event_mismatch','-1'))==0
+              for r in runs
+          )
+          if all_observable:
+              classification='C1_RELATION_OBSERVABLE_ALL_RUNS'
+          elif execution_ok:
+              classification='C1_RELATION_PARTIAL_UNKNOWN'
+          else:
+              classification='C1_EXECUTION_INCOMPLETE'
+
+          result={'classification':classification,'runs':runs}
+          (root/'c1-result.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(result,sort_keys=True))
+          PY
+
+      - name: Seal C1 evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          find "$EVIDENCE_DIR" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > "$EVIDENCE_DIR/SHA256SUMS"
+
+      - name: Upload C1 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: p3-v5c-c1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE_DIR }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Require classified C1 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result=json.loads(Path('p3-v5c-c1-evidence/c1-result.json').read_text())
+          allowed={
+              'C1_RELATION_OBSERVABLE_ALL_RUNS',
+              'C1_RELATION_PARTIAL_UNKNOWN',
+              'C1_EXECUTION_INCOMPLETE',
+          }
+          assert result['classification'] in allowed, result
+          PY
