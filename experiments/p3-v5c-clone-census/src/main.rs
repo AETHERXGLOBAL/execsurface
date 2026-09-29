@@ -49,10 +49,7 @@ impl PtraceSyscallInfo {
 enum PendingCreation {
     Fork,
     Vfork,
-    Clone {
-        flags: Option<u64>,
-        clone3: bool,
-    },
+    Clone { flags: Option<u64>, clone3: bool },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
