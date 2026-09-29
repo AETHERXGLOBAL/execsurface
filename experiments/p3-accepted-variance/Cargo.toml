@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+execsurface-baseline = { path = "../../crates/execsurface-baseline" }
 execsurface-model = { path = "../../crates/execsurface-model" }
 execsurface-p3-variance-analyzer = { path = "../p3-variance-analyzer" }
 serde = { version = "=1.0.229", features = ["derive"] }
