@@ -57,18 +57,25 @@ impl AdapterRecord {
             (_, PropositionCompleteness::NotApplicable) => {
                 return Err("not_applicable completeness requires unsupported authority".to_owned())
             }
-            (AuthorityState::Ambiguous | AuthorityState::Lost, PropositionCompleteness::Complete) => {
-                return Err("ambiguous/lost authority cannot be complete".to_owned())
-            }
+            (
+                AuthorityState::Ambiguous | AuthorityState::Lost,
+                PropositionCompleteness::Complete,
+            ) => return Err("ambiguous/lost authority cannot be complete".to_owned()),
             _ => {}
         }
         if matches!(self.authority, AuthorityState::DerivedBounded)
-            && self.evidence.derivation.as_deref().is_none_or(str::is_empty)
+            && self
+                .evidence
+                .derivation
+                .as_deref()
+                .is_none_or(str::is_empty)
         {
             return Err("derived_bounded authority requires derivation identity".to_owned());
         }
-        if matches!(self.authority, AuthorityState::Ambiguous | AuthorityState::Lost)
-            && self.reason_codes.is_empty()
+        if matches!(
+            self.authority,
+            AuthorityState::Ambiguous | AuthorityState::Lost
+        ) && self.reason_codes.is_empty()
         {
             return Err("ambiguous/lost records require explicit reason code".to_owned());
         }
@@ -78,7 +85,10 @@ impl AdapterRecord {
     pub fn admissible_for(&self, requirement: &ProofRequirement) -> bool {
         self.validate().is_ok()
             && self.completeness == PropositionCompleteness::Complete
-            && matches!(self.authority, AuthorityState::Direct | AuthorityState::DerivedBounded)
+            && matches!(
+                self.authority,
+                AuthorityState::Direct | AuthorityState::DerivedBounded
+            )
             && self.proof.satisfies(requirement)
     }
 }
@@ -98,7 +108,9 @@ pub fn compare_under_requirement(
     right: &AdapterRecord,
     requirement: &ProofRequirement,
 ) -> ComparisonResult {
-    if left.proposition_id != right.proposition_id || left.proof.proposition != right.proof.proposition {
+    if left.proposition_id != right.proposition_id
+        || left.proof.proposition != right.proof.proposition
+    {
         return ComparisonResult::DifferentProposition;
     }
     match (
@@ -120,11 +132,8 @@ pub fn unsupported_record(
     reason: impl Into<String>,
 ) -> AdapterRecord {
     let reason = reason.into();
-    let mut proof = ProofCarryingObservation::new(
-        proposition,
-        EvidenceGuarantees::default(),
-        backend_profile,
-    );
+    let mut proof =
+        ProofCarryingObservation::new(proposition, EvidenceGuarantees::default(), backend_profile);
     proof.completeness.insert(
         CompletenessDimension::Capability,
         CompletenessState::Unsupported {
@@ -187,7 +196,10 @@ mod tests {
     fn pathname_prop(actor: &str) -> Proposition {
         Proposition::FilePathnameAttemptObserved {
             actor: Some(exe(actor, actor.rsplit('/').next().unwrap_or(actor))),
-            execution_chain: vec![exe("/bin/bash", "bash"), exe(actor, actor.rsplit('/').next().unwrap_or(actor))],
+            execution_chain: vec![
+                exe("/bin/bash", "bash"),
+                exe(actor, actor.rsplit('/').next().unwrap_or(actor)),
+            ],
             operation: FileOperation::Open,
             target: path("$WORKSPACE/input.txt"),
             open_intent: None,
@@ -228,8 +240,14 @@ mod tests {
     ) -> AdapterRecord {
         let mut proof = ProofCarryingObservation::new(proposition, guarantees, profile(backend));
         proof.completeness = completeness_map([
-            (CompletenessDimension::SessionScope, CompletenessState::Complete),
-            (CompletenessDimension::Capability, CompletenessState::Complete),
+            (
+                CompletenessDimension::SessionScope,
+                CompletenessState::Complete,
+            ),
+            (
+                CompletenessDimension::Capability,
+                CompletenessState::Complete,
+            ),
         ]);
         AdapterRecord {
             proposition_id: id.to_owned(),
