@@ -123,3 +123,4 @@ jobs:
           retention-days: 30
 
 # Rerun marker: source/test files were rustfmt-only corrected by run 36592211736.
+# Rerun marker: A2 legacy test lint was corrected without suppression before B0 reproof.
