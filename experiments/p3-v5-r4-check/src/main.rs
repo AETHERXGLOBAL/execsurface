@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet};
+use std::collections::BTreeSet;
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -7,8 +7,12 @@ use std::path::PathBuf;
 use execsurface_baseline::{build_lock, parse_and_verify, BaselineLock};
 use execsurface_diff::{diff, CandidateSnapshot, DiffReport};
 use execsurface_model::canonical::CanonicalEffect;
-use execsurface_p3_accepted_variance::{build_contract, AcceptanceSelection, SELECTION_SCHEMA_VERSION};
-use execsurface_p3_gcc_temp_grammar::{apply_candidate, eligible_gcc_temp_paths, GCC_TEMP_CANONICAL};
+use execsurface_p3_accepted_variance::{
+    build_contract, AcceptanceSelection, SELECTION_SCHEMA_VERSION,
+};
+use execsurface_p3_gcc_temp_grammar::{
+    apply_candidate, eligible_gcc_temp_paths, GCC_TEMP_CANONICAL,
+};
 use execsurface_p3_variance_analyzer::{
     analyze, RecurrenceClass, TrustedLearningManifest, TrustedLearningRun, INPUT_SCHEMA_VERSION,
 };
@@ -44,7 +48,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let check_path = PathBuf::from(args.next().ok_or("missing check lockfile")?);
     let learning_paths = args.map(PathBuf::from).collect::<Vec<_>>();
     if learning_paths.len() != 6 {
-        return Err(format!("R4 requires exactly six learning lockfiles, got {}", learning_paths.len()).into());
+        return Err(format!(
+            "R4 requires exactly six learning lockfiles, got {}",
+            learning_paths.len()
+        )
+        .into());
     }
 
     let learning = learning_paths
@@ -105,11 +113,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let baseline_eligible = eligible_gcc_temp_paths(&raw_baseline.payload.canonical_surface);
     let current_eligible = eligible_gcc_temp_paths(&check.payload.canonical_surface);
-    let gcc_ephemeral_eligible_findings = targeted_diff_count(
-        &raw_diff,
-        &baseline_eligible,
-        &current_eligible,
-    );
+    let gcc_ephemeral_eligible_findings =
+        targeted_diff_count(&raw_diff, &baseline_eligible, &current_eligible);
 
     let projected_gcc_random_findings = projected_diff
         .added
@@ -150,9 +155,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .map(|record| record.effect.clone())
         .collect::<BTreeSet<_>>();
 
-    let invariant_core_matches = projected_invariant
-        .intersection(&projected_current)
-        .count();
+    let invariant_core_matches = projected_invariant.intersection(&projected_current).count();
     let missing_invariant_effects = projected_invariant
         .difference(&projected_current)
         .cloned()
@@ -176,8 +179,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let non_target_projection_mismatches = raw_current
         .iter()
         .filter(|effect| {
-            let targeted = effect_target(effect)
-                .is_some_and(|target| current_eligible.contains(target));
+            let targeted =
+                effect_target(effect).is_some_and(|target| current_eligible.contains(target));
             !targeted && !projected_current.contains(*effect)
         })
         .cloned()
@@ -185,9 +188,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let raw_single_baseline_findings = diff_count(&raw_diff);
     let residual_after_ephemeral_classification = diff_count(&projected_diff);
-    let residual_after_explicit_variance = missing_invariant_effects.len()
-        + observed_variable_matches.len()
-        + unseen_effects.len();
+    let residual_after_explicit_variance =
+        missing_invariant_effects.len() + observed_variable_matches.len() + unseen_effects.len();
 
     let report = CheckEvaluation {
         schema_version: 1,
@@ -237,10 +239,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     fs::write(&output, bytes)?;
 
     println!("R4_CHECK_EVALUATION_PASS");
-    println!("raw_single_baseline_findings={}", report.raw_single_baseline_findings);
-    println!("gcc_ephemeral_eligible_findings={}", report.gcc_ephemeral_eligible_findings);
+    println!(
+        "raw_single_baseline_findings={}",
+        report.raw_single_baseline_findings
+    );
+    println!(
+        "gcc_ephemeral_eligible_findings={}",
+        report.gcc_ephemeral_eligible_findings
+    );
     println!("invariant_core_matches={}", report.invariant_core_matches);
-    println!("observed_variable_matches={}", report.observed_variable_matches.len());
+    println!(
+        "observed_variable_matches={}",
+        report.observed_variable_matches.len()
+    );
     println!("explicitly_accepted_variable_matches=0");
     println!("unseen_effects={}", report.unseen_effects.len());
     println!(
@@ -294,7 +305,9 @@ fn targeted_diff_count(
         + report
             .removed
             .iter()
-            .filter(|effect| effect_target(effect).is_some_and(|target| before_paths.contains(target)))
+            .filter(|effect| {
+                effect_target(effect).is_some_and(|target| before_paths.contains(target))
+            })
             .count()
         + report
             .changed
