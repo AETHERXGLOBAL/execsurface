@@ -7,3 +7,5 @@ publish = false
 [dependencies]
 execsurface-model = { path = "../../crates/execsurface-model" }
 execsurface-observe = { path = "../../crates/execsurface-observe" }
+
+[workspace]
