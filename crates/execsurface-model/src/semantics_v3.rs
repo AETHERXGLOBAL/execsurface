@@ -13,6 +13,14 @@ use crate::{FileOperation, SpawnMechanism};
 
 pub const SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION: u32 = 3;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FdTableRelationState {
+    Shared,
+    IndependentCopy,
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "proposition_kind", rename_all = "snake_case")]
 pub enum Proposition {
@@ -31,6 +39,11 @@ pub enum Proposition {
         target: CanonicalPath,
         open_intent: Option<OpenIntent>,
     },
+    FileOpenObjectObserved {
+        actor: Option<CanonicalExecutable>,
+        execution_chain: Vec<CanonicalExecutable>,
+        target: CanonicalPath,
+    },
     FileFdEffectObserved {
         actor: Option<CanonicalExecutable>,
         execution_chain: Vec<CanonicalExecutable>,
@@ -47,6 +60,15 @@ pub enum Proposition {
         actor: Option<CanonicalExecutable>,
         execution_chain: Vec<CanonicalExecutable>,
         endpoint: CanonicalNetworkEndpoint,
+    },
+    ObserverHealthObserved {
+        complete: bool,
+        warning_codes: BTreeSet<String>,
+    },
+    FdTableRelationObserved {
+        actor: Option<CanonicalExecutable>,
+        mechanism: SpawnMechanism,
+        relation: FdTableRelationState,
     },
 }
 
@@ -313,5 +335,34 @@ mod tests {
             .insert(IdentityBasis::KernelObjectGrounded);
 
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn fd_table_relation_unknown_is_first_class_proposition_state() {
+        let proposition = Proposition::FdTableRelationObserved {
+            actor: None,
+            mechanism: SpawnMechanism::Clone,
+            relation: FdTableRelationState::Unknown,
+        };
+        let encoded = serde_json::to_vec(&proposition).expect("serialize fd-table relation");
+        let decoded: Proposition =
+            serde_json::from_slice(&encoded).expect("deserialize fd-table relation");
+        assert_eq!(decoded, proposition);
+    }
+
+    #[test]
+    fn observer_health_warning_codes_serialize_deterministically() {
+        let first = Proposition::ObserverHealthObserved {
+            complete: false,
+            warning_codes: BTreeSet::from(["zeta".to_owned(), "alpha".to_owned()]),
+        };
+        let second = Proposition::ObserverHealthObserved {
+            complete: false,
+            warning_codes: BTreeSet::from(["alpha".to_owned(), "zeta".to_owned()]),
+        };
+        assert_eq!(
+            serde_json::to_vec(&first).expect("serialize first health proposition"),
+            serde_json::to_vec(&second).expect("serialize second health proposition")
+        );
     }
 }
