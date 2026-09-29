@@ -134,3 +134,5 @@ jobs:
           path: p4-b1-live-ptrace-evidence
           if-no-files-found: error
           retention-days: 30
+
+# Exact rerun after one-shot rustfmt-only correction; no test, threshold, or acceptance rule changed.
