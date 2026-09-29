@@ -109,7 +109,11 @@ mod tests {
                 schema_version: 2,
                 normalization: NormalizationMetadata {
                     profile_version: 3,
-                    semantic_roots: vec!["home".to_owned(), "tmp".to_owned(), "workspace".to_owned()],
+                    semantic_roots: vec![
+                        "home".to_owned(),
+                        "tmp".to_owned(),
+                        "workspace".to_owned(),
+                    ],
                 },
                 effects,
             },
@@ -140,13 +144,19 @@ mod tests {
         let stable = read_effect_with_chain(
             "/usr/bin/cat",
             "cat",
-            vec![executable("/bin/bash", "bash"), executable("/usr/bin/cat", "cat")],
+            vec![
+                executable("/bin/bash", "bash"),
+                executable("/usr/bin/cat", "cat"),
+            ],
             "/stable",
         );
         let accepted = read_effect_with_chain(
             "/usr/bin/gcc",
             "gcc",
-            vec![executable("/bin/bash", "bash"), executable("/usr/bin/gcc", "gcc")],
+            vec![
+                executable("/bin/bash", "bash"),
+                executable("/usr/bin/gcc", "gcc"),
+            ],
             "/shared-target",
         );
         let report = analyze(&TrustedLearningManifest {
@@ -209,20 +219,30 @@ mod tests {
         let sentinel = read_effect_with_chain(
             "/usr/bin/cat",
             "cat",
-            vec![executable("/bin/bash", "bash"), executable("/usr/bin/cat", "cat")],
+            vec![
+                executable("/bin/bash", "bash"),
+                executable("/usr/bin/cat", "cat"),
+            ],
             "$TMP/execsurface-p3-v5-sentinel-meaningful.txt",
         );
         let other = read_effect_with_chain(
             "/usr/bin/go",
             "go",
-            vec![executable("/bin/bash", "bash"), executable("/usr/bin/go", "go")],
+            vec![
+                executable("/bin/bash", "bash"),
+                executable("/usr/bin/go", "go"),
+            ],
             "$WORKSPACE/go.mod",
         );
         let raw = CanonicalSurface {
             schema_version: 2,
             normalization: NormalizationMetadata {
                 profile_version: 3,
-                semantic_roots: vec!["home".to_owned(), "tmp".to_owned(), "workspace".to_owned()],
+                semantic_roots: vec![
+                    "home".to_owned(),
+                    "tmp".to_owned(),
+                    "workspace".to_owned(),
+                ],
             },
             effects: vec![gcc_open, gcc_delete, sentinel.clone(), other.clone()],
         };
@@ -284,13 +304,19 @@ mod tests {
         let stable = read_effect_with_chain(
             "/usr/bin/cat",
             "cat",
-            vec![executable("/bin/bash", "bash"), executable("/usr/bin/cat", "cat")],
+            vec![
+                executable("/bin/bash", "bash"),
+                executable("/usr/bin/cat", "cat"),
+            ],
             "/stable",
         );
         let variable = read_effect_with_chain(
             "/usr/bin/go",
             "go",
-            vec![executable("/bin/bash", "bash"), executable("/usr/bin/go", "go")],
+            vec![
+                executable("/bin/bash", "bash"),
+                executable("/usr/bin/go", "go"),
+            ],
             "/variable",
         );
         let report = analyze(&TrustedLearningManifest {
