@@ -73,9 +73,11 @@ jobs:
         run: |
           set -euo pipefail
           cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test a2_authority_gap_matrix -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/a2-matrix.log"
-          grep -q 'test result: ok. 14 passed; 0 failed' "$EVIDENCE_ROOT/a2-matrix.log"
+          grep -q 'test result: ok. 15 passed; 0 failed' "$EVIDENCE_ROOT/a2-matrix.log"
           grep -q 'A2_MATRIX_JSON_BEGIN' "$EVIDENCE_ROOT/a2-matrix.log"
           grep -q 'A2_MATRIX_JSON_END' "$EVIDENCE_ROOT/a2-matrix.log"
+          awk '/A2_MATRIX_JSON_BEGIN/{capture=1;next}/A2_MATRIX_JSON_END/{capture=0}capture' "$EVIDENCE_ROOT/a2-matrix.log" > "$EVIDENCE_ROOT/A2_MATRIX.json"
+          test -s "$EVIDENCE_ROOT/A2_MATRIX.json"
 
       - name: Re-run A1 falsification corpus
         shell: bash
@@ -86,7 +88,7 @@ jobs:
           grep -q 'test result: ok. 5 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
           grep -q 'test result: ok. 18 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
           grep -q 'test result: ok. 10 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
-          grep -q 'test result: ok. 14 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
+          grep -q 'test result: ok. 15 passed; 0 failed' "$EVIDENCE_ROOT/a1-reproof.log"
 
       - name: Re-prove Semantics v3 and public M11 boundary
         shell: bash
@@ -102,6 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           printf 'P4_A2_PROPOSITION_GAPS_ESTABLISHED_BOUNDED\n' | tee "$EVIDENCE_ROOT/A2_DECISION.txt"
+          printf 'NO_BACKEND_PROMOTION_AUTHORIZED\n' | tee "$EVIDENCE_ROOT/A2_BOUNDARY.txt"
 
       - name: Seal evidence
         if: always()
