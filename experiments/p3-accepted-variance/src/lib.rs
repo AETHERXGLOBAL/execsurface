@@ -55,7 +55,9 @@ impl fmt::Display for ContractError {
             Self::LearningSetDigestMismatch => {
                 write!(f, "acceptance selection learning-set digest mismatch")
             }
-            Self::DuplicateSelection => write!(f, "duplicate effect in explicit acceptance selection"),
+            Self::DuplicateSelection => {
+                write!(f, "duplicate effect in explicit acceptance selection")
+            }
             Self::InvariantSelected => {
                 write!(f, "invariant effect cannot be accepted as variance")
             }
@@ -99,7 +101,11 @@ pub fn build_contract(
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let union = report.union_effects.iter().cloned().collect::<BTreeSet<_>>();
+    let union = report
+        .union_effects
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
 
     let mut variable_candidates = report
         .recurrence
@@ -185,9 +191,7 @@ fn digest_invariant_core(report: &VarianceReport) -> Result<String, ContractErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use execsurface_baseline::{
-        CommandIdentity, ObserverIdentity, PlatformIdentity, ToolIdentity,
-    };
+    use execsurface_baseline::{CommandIdentity, ObserverIdentity, PlatformIdentity, ToolIdentity};
     use execsurface_model::canonical::{
         CanonicalExecutable, CanonicalPath, PathClass, PathResolution,
     };
@@ -287,12 +291,7 @@ mod tests {
             recurrence: vec![
                 recurrence(invariant, 3, &[1, 2, 3], RecurrenceClass::Invariant),
                 recurrence(rare, 1, &[1], RecurrenceClass::VariableCandidate),
-                recurrence(
-                    frequent,
-                    2,
-                    &[1, 3],
-                    RecurrenceClass::VariableCandidate,
-                ),
+                recurrence(frequent, 2, &[1, 3], RecurrenceClass::VariableCandidate),
             ],
         }
     }
@@ -315,7 +314,8 @@ mod tests {
     #[test]
     fn explicit_candidate_acceptance_preserves_exact_provenance() {
         let frequent = path_effect("/frequent");
-        let contract = build_contract(&report(), &selection(vec![frequent.clone()])).expect("contract");
+        let contract =
+            build_contract(&report(), &selection(vec![frequent.clone()])).expect("contract");
         assert_eq!(contract.accepted_variable_effects.len(), 1);
         let accepted = &contract.accepted_variable_effects[0];
         assert_eq!(accepted.effect, frequent);
@@ -372,11 +372,8 @@ mod tests {
     fn selection_order_does_not_change_contract_bytes() {
         let rare = path_effect("/rare");
         let frequent = path_effect("/frequent");
-        let first = build_contract(
-            &report(),
-            &selection(vec![rare.clone(), frequent.clone()]),
-        )
-        .expect("first");
+        let first = build_contract(&report(), &selection(vec![rare.clone(), frequent.clone()]))
+            .expect("first");
         let second = build_contract(&report(), &selection(vec![frequent, rare])).expect("second");
         assert_eq!(
             serialize_contract(&first).expect("first bytes"),
