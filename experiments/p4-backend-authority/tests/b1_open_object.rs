@@ -5,7 +5,7 @@ use execsurface_p4_backend_authority::b0_success_evidence::{
     OperationKind, TargetProposition,
 };
 use execsurface_p4_backend_authority::b1_open_object::{
-    OpenObjectAuthority, OpenObjectRecord, PostOpenBinding,
+    FdTableRelation, OpenObjectAuthority, OpenObjectRecord, PostOpenBinding,
 };
 
 fn digest(ch: char) -> String {
@@ -25,25 +25,33 @@ fn open_attempt(
     actor: ActorIdentity,
     entry_sequence: u64,
     target: &str,
+    argument_digest: String,
 ) -> AttemptEvidence {
     AttemptEvidence {
         proposition: TargetProposition::FileOpenObject,
         operation,
         actor,
         entry_sequence,
-        argument_digest: digest('a'),
+        argument_digest,
         target_identity: target.to_owned(),
     }
 }
 
-fn successful_open(
+fn successful_open_with_argument_digest(
     operation: OperationKind,
     target: &str,
     fd: i32,
     entry_sequence: u64,
+    argument_digest: String,
 ) -> execsurface_p4_backend_authority::b0_success_evidence::SuccessEvidenceRecord {
     let actor = actor(4242, 'c');
-    let attempt = open_attempt(operation, actor.clone(), entry_sequence, target);
+    let attempt = open_attempt(
+        operation,
+        actor.clone(),
+        entry_sequence,
+        target,
+        argument_digest,
+    );
     EvidenceLedger::default()
         .classify_pair(
             attempt,
@@ -58,6 +66,15 @@ fn successful_open(
         .expect("valid B0 success")
 }
 
+fn successful_open(
+    operation: OperationKind,
+    target: &str,
+    fd: i32,
+    entry_sequence: u64,
+) -> execsurface_p4_backend_authority::b0_success_evidence::SuccessEvidenceRecord {
+    successful_open_with_argument_digest(operation, target, fd, entry_sequence, digest('a'))
+}
+
 fn binding(
     evidence: &execsurface_p4_backend_authority::b0_success_evidence::SuccessEvidenceRecord,
     fd: i32,
@@ -68,6 +85,7 @@ fn binding(
     PostOpenBinding {
         fd,
         fd_generation: generation,
+        fd_table_relation: FdTableRelation::KnownIndependent,
         originating_entry_sequence: evidence.attempt.entry_sequence,
         binding_sequence: sequence,
         object_identity: object_identity.to_owned(),
@@ -260,7 +278,13 @@ fn b1_same_fd_and_object_with_new_generation_changes_proof_identity() {
 #[test]
 fn b1_failed_open_never_becomes_success_even_with_binding() {
     let actor = actor(4242, 'c');
-    let attempt = open_attempt(OperationKind::Open, actor.clone(), 180, "$WORKSPACE/missing");
+    let attempt = open_attempt(
+        OperationKind::Open,
+        actor.clone(),
+        180,
+        "$WORKSPACE/missing",
+        digest('a'),
+    );
     let failed = EvidenceLedger::default()
         .classify_pair(
             attempt,
@@ -288,7 +312,13 @@ fn b1_failed_open_never_becomes_success_even_with_binding() {
 #[test]
 fn b1_lost_observation_never_becomes_success() {
     let actor = actor(4242, 'c');
-    let attempt = open_attempt(OperationKind::Open, actor.clone(), 190, "$WORKSPACE/lost");
+    let attempt = open_attempt(
+        OperationKind::Open,
+        actor.clone(),
+        190,
+        "$WORKSPACE/lost",
+        digest('a'),
+    );
     let lost = EvidenceLedger::default()
         .classify_pair(
             attempt,
@@ -307,13 +337,22 @@ fn b1_lost_observation_never_becomes_success() {
     let fake_binding = binding(&lost, 23, 1, 192, "fd-object:/target");
     let record = OpenObjectRecord::build(lost, Some(fake_binding)).expect("record");
     assert!(!record.is_success_authority());
-    assert!(matches!(record.authority, OpenObjectAuthority::Lost { .. }));
+    assert!(matches!(
+        record.authority,
+        OpenObjectAuthority::Lost { .. }
+    ));
 }
 
 #[test]
 fn b1_entry_exit_actor_substitution_never_reaches_success() {
     let actor = actor(4242, 'c');
-    let attempt = open_attempt(OperationKind::Open, actor.clone(), 200, "$WORKSPACE/substitute");
+    let attempt = open_attempt(
+        OperationKind::Open,
+        actor.clone(),
+        200,
+        "$WORKSPACE/substitute",
+        digest('a'),
+    );
     let evidence = EvidenceLedger::default()
         .classify_pair(
             attempt,
@@ -326,7 +365,10 @@ fn b1_entry_exit_actor_substitution_never_reaches_success() {
             ObservationHealth::healthy(),
         )
         .expect("ambiguous evidence");
-    assert!(matches!(evidence.state, EvidenceState::Ambiguous { .. }));
+    assert!(matches!(
+        evidence.state,
+        EvidenceState::Ambiguous { .. }
+    ));
     let record = OpenObjectRecord::build(evidence, None).expect("record");
     assert!(!record.is_success_authority());
 }
@@ -334,7 +376,13 @@ fn b1_entry_exit_actor_substitution_never_reaches_success() {
 #[test]
 fn b1_duplicate_pairing_is_rejected_before_object_authority() {
     let actor = actor(4242, 'c');
-    let attempt = open_attempt(OperationKind::Open, actor.clone(), 210, "$WORKSPACE/replay");
+    let attempt = open_attempt(
+        OperationKind::Open,
+        actor.clone(),
+        210,
+        "$WORKSPACE/replay",
+        digest('a'),
+    );
     let exit = ExitEvidence {
         actor,
         originating_entry_sequence: 210,
@@ -392,4 +440,55 @@ fn b1_rejects_non_open_proposition() {
         )
         .expect("rename evidence");
     assert!(OpenObjectRecord::build(evidence, None).is_err());
+}
+
+#[test]
+fn b1_unknown_fd_table_relation_blocks_success_authority() {
+    let evidence = successful_open(OperationKind::Open, "$WORKSPACE/unknown-fdtable", 27, 240);
+    let mut object_binding = binding(&evidence, 27, 1, 242, "fd-object:/unknown-fdtable");
+    object_binding.fd_table_relation = FdTableRelation::Unknown;
+    let record = OpenObjectRecord::build(evidence, Some(object_binding)).expect("record");
+    assert!(!record.is_success_authority());
+    assert!(matches!(
+        record.authority,
+        OpenObjectAuthority::Ambiguous { .. }
+    ));
+}
+
+#[test]
+fn b1_known_shared_certified_fd_table_can_remain_bounded() {
+    let evidence = successful_open(OperationKind::Open, "$WORKSPACE/shared-certified", 28, 250);
+    let mut object_binding = binding(&evidence, 28, 1, 252, "fd-object:/shared-certified");
+    object_binding.fd_table_relation = FdTableRelation::KnownSharedCertified;
+    let record = OpenObjectRecord::build(evidence, Some(object_binding)).expect("record");
+    assert!(record.is_success_authority());
+}
+
+#[test]
+fn b1_argument_context_digest_substitution_changes_proof_identity() {
+    let first = successful_open_with_argument_digest(
+        OperationKind::OpenAt,
+        "$WORKSPACE/same-target",
+        29,
+        260,
+        digest('a'),
+    );
+    let first_record = OpenObjectRecord::build(
+        first.clone(),
+        Some(binding(&first, 29, 1, 262, "fd-object:/same-target")),
+    )
+    .expect("first");
+    let second = successful_open_with_argument_digest(
+        OperationKind::OpenAt,
+        "$WORKSPACE/same-target",
+        29,
+        260,
+        digest('b'),
+    );
+    let second_record = OpenObjectRecord::build(
+        second.clone(),
+        Some(binding(&second, 29, 1, 262, "fd-object:/same-target")),
+    )
+    .expect("second");
+    assert_ne!(proof(&first_record), proof(&second_record));
 }
