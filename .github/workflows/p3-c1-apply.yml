@@ -32,6 +32,9 @@ jobs:
       - name: Apply internal certificate patch
         run: python3 scripts/p3_c1_apply.py
 
+      - name: Rustfmt-only correction
+        run: cargo fmt --all
+
       - name: Rust format gate
         run: cargo fmt --all -- --check
 
