@@ -223,7 +223,7 @@ impl SuccessEvidenceRecord {
                     && (*raw_return != 0 || returned_fd.is_some())
                 {
                     return Err(
-                        "zero-success operation requires rc=0 and no returned fd".to_owned(),
+                        "zero-success operation requires rc=0 and no returned fd".to_owned()
                     );
                 }
             }
@@ -258,7 +258,7 @@ impl SuccessEvidenceRecord {
                 }
                 if self.health.is_healthy() {
                     return Err(
-                        "lost state requires incomplete or warning-bearing health".to_owned(),
+                        "lost state requires incomplete or warning-bearing health".to_owned()
                     );
                 }
             }
