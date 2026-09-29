@@ -5,10 +5,19 @@ use sha2::{Digest, Sha256};
 
 use crate::b0_success_evidence::{EvidenceState, SuccessEvidenceRecord, TargetProposition};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FdTableRelation {
+    KnownIndependent,
+    KnownSharedCertified,
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PostOpenBinding {
     pub fd: i32,
     pub fd_generation: u64,
+    pub fd_table_relation: FdTableRelation,
     pub originating_entry_sequence: u64,
     pub binding_sequence: u64,
     pub object_identity: String,
@@ -80,7 +89,7 @@ impl OpenObjectRecord {
                     if binding.fd != *returned_fd {
                         OpenObjectAuthority::Ambiguous {
                             reason_codes: BTreeSet::from([
-                                "returned_fd_binding_mismatch".to_owned()
+                                "returned_fd_binding_mismatch".to_owned(),
                             ]),
                         }
                     } else if binding.originating_entry_sequence
@@ -98,7 +107,13 @@ impl OpenObjectRecord {
                     {
                         OpenObjectAuthority::Ambiguous {
                             reason_codes: BTreeSet::from([
-                                "post_open_causal_chain_mismatch".to_owned()
+                                "post_open_causal_chain_mismatch".to_owned(),
+                            ]),
+                        }
+                    } else if binding.fd_table_relation == FdTableRelation::Unknown {
+                        OpenObjectAuthority::Ambiguous {
+                            reason_codes: BTreeSet::from([
+                                "fd_table_relation_unknown".to_owned(),
                             ]),
                         }
                     } else if binding.binding_sequence
@@ -141,7 +156,10 @@ impl OpenObjectRecord {
     }
 
     pub fn is_success_authority(&self) -> bool {
-        matches!(self.authority, OpenObjectAuthority::SuccessBounded { .. })
+        matches!(
+            self.authority,
+            OpenObjectAuthority::SuccessBounded { .. }
+        )
     }
 }
 
