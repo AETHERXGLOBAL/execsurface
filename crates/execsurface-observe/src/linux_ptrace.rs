@@ -242,6 +242,8 @@ pub(super) struct CloneFdCertification {
     shared_fd_transitions: u64,
     cloned_fd_transitions: u64,
     clone_thread_transitions: u64,
+    clone_origin_fork_events: u64,
+    clone_origin_vfork_events: u64,
     ambiguity: bool,
 }
 
@@ -261,6 +263,15 @@ impl CloneFdCertification {
         }
         if flags & libc::CLONE_THREAD as u64 != 0 {
             self.clone_thread_transitions += 1;
+        }
+    }
+
+    fn record_clone_creation_event(&mut self, flags: Option<u64>, event: libc::c_int) {
+        self.record_clone(flags);
+        if event == libc::PTRACE_EVENT_FORK {
+            self.clone_origin_fork_events += 1;
+        } else if event == libc::PTRACE_EVENT_VFORK {
+            self.clone_origin_vfork_events += 1;
         }
     }
 
@@ -708,6 +719,22 @@ fn handle_ptrace_event(
     match event {
         libc::PTRACE_EVENT_FORK | libc::PTRACE_EVENT_VFORK | libc::PTRACE_EVENT_CLONE => {
             let child_tid = get_event_message(tid)? as libc::pid_t;
+            // C2/C3: the originating syscall is stronger evidence than the ptrace
+            // event label. Linux may report a clone-origin child as FORK/VFORK
+            // depending on clone flags / exit signal. Preserve the pending clone
+            // flags whenever they exist, regardless of event label.
+            let pending_clone_flags = tracees
+                .get(&tid)
+                .and_then(|state| state.pending_syscall.as_ref())
+                .and_then(|pending| match pending {
+                    PendingSyscall::Clone { flags } => Some(*flags),
+                    _ => None,
+                });
+            let clone_origin = pending_clone_flags.is_some();
+
+            // Preserve public raw-v2 ProcessSpawn semantics: mechanism remains
+            // event-label based. Syscall-origin truth is retained separately in the
+            // internal completeness certificate and must not silently reinterpret v2.
             let mechanism = match event {
                 libc::PTRACE_EVENT_FORK => SpawnMechanism::Fork,
                 libc::PTRACE_EVENT_VFORK => SpawnMechanism::Vfork,
@@ -719,27 +746,23 @@ fn handle_ptrace_event(
                 .map(|state| state.fd_table_id)
                 .unwrap_or(fd_tables.root_id());
             let parent_tgid = tracees.get(&tid).map(|state| state.tgid).unwrap_or(tid);
-            let clone_flags = if event == libc::PTRACE_EVENT_CLONE {
-                match tracees
-                    .get(&tid)
-                    .and_then(|state| state.pending_syscall.as_ref())
-                {
-                    Some(PendingSyscall::Clone { flags }) => Some(*flags),
-                    _ => {
-                        collector.warning(
-                            tid,
-                            "clone_flags_unavailable",
-                            "PTRACE_EVENT_CLONE observed without clone/clone3 flags; fd sharing and thread-group semantics are incomplete",
-                        );
-                        None
-                    }
-                }
+            let clone_flags = if clone_origin {
+                pending_clone_flags
+            } else if event == libc::PTRACE_EVENT_CLONE {
+                collector.warning(
+                    tid,
+                    "clone_flags_unavailable",
+                    "PTRACE child-creation event requires clone/clone3 origin flags, but no causally paired clone syscall was retained; fd sharing and thread-group semantics are incomplete",
+                );
+                None
             } else {
                 None
             };
 
-            if event == libc::PTRACE_EVENT_CLONE {
-                collector.clone_fd_certification.record_clone(clone_flags);
+            if clone_origin || event == libc::PTRACE_EVENT_CLONE {
+                collector
+                    .clone_fd_certification
+                    .record_clone_creation_event(clone_flags, event);
             }
 
             let share_files = clone_flags
@@ -1986,6 +2009,176 @@ int main(int argc, char **argv) {
                 .count(),
             0
         );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[ignore = "C3 live clone-origin event-routing harness; run in the dedicated Linux gate"]
+    fn c3_clone_sigchld_fork_event_keeps_clone_fd_authority() {
+        use std::process::Command;
+
+        let root = std::env::temp_dir().join(format!(
+            "execsurface-c3-clone-sigchld-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create C3 SIGCHLD harness directory");
+        let source = root.join("clone_sigchld.c");
+        let binary = root.join("clone_sigchld");
+        std::fs::write(
+            &source,
+            r#"#define _GNU_SOURCE
+#include <sched.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static int child_main(void *unused) {
+    (void)unused;
+    _exit(0);
+}
+
+int main(void) {
+    const size_t stack_size = 1u << 20;
+    char *stack = malloc(stack_size);
+    if (!stack) return 2;
+    int flags = CLONE_FILES | SIGCHLD;
+    pid_t child = clone(child_main, stack + stack_size, flags, NULL);
+    if (child < 0) {
+        perror("clone");
+        free(stack);
+        return 3;
+    }
+    int status = 0;
+    if (waitpid(child, &status, 0) < 0) {
+        perror("waitpid");
+        free(stack);
+        return 4;
+    }
+    free(stack);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : 5;
+}
+"#,
+        )
+        .expect("write C3 SIGCHLD clone harness");
+
+        let compile = Command::new("cc")
+            .arg("-O2")
+            .arg("-Wall")
+            .arg("-Wextra")
+            .arg(&source)
+            .arg("-o")
+            .arg(&binary)
+            .status()
+            .expect("compile C3 SIGCHLD clone harness");
+        assert!(compile.success());
+
+        let observed = observe(
+            &CommandSpec::new(binary.as_os_str()),
+            ObserveOptions::default(),
+        )
+        .expect("observe C3 SIGCHLD clone harness");
+        assert_eq!(observed.observation.outcome.exit_code, Some(0));
+        assert!(observed.clone_fd_certification.fully_certified());
+        assert!(observed.clone_fd_certification.shared_fd_transitions >= 1);
+        assert!(
+            observed.clone_fd_certification.clone_origin_fork_events >= 1,
+            "Linux should route clone(..., CLONE_FILES|SIGCHLD) through PTRACE_EVENT_FORK under the declared options"
+        );
+        assert!(observed.observation.events.iter().any(|event| matches!(
+            &event.kind,
+            RawEventKind::ProcessSpawn {
+                mechanism: SpawnMechanism::Fork,
+                ..
+            }
+        )));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    #[ignore = "C3 live clone-origin VFORK routing harness; run in the dedicated Linux gate"]
+    fn c3_clone_vfork_event_keeps_clone_fd_authority() {
+        use std::process::Command;
+
+        let root =
+            std::env::temp_dir().join(format!("execsurface-c3-clone-vfork-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create C3 VFORK harness directory");
+        let source = root.join("clone_vfork.c");
+        let binary = root.join("clone_vfork");
+        std::fs::write(
+            &source,
+            r#"#define _GNU_SOURCE
+#include <sched.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static int child_main(void *unused) {
+    (void)unused;
+    _exit(0);
+}
+
+int main(void) {
+    const size_t stack_size = 1u << 20;
+    char *stack = malloc(stack_size);
+    if (!stack) return 2;
+    int flags = CLONE_FILES | CLONE_VM | CLONE_VFORK | SIGCHLD;
+    pid_t child = clone(child_main, stack + stack_size, flags, NULL);
+    if (child < 0) {
+        perror("clone");
+        free(stack);
+        return 3;
+    }
+    int status = 0;
+    if (waitpid(child, &status, 0) < 0) {
+        perror("waitpid");
+        free(stack);
+        return 4;
+    }
+    free(stack);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : 5;
+}
+"#,
+        )
+        .expect("write C3 VFORK clone harness");
+
+        let compile = Command::new("cc")
+            .arg("-O2")
+            .arg("-Wall")
+            .arg("-Wextra")
+            .arg(&source)
+            .arg("-o")
+            .arg(&binary)
+            .status()
+            .expect("compile C3 VFORK clone harness");
+        assert!(compile.success());
+
+        let observed = observe(
+            &CommandSpec::new(binary.as_os_str()),
+            ObserveOptions::default(),
+        )
+        .expect("observe C3 VFORK clone harness");
+        assert_eq!(observed.observation.outcome.exit_code, Some(0));
+        assert!(observed.clone_fd_certification.fully_certified());
+        assert!(observed.clone_fd_certification.shared_fd_transitions >= 1);
+        assert!(
+            observed.clone_fd_certification.clone_origin_vfork_events >= 1,
+            "Linux should route CLONE_VFORK clone origin through PTRACE_EVENT_VFORK under the declared options"
+        );
+        assert!(observed.observation.events.iter().any(|event| matches!(
+            &event.kind,
+            RawEventKind::ProcessSpawn {
+                mechanism: SpawnMechanism::Vfork,
+                ..
+            }
+        )));
 
         let _ = std::fs::remove_dir_all(&root);
     }
