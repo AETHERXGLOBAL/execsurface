@@ -14,8 +14,7 @@ old = '''            let ptrace = linux_ptrace::observe(spec, options)?;
             // C1 stage 1 records an internal clone/fd completeness certificate,
             // but the legacy public alpha.4 guard remains authoritative until
             // the preregistered falsification and real-workload gates close.
-            let _clone_fd_semantics_certified =
-                ptrace.clone_fd_certification.fully_certified();
+            let _clone_fd_semantics_certified = ptrace.clone_fd_certification.fully_certified();
             let observation = apply_shared_fd_ambiguity_guard(ptrace.observation);
 '''
 new = '''            let ptrace = linux_ptrace::observe(spec, options)?;
