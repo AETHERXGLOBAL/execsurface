@@ -16,4 +16,8 @@ sha2 = "0.10"
 name = "b1-open-fixture"
 path = "src/bin/b1_open_fixture.rs"
 
+[[bin]]
+name = "b2-rename-delete-fixture"
+path = "src/bin/b2_rename_delete_fixture.rs"
+
 [workspace]
