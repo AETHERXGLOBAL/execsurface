@@ -1,4 +1,5 @@
 name: P4 A1.4 public anti-drift
+# Fresh anti-drift reproof after accepted A1.3U bounded correction.
 
 on:
   push:
