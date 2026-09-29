@@ -1,0 +1,164 @@
+name: P3 V5 real-workload requalification
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - "experiments/p3-v5-real-workload/**"
+      - "experiments/p3-variance-analyzer/**"
+      - "experiments/p3-gcc-temp-grammar/**"
+      - "experiments/p3-accepted-variance/**"
+      - "docs/development/P3_V5_REAL_WORKLOAD_REQUALIFICATION_PROTOCOL.md"
+      - ".github/workflows/p3-v5-real-workload-requalification.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fzf-real-workload:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      FZF_SHA: b1be3a8be1b833ce5b92fbbac11637643d60a046
+      WORK_ROOT: /tmp/execsurface-p3-v5-fzf
+      EVIDENCE_ROOT: p3-v5-real-workload-evidence
+
+    steps:
+      - name: Checkout development source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned unmodified fzf
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: junegunn/fzf
+          ref: ${{ env.FZF_SHA }}
+          path: external/fzf
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build research source and verify formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          cargo "+$RUST_TOOLCHAIN" build --locked -p execsurface
+          cargo "+$RUST_TOOLCHAIN" generate-lockfile --manifest-path experiments/p3-v5-real-workload/Cargo.toml
+          cargo "+$RUST_TOOLCHAIN" fmt --manifest-path experiments/p3-v5-real-workload/Cargo.toml -- --check
+          cargo "+$RUST_TOOLCHAIN" clippy --locked --manifest-path experiments/p3-v5-real-workload/Cargo.toml --all-targets -- -D warnings
+          cargo "+$RUST_TOOLCHAIN" build --locked --manifest-path experiments/p3-v5-real-workload/Cargo.toml
+
+      - name: Freeze workload and prime three times
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$WORK_ROOT" "$EVIDENCE_ROOT"
+          cp -a external/fzf "$WORK_ROOT"
+          test "$(git -C "$WORK_ROOT" rev-parse HEAD)" = "$FZF_SHA"
+          test -z "$(git -C "$WORK_ROOT" status --porcelain)"
+          mkdir -p "$EVIDENCE_ROOT"
+
+          for n in 1 2 3; do
+            set +e
+            (cd "$WORK_ROOT" && go test ./...) \
+              > "$EVIDENCE_ROOT/direct-prime-${n}.stdout" \
+              2> "$EVIDENCE_ROOT/direct-prime-${n}.stderr"
+            rc=$?
+            set -e
+            printf 'direct_prime_%s_rc=%s\n' "$n" "$rc" >> "$EVIDENCE_ROOT/prime.status"
+            test "$rc" -eq 0
+          done
+
+          test -z "$(git -C "$WORK_ROOT" status --porcelain --untracked-files=no)"
+          {
+            printf 'execsurface_source_sha=%s\n' "$GITHUB_SHA"
+            printf 'fzf_sha=%s\n' "$FZF_SHA"
+            printf 'historical_discriminator_run=36279728908\n'
+            printf 'historical_discriminator_artifact=10918895441\n'
+            printf 'go=%s\n' "$(go version)"
+            printf 'gcc=%s\n' "$(gcc --version | head -1)"
+            printf 'kernel=%s\n' "$(uname -srmo)"
+            printf 'architecture=%s\n' "$(uname -m)"
+            printf 'workload=cd %s && go test ./... >/dev/null 2>&1\n' "$WORK_ROOT"
+          } > "$EVIDENCE_ROOT/environment.txt"
+
+      - name: Collect three independent real learning runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmd="cd '$WORK_ROOT' && go test ./... >/dev/null 2>&1"
+          : > "$EVIDENCE_ROOT/learn.status"
+          for n in 1 2 3; do
+            set +e
+            target/debug/execsurface learn \
+              --output "$EVIDENCE_ROOT/fzf-learn-${n}.lock.json" \
+              -- /bin/bash -lc "$cmd" \
+              > "$EVIDENCE_ROOT/learn-${n}.stdout" \
+              2> "$EVIDENCE_ROOT/learn-${n}.stderr"
+            rc=$?
+            set -e
+            printf 'learn_%s_rc=%s\n' "$n" "$rc" | tee -a "$EVIDENCE_ROOT/learn.status"
+            test "$rc" -eq 0
+            test -s "$EVIDENCE_ROOT/fzf-learn-${n}.lock.json"
+            sha256sum "$EVIDENCE_ROOT/fzf-learn-${n}.lock.json" \
+              >> "$EVIDENCE_ROOT/raw-baseline-sha256.txt"
+          done
+          test -z "$(git -C "$WORK_ROOT" status --porcelain --untracked-files=no)"
+
+      - name: Analyze raw versus bounded GCC projection
+        shell: bash
+        run: |
+          set +e
+          experiments/p3-v5-real-workload/target/debug/p3-v5-analyze \
+            "$EVIDENCE_ROOT/v5-report.json" \
+            "$EVIDENCE_ROOT/fzf-learn-1.lock.json" \
+            "$EVIDENCE_ROOT/fzf-learn-2.lock.json" \
+            "$EVIDENCE_ROOT/fzf-learn-3.lock.json" \
+            > "$EVIDENCE_ROOT/v5-summary.txt" \
+            2> "$EVIDENCE_ROOT/v5-analysis.stderr"
+          rc=$?
+          set -e
+          printf 'analysis_rc=%s\n' "$rc" > "$EVIDENCE_ROOT/analysis.status"
+          cat "$EVIDENCE_ROOT/v5-summary.txt" || true
+          exit 0
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload V5 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p3-v5-fzf-real-workload-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.EVIDENCE_ROOT }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Enforce preregistered V5 decision
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$EVIDENCE_ROOT/analysis.status"
+          test "$(sed -n 's/^analysis_rc=//p' "$EVIDENCE_ROOT/analysis.status")" = "0"
+          test -f "$EVIDENCE_ROOT/v5-report.json"
+          python3 - "$EVIDENCE_ROOT/v5-report.json" <<'PY'
+          import json, sys
+          report=json.load(open(sys.argv[1]))
+          assert report['decision']=='P3_V5_REAL_WORKLOAD_VALUE_REQUALIFIED_BOUNDED', report['decision']
+          assert report['run_count'] >= 3
+          assert report['targeted_raw_variable_candidate_count'] > 0
+          assert report['non_target_raw_variable_candidate_count'] > 0
+          assert report['accepted_variable_effect_count'] == 0
+          assert not report['missing_or_changed_non_target_variables']
+          assert not report['lingering_targeted_random_paths']
+          PY
