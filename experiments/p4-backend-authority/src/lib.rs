@@ -63,6 +63,18 @@ impl AdapterRecord {
             ) => return Err("ambiguous/lost authority cannot be complete".to_owned()),
             _ => {}
         }
+        if self.authority == AuthorityState::AttemptOnly
+            && !matches!(
+                self.proof.proposition,
+                Proposition::FilePathnameAttemptObserved { .. }
+                    | Proposition::FileRenameAttemptObserved { .. }
+                    | Proposition::NetworkConnectDestinationAttemptObserved { .. }
+            )
+        {
+            return Err(
+                "attempt_only authority requires an explicit attempt proposition".to_owned(),
+            );
+        }
         if matches!(self.authority, AuthorityState::DerivedBounded)
             && self
                 .evidence
@@ -85,10 +97,15 @@ impl AdapterRecord {
     pub fn admissible_for(&self, requirement: &ProofRequirement) -> bool {
         self.validate().is_ok()
             && self.completeness == PropositionCompleteness::Complete
-            && matches!(
+            && (matches!(
                 self.authority,
                 AuthorityState::Direct | AuthorityState::DerivedBounded
-            )
+            ) || (self.authority == AuthorityState::AttemptOnly
+                && self.proposition_id == "P4.PATH.ACCESS_ATTEMPT"
+                && matches!(
+                    self.proof.proposition,
+                    Proposition::FilePathnameAttemptObserved { .. }
+                )))
             && self.proof.satisfies(requirement)
     }
 }
