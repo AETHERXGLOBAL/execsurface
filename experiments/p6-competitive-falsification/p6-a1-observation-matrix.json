@@ -1,0 +1,77 @@
+{
+  "schema": "execsurface.p6.a1.observation.v1",
+  "date": "2026-09-30",
+  "issue": 111,
+  "workload_blob": "c5986f1acd8bc79a3945e613acc128d5c8a9d168",
+  "run": {
+    "source_sha": "110bf2ce400d50ac2cc2ae950de2de4e3a9cba12",
+    "run_id": 36770813526,
+    "conclusion": "success"
+  },
+  "historical_negative": {
+    "run_id": 36770551463,
+    "source_sha": "bcf0da8e42648541b67a383db3c3c76ebc5b5790",
+    "classification": "FIXTURE_OR_INFRA_FAILURE",
+    "product_evidence_retained": "ExecSurface S2 native ERROR/INCOMPLETE",
+    "reason": "first harness incorrectly stopped on stable native exit 2"
+  },
+  "systems": {
+    "execsurface_alpha4": {
+      "identity": "48e0b9a0707553349e75e97a9dfa096d13f9ab5d",
+      "artifact": {
+        "id": 11124230271,
+        "digest": "sha256:6eea7bd914814e2690f660c145074826fa9cd9638b671b0133ccebfeb62735b0"
+      },
+      "baseline_digest": "sha256:36256b582d59622b3e795fd2470a68cbbc1382e6b7c92ca2a2caeafc98e6d2f1",
+      "scenarios": {
+        "S0_CONTROL": {"exit": 0, "native_result": "pass"},
+        "S1_CHILD_PROCESS_EXPANSION": {"exit": 10, "native_result": "review", "CP1": "OBSERVED_SUPPORTED"},
+        "S2_NETWORK_DESTINATION_EXPANSION": {"exit": 2, "native_result": "ERROR_INCOMPLETE", "CP2": "INCOMPLETE"},
+        "S3_FILE_WRITE_EXPANSION": {"exit": 10, "native_result": "review", "CP3": "OBSERVED_SUPPORTED"}
+      },
+      "CP4": "NOT_EXERCISED_IN_A1_PUBLIC_ALPHA_LANE"
+    },
+    "harden_runner": {
+      "identity": "e14015d583714f6e62063499dc959a02595150a1",
+      "artifact": {
+        "id": 11123990489,
+        "digest": "sha256:431b42624640e50fcfc2e64803c600788e855f67ba355e9035885dea724c6eff"
+      },
+      "CP1": "OBSERVED_PARTIAL",
+      "CP2": "OBSERVED_SUPPORTED",
+      "CP3": "NOT_OBSERVED",
+      "CP4": "OBSERVED_PARTIAL",
+      "notes": {
+        "CP2": "retained job log bound example.com:443 to curl",
+        "CP3": "frozen S3 target /tmp/execsurface-p6/s3.txt was outside the retained log's declared project file-monitor workspace; no global inability inferred",
+        "CP4": "job correlation/security-insights link observed; no attestation-equivalent machine artifact demonstrated"
+      }
+    },
+    "cicd_sensor": {
+      "identity": "6511eb44c91d71b2b93d71193b1bf2cb18352f66",
+      "sensor": "v0.0.45",
+      "artifacts": {
+        "attestation": {"id": 11123269064, "digest": "sha256:6dad33b00832f1569fa1f3dd3af2fb98771b9d8761a2215ecb15d0e8499b8ce9"},
+        "debug": {"id": 11122519443, "digest": "sha256:9852878eb2faf74a3019faa6bb53f7fe80b9d23acc072709d08217b1a166bf58"},
+        "workload": {"id": 11122394384, "digest": "sha256:73b2be95e5657883a8bf69d6df1d8985763a4ffee2ff6298ea6ef6bb59f3fb2a"}
+      },
+      "CP1": "OBSERVED_SUPPORTED",
+      "CP2": "OBSERVED_SUPPORTED",
+      "CP3": "OBSERVED_SUPPORTED",
+      "CP4": "OBSERVED_SUPPORTED",
+      "native_predicate_result": "passed",
+      "native_result_not_mapped_to_execsurface_pass": true
+    },
+    "tetragon": {
+      "identity": "666efe6f91e3605ad58683ad226d759d9cf970ca",
+      "CP1": "NOT_TESTABLE_YET",
+      "CP2": "NOT_TESTABLE_YET",
+      "CP3": "NOT_TESTABLE_YET",
+      "CP4": "NOT_APPLICABLE_NO_ASSUMPTION",
+      "reason": "exact-source build workflow or immutable image digest not yet frozen"
+    }
+  },
+  "aggregate_score_forbidden": true,
+  "overall_winner": null,
+  "decision_candidate": "P6_A1_OBSERVATION_CORPUS_COMPLETE_BOUNDED"
+}
