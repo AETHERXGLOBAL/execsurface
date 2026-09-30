@@ -1,0 +1,44 @@
+name: P4 B3 one-shot rustfmt correction
+
+on:
+  push:
+    branches: [development/post-alpha4-behavioral-integrity]
+    paths:
+      - '.github/workflows/p4-b3-one-shot-rustfmt.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  rustfmt-only:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.90.0 --profile minimal
+          rustup component add --toolchain 1.90.0 rustfmt
+      - name: Apply rustfmt only
+        run: |
+          set -euo pipefail
+          cargo +1.90.0 fmt --manifest-path experiments/p4-backend-authority/Cargo.toml
+          git diff --check
+          changed=$(git diff --name-only)
+          printf '%s\n' "$changed"
+          test -n "$changed"
+          if printf '%s\n' "$changed" | grep -Ev '^(experiments/p4-backend-authority/src/bin/b3_connect_fixture.rs|experiments/p4-backend-authority/tests/b3_ptrace_connect_live.rs)$'; then
+            echo 'Unexpected non-B3 rustfmt drift' >&2
+            exit 1
+          fi
+      - name: Commit formatting-only correction
+        run: |
+          set -euo pipefail
+          git config user.name 'aetherxeg-source'
+          git config user.email 'aether.x.eg@gmail.com'
+          git add experiments/p4-backend-authority/src/bin/b3_connect_fixture.rs experiments/p4-backend-authority/tests/b3_ptrace_connect_live.rs
+          git commit -m 'P4 B3: rustfmt-only live ptrace correction'
+          git push origin HEAD:development/post-alpha4-behavioral-integrity
