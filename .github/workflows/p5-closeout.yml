@@ -1,0 +1,209 @@
+name: P5 closeout evidence gate
+
+on:
+  push:
+    branches: [development/post-alpha4-behavioral-integrity]
+    paths:
+      - 'docs/development/P5_CLOSEOUT_PROTOCOL.md'
+      - '.github/workflows/p5-closeout.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  closeout:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EVIDENCE_ROOT: p5-closeout-evidence
+      ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+      P4_CLOSEOUT_SOURCE: 320c865d3e81071a8214ad726dca7a587b0fc479
+      P5_A0_ACCEPTED_SOURCE: 9ff34d9baaa01a90cf6d2cb95e1930dc4c011e11
+      P5_A1_ACCEPTED_SOURCE: 74dc06a3f5a091f2f70e5f73290adf37ef3f2f44
+      P5_A2_ACCEPTED_SOURCE: 63b9a9fcde16d9dbb66aa484e73a1e2338afd6cb
+      P5_A2_DECISION_SOURCE: 8ef427a57d085f6cc6d45a0beef9599c5c4f002f
+      P5_A3_ACCEPTED_SOURCE: d0ee3d0d1bd5a491ddc5796be08458026e1cbd8a
+      P5_A4_ACCEPTED_SOURCE: 862f0830511fe1421de20717187645d6e0a9a52e
+      P5_A4_DECISION_SOURCE: 9fe4d1f81a79bd75064f8c14571b6580948af569
+      P5_A5_SUCCESS_SOURCE: d6d0d45b686ed8c9332ea6b0924537a345049bfb
+      P5_A5_SUCCESS_RUN: '36758531046'
+      P5_A5_SUCCESS_ARTIFACT_ID: '11117568130'
+      P5_A5_SUCCESS_ARTIFACT_NAME: p5-a5-36758531046-1
+      P5_A5_SUCCESS_ARTIFACT_DIGEST: sha256:d1ba8f88a42b0b3f23880445f6063735cef99b306861241ed2e04cdeee57d343
+      P5_A5_NEGATIVE_SOURCE: a7753bee6cc9f145adc7823dd82837fa40cfca01
+      P5_A5_NEGATIVE_RUN: '36755962689'
+      P5_A5_NEGATIVE_ARTIFACT_ID: '11116268894'
+      P5_A5_NEGATIVE_ARTIFACT_NAME: p5-a5-36755962689-1
+      P5_A5_NEGATIVE_ARTIFACT_DIGEST: sha256:97aa4db53e27355d8b2d62e86d6f1ba5c2ee6d7d6e10607b965e4730fa878314
+      A4_SUBJECT_PATH: experiments/p5-signed-attestation/subject.txt
+      A4_SIGNER_WORKFLOW: AETHERXGLOBAL/execsurface/.github/workflows/p5-a4-signed-attestation.yml
+      A4_SOURCE_REF: refs/heads/development/post-alpha4-behavioral-integrity
+      A4_PREDICATE_TYPE: https://slsa.dev/provenance/v1
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify frozen ancestry and immutable public boundaries
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          for source in \
+            "$P4_CLOSEOUT_SOURCE" \
+            "$P5_A0_ACCEPTED_SOURCE" \
+            "$P5_A1_ACCEPTED_SOURCE" \
+            "$P5_A2_ACCEPTED_SOURCE" \
+            "$P5_A2_DECISION_SOURCE" \
+            "$P5_A3_ACCEPTED_SOURCE" \
+            "$P5_A4_ACCEPTED_SOURCE" \
+            "$P5_A4_DECISION_SOURCE" \
+            "$P5_A5_NEGATIVE_SOURCE" \
+            "$P5_A5_SUCCESS_SOURCE"; do
+            git merge-base --is-ancestor "$source" HEAD
+          done
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          if git diff --name-only "$P4_CLOSEOUT_SOURCE"..HEAD | grep -q '^crates/'; then
+            echo 'Public crates changed after P4 closeout' >&2
+            exit 1
+          fi
+          grep -q 'PREREGISTERED — P5 CLOSEOUT / EVIDENCE-BOUND / RESEARCH-ONLY' \
+            docs/development/P5_CLOSEOUT_PROTOCOL.md
+          grep -q 'COUNTEREXAMPLES RETAINED — CORRECTION BOUNDARY PREREGISTERED' \
+            docs/development/P5_A5_COUNTEREXAMPLE_ANALYSIS.md
+          grep -q 'PREREGISTERED — EXACTLY 12 CROSS-ATTESTATION ATTACKS / RESEARCH-ONLY' \
+            docs/development/P5_A5_CROSS_ATTESTATION_REDTEAM_PROTOCOL.md
+          printf 'closeout_source_sha=%s\n' "$(git rev-parse HEAD)" | tee "$EVIDENCE_ROOT/source.txt"
+          printf 'p5_a5_success_source=%s\n' "$P5_A5_SUCCESS_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
+          printf 'p5_a5_negative_source=%s\n' "$P5_A5_NEGATIVE_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
+          printf 'alpha4_source=%s\n' "$ALPHA4_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
+
+      - name: Verify successful A5 run and artifact from GitHub
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$P5_A5_SUCCESS_RUN" > "$EVIDENCE_ROOT/a5-success-run.json"
+          jq -e --arg sha "$P5_A5_SUCCESS_SOURCE" \
+            '.status == "completed" and .conclusion == "success" and .head_sha == $sha and .path == ".github/workflows/p5-a5-cross-attestation-redteam.yml"' \
+            "$EVIDENCE_ROOT/a5-success-run.json" >/dev/null
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$P5_A5_SUCCESS_RUN/artifacts?name=$P5_A5_SUCCESS_ARTIFACT_NAME" \
+            > "$EVIDENCE_ROOT/a5-success-artifacts.json"
+          jq -e \
+            --argjson id "$P5_A5_SUCCESS_ARTIFACT_ID" \
+            --arg name "$P5_A5_SUCCESS_ARTIFACT_NAME" \
+            --arg digest "$P5_A5_SUCCESS_ARTIFACT_DIGEST" \
+            --arg sha "$P5_A5_SUCCESS_SOURCE" \
+            '.total_count == 1 and .artifacts[0].id == $id and .artifacts[0].name == $name and .artifacts[0].expired == false and .artifacts[0].digest == $digest and .artifacts[0].workflow_run.head_sha == $sha' \
+            "$EVIDENCE_ROOT/a5-success-artifacts.json" >/dev/null
+
+          mkdir -p "$EVIDENCE_ROOT/a5-success"
+          gh run download "$P5_A5_SUCCESS_RUN" \
+            --name "$P5_A5_SUCCESS_ARTIFACT_NAME" \
+            --dir "$EVIDENCE_ROOT/a5-success"
+          (cd "$EVIDENCE_ROOT/a5-success" && sha256sum -c SHA256SUMS)
+          grep -q 'test result: ok. 12 passed; 0 failed' "$EVIDENCE_ROOT/a5-success/a5.log"
+          grep -q '^P5_A5_CROSS_ATTESTATION_GRAPH_PASS_BOUNDED_CANDIDATE$' \
+            "$EVIDENCE_ROOT/a5-success/CANDIDATE.txt"
+
+      - name: Verify retained historical A5 counterexample evidence
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$P5_A5_NEGATIVE_RUN" > "$EVIDENCE_ROOT/a5-negative-run.json"
+          jq -e --arg sha "$P5_A5_NEGATIVE_SOURCE" \
+            '.status == "completed" and .conclusion == "failure" and .head_sha == $sha and .path == ".github/workflows/p5-a5-cross-attestation-redteam.yml"' \
+            "$EVIDENCE_ROOT/a5-negative-run.json" >/dev/null
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$P5_A5_NEGATIVE_RUN/artifacts?name=$P5_A5_NEGATIVE_ARTIFACT_NAME" \
+            > "$EVIDENCE_ROOT/a5-negative-artifacts.json"
+          jq -e \
+            --argjson id "$P5_A5_NEGATIVE_ARTIFACT_ID" \
+            --arg name "$P5_A5_NEGATIVE_ARTIFACT_NAME" \
+            --arg digest "$P5_A5_NEGATIVE_ARTIFACT_DIGEST" \
+            --arg sha "$P5_A5_NEGATIVE_SOURCE" \
+            '.total_count == 1 and .artifacts[0].id == $id and .artifacts[0].name == $name and .artifacts[0].expired == false and .artifacts[0].digest == $digest and .artifacts[0].workflow_run.head_sha == $sha' \
+            "$EVIDENCE_ROOT/a5-negative-artifacts.json" >/dev/null
+
+          mkdir -p "$EVIDENCE_ROOT/a5-negative"
+          gh run download "$P5_A5_NEGATIVE_RUN" \
+            --name "$P5_A5_NEGATIVE_ARTIFACT_NAME" \
+            --dir "$EVIDENCE_ROOT/a5-negative"
+          (cd "$EVIDENCE_ROOT/a5-negative" && sha256sum -c SHA256SUMS)
+          grep -q '8 passed; 4 failed' "$EVIDENCE_ROOT/a5-negative/a5.log"
+
+      - name: Verify mandatory payload and standards composition remain represented
+        run: |
+          set -euo pipefail
+          model=experiments/p5-attestation-provenance/src/lib.rs
+          for token in \
+            'command_identity' \
+            'source_identity' \
+            'artifact_identity' \
+            'workflow_identity' \
+            'baseline_digest' \
+            'current_surface_digest' \
+            'observer_profile' \
+            'capability_state' \
+            'completeness' \
+            'policy_digest' \
+            'verdict' \
+            'evidence_digest' \
+            'runtime_trace_statement_digest' \
+            'slsa_provenance' \
+            'verifier_identity'; do
+            grep -q "$token" "$model"
+          done
+          grep -q 'https://in-toto.io/Statement/v1' "$model"
+          grep -q 'https://in-toto.io/attestation/runtime-trace/v0.1' "$model"
+          grep -q 'https://in-toto.io/attestation/scai/v0.3' "$model"
+          grep -q 'https://in-toto.io/attestation/svr/v0.2' "$model"
+          grep -q 'https://slsa.dev/provenance/v1' "$model"
+          grep -q 'No demonstrated need for a new custom predicate/schema in the bounded P5 experiment' \
+            docs/development/P5_CLOSEOUT_PROTOCOL.md
+          sha256sum "$model" | tee "$EVIDENCE_ROOT/p5-model-sha256.txt"
+
+      - name: Independently reverify accepted P5 A4 GitHub Sigstore attestation
+        run: |
+          set -euo pipefail
+          gh attestation verify "$A4_SUBJECT_PATH" \
+            --repo AETHERXGLOBAL/execsurface \
+            --signer-workflow "$A4_SIGNER_WORKFLOW" \
+            --source-digest "$P5_A4_ACCEPTED_SOURCE" \
+            --source-ref "$A4_SOURCE_REF" \
+            --predicate-type "$A4_PREDICATE_TYPE" \
+            --format json \
+            > "$EVIDENCE_ROOT/a4-closeout-reverify.json"
+          jq -e --arg sha "$P5_A4_ACCEPTED_SOURCE" '
+            length > 0 and any(.[];
+              .verificationResult.signature.certificate.githubWorkflowSHA == $sha and
+              ((.verificationResult.verifiedTimestamps // []) | length > 0)
+            )
+          ' "$EVIDENCE_ROOT/a4-closeout-reverify.json" >/dev/null
+
+      - name: Record bounded P5 candidate decision
+        run: |
+          set -euo pipefail
+          {
+            echo 'P5_EXISTING_STANDARDS_COMPOSITION_SUFFICIENT_BOUNDED_CANDIDATE'
+            echo 'P5_A5_CROSS_ATTESTATION_GRAPH_PASS_BOUNDED'
+            echo 'NO_DEMONSTRATED_NEED_FOR_NEW_CUSTOM_PREDICATE_SCHEMA_IN_BOUNDED_P5'
+          } | tee "$EVIDENCE_ROOT/CANDIDATE.txt"
+
+      - name: Seal closeout evidence
+        if: always()
+        run: |
+          set -uo pipefail
+          find "$EVIDENCE_ROOT" -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload closeout evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p5-closeout-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p5-closeout-evidence
+          if-no-files-found: error
+          retention-days: 30
