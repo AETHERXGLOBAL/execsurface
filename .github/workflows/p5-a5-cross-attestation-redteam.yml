@@ -5,7 +5,9 @@ on:
     branches: [development/post-alpha4-behavioral-integrity]
     paths:
       - 'experiments/p5-attestation-provenance/**'
+      - 'experiments/p5-cross-attestation-redteam/**'
       - 'docs/development/P5_A5_CROSS_ATTESTATION_REDTEAM_PROTOCOL.md'
+      - 'docs/development/P5_A5_COUNTEREXAMPLE_ANALYSIS.md'
       - '.github/workflows/p5-a5-cross-attestation-redteam.yml'
   workflow_dispatch:
 
@@ -66,6 +68,8 @@ jobs:
             docs/development/P5_A5_CROSS_ATTESTATION_REDTEAM_PROTOCOL.md
           grep -q 'Exactly \*\*12 adversarial tests\*\* are required' \
             docs/development/P5_A5_CROSS_ATTESTATION_REDTEAM_PROTOCOL.md
+          grep -q 'COUNTEREXAMPLES RETAINED — CORRECTION BOUNDARY PREREGISTERED' \
+            docs/development/P5_A5_COUNTEREXAMPLE_ANALYSIS.md
           printf 'source_sha=%s\n' "$(git rev-parse HEAD)" | tee "$EVIDENCE_ROOT/source.txt"
           printf 'source_ref=%s\n' "$GITHUB_REF" | tee -a "$EVIDENCE_ROOT/source.txt"
           printf 'p5_a4_accepted_source=%s\n' "$P5_A4_ACCEPTED_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
@@ -81,6 +85,13 @@ jobs:
           cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p5-attestation-provenance/Cargo.toml -- --check
           cargo +$RUST_TOOLCHAIN clippy --locked \
             --manifest-path experiments/p5-attestation-provenance/Cargo.toml \
+            --all-targets -- -D warnings
+
+          cargo +$RUST_TOOLCHAIN generate-lockfile \
+            --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked \
+            --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml \
             --all-targets -- -D warnings
 
       - name: Execute frozen 12-test P5 A5 corpus
