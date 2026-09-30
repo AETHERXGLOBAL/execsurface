@@ -29,8 +29,13 @@ fn input() -> VerificationInput {
     VerificationInput {
         subject: subject.clone(),
         command_identity: "cargo test --locked".to_owned(),
-        host_identity: "https://github.com/AETHERXGLOBAL/execsurface/actions/jobs/fixture".to_owned(),
-        source_identity: Some(descriptor("source", 'b', Some("https://example.invalid/source"))),
+        host_identity: "https://github.com/AETHERXGLOBAL/execsurface/actions/jobs/fixture"
+            .to_owned(),
+        source_identity: Some(descriptor(
+            "source",
+            'b',
+            Some("https://example.invalid/source"),
+        )),
         artifact_identity: Some(subject),
         workflow_identity: Some(descriptor(
             "workflow",
