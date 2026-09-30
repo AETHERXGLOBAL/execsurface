@@ -1,0 +1,153 @@
+name: P8 A0 external validation pack gate
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - '.github/workflows/p8-a0-external-pack.yml'
+      - 'docs/development/P8_A0_EXTERNAL_EVIDENCE_PROTOCOL.md'
+      - 'docs/external/P8_EXTERNAL_EVALUATOR_PACKET.md'
+      - 'docs/external/P8_EXTERNAL_EVIDENCE_INTAKE_TEMPLATE.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  PUBLIC_MAIN_FREEZE: b47721ce675444ce029b048edce6fc94631d6408
+  P7_CLOSEOUT_SOURCE: aba8d9ebdc13c76c71552fec0abe9cffbd58c745
+  PROTOCOL_BLOB: c00dc7c16feab48e1791d170be0ad9369d21f161
+  PACKET_BLOB: db460b76fda75e67d18b0a287563dbe6fe50119a
+  INTAKE_BLOB: fcecc44d53e1d0dc67a95dc0a8ed88cc138e8806
+  RELEASE_ASSET: execsurface-v0.1.0-alpha.4-x86_64-unknown-linux-gnu.tar.gz
+  RELEASE_SHA256: 55776cd130784d1c03451a14ab05ed113ffae4fa714c986666cbcadf242d8d1d
+  EVIDENCE_ROOT: p8-a0-external-pack-evidence
+
+jobs:
+  external-pack-integrity:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout research branch with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Verify public and research boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          git merge-base --is-ancestor "$P7_CLOSEOUT_SOURCE" HEAD
+          git cat-file -e "$PUBLIC_MAIN_FREEZE^{commit}"
+          if git diff --name-only "$P7_CLOSEOUT_SOURCE"..HEAD | grep -q '^crates/'; then
+            echo 'P8-A0 changed public crates/' >&2
+            exit 1
+          fi
+          git show "$PUBLIC_MAIN_FREEZE:README.md" | grep -q 'v0.1.0-alpha.4'
+          git show "$PUBLIC_MAIN_FREEZE:README.md" | grep -q 'Linux x86_64'
+          {
+            echo "head=$(git rev-parse HEAD)"
+            echo "alpha4_source=$ALPHA4_SOURCE"
+            echo "public_main_freeze=$PUBLIC_MAIN_FREEZE"
+            echo "p7_closeout=$P7_CLOSEOUT_SOURCE"
+          } | tee "$EVIDENCE_ROOT/boundaries.txt"
+
+      - name: Verify frozen A0 documents
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object docs/development/P8_A0_EXTERNAL_EVIDENCE_PROTOCOL.md)" = "$PROTOCOL_BLOB"
+          test "$(git hash-object docs/external/P8_EXTERNAL_EVALUATOR_PACKET.md)" = "$PACKET_BLOB"
+          test "$(git hash-object docs/external/P8_EXTERNAL_EVIDENCE_INTAKE_TEMPLATE.md)" = "$INTAKE_BLOB"
+          grep -q 'NO CURRENT EXTERNAL VALIDATION RESULT YET' docs/development/P8_A0_EXTERNAL_EVIDENCE_PROTOCOL.md
+          grep -q 'does not claim external validation' docs/external/P8_EXTERNAL_EVALUATOR_PACKET.md
+          grep -q 'Negative results are explicitly welcome' docs/external/P8_EXTERNAL_EVALUATOR_PACKET.md
+          grep -q 'Never overwrite an initial attempt' docs/external/P8_EXTERNAL_EVIDENCE_INTAKE_TEMPLATE.md
+          grep -q 'Endorsement claimed: `false`' docs/external/P8_EXTERNAL_EVIDENCE_INTAKE_TEMPLATE.md
+          {
+            echo "protocol_blob=$PROTOCOL_BLOB"
+            echo "packet_blob=$PACKET_BLOB"
+            echo "intake_blob=$INTAKE_BLOB"
+          } | tee "$EVIDENCE_ROOT/frozen-blobs.txt"
+
+      - name: Download and verify exact public evaluator artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$RUNNER_TEMP/p8-a0-public-artifact"
+          mkdir -p "$tmp/extracted"
+          url="https://github.com/AETHERXGLOBAL/execsurface/releases/download/v0.1.0-alpha.4/$RELEASE_ASSET"
+          curl --fail --location --silent --show-error "$url" -o "$tmp/$RELEASE_ASSET"
+          printf '%s  %s\n' "$RELEASE_SHA256" "$tmp/$RELEASE_ASSET" | sha256sum -c -
+          tar -xzf "$tmp/$RELEASE_ASSET" -C "$tmp/extracted"
+          mapfile -t bins < <(find "$tmp/extracted" -type f -name execsurface -print)
+          test "${#bins[@]}" -eq 1
+          bin="$(realpath "${bins[0]}")"
+          test -x "$bin"
+          test "$("$bin" --version)" = 'execsurface 0.1.0-alpha.4'
+          {
+            echo "release_asset=$RELEASE_ASSET"
+            echo "release_sha256=$(sha256sum "$tmp/$RELEASE_ASSET" | awk '{print $1}')"
+            echo "binary_sha256=$(sha256sum "$bin" | awk '{print $1}')"
+            echo "version=$("$bin" --version)"
+          } | tee "$EVIDENCE_ROOT/public-artifact.txt"
+
+      - name: Verify pack qualification boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          protocol=docs/development/P8_A0_EXTERNAL_EVIDENCE_PROTOCOL.md
+          packet=docs/external/P8_EXTERNAL_EVALUATOR_PACKET.md
+          template=docs/external/P8_EXTERNAL_EVIDENCE_INTAKE_TEMPLATE.md
+          for token in \
+            ZERO_ASSISTANCE_REPRODUCTION \
+            REPRODUCTION_FAILURE \
+            ARCHITECTURE_CRITICISM \
+            COUNTEREXAMPLE \
+            NO_FIT_OR_REDUNDANCY \
+            INTEROPERABILITY_GUIDANCE \
+            EXTERNAL_REAL_WORKLOAD_REPORT; do
+            grep -q "$token" "$protocol"
+            grep -q "$token" "$template"
+          done
+          grep -q 'DISQUALIFIED_SELF_EVIDENCE' "$protocol"
+          grep -q 'ROUTING_ONLY' "$protocol"
+          grep -q 'PARTICIPATION_ONLY' "$protocol"
+          grep -q 'SECURITY_PRIVATE_PROCESS' "$protocol"
+          grep -q 'assisted retry' "$template"
+          grep -q 'do not ask AETHER X for troubleshooting until you have recorded your initial result' "$packet"
+          echo 'qualification_contract_static_reproof=pass' | tee "$EVIDENCE_ROOT/qualification.txt"
+
+      - name: Record A0 candidate only
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo 'P8_A0_EXTERNAL_VALIDATION_PACK_READY_BOUNDED_CANDIDATE'
+            echo 'external_validation_claimed=false'
+            echo 'independent_reproduction_claimed=false'
+            echo 'endorsement_claimed=false'
+            echo 'negative_results_welcome=true'
+            echo 'external_response_required_for_later_gates=true'
+          } | tee "$EVIDENCE_ROOT/candidate-decision.txt"
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$EVIDENCE_ROOT"
+          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p8-a0-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p8-a0-external-pack-evidence
+          if-no-files-found: error
+          retention-days: 30
