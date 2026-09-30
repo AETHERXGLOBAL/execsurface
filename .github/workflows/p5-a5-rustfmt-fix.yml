@@ -1,0 +1,48 @@
+name: P5 A5 one-shot rustfmt fix
+
+on:
+  push:
+    branches: [development/post-alpha4-behavioral-integrity]
+    paths:
+      - '.github/workflows/p5-a5-rustfmt-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  rustfmt-only:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned Rustfmt
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.90.0 --profile minimal
+          rustup component add --toolchain 1.90.0 rustfmt
+
+      - name: Apply rustfmt only to A5 research crates
+        run: |
+          set -euo pipefail
+          cargo +1.90.0 fmt --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +1.90.0 fmt --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+
+          changed="$(git diff --name-only)"
+          printf '%s\n' "$changed"
+          test -n "$changed"
+          if printf '%s\n' "$changed" | grep -Ev '^(experiments/p5-attestation-provenance/|experiments/p5-cross-attestation-redteam/)'; then
+            echo 'rustfmt touched a path outside the frozen A5 research boundary' >&2
+            exit 1
+          fi
+
+      - name: Commit formatting-only correction
+        run: |
+          set -euo pipefail
+          git config user.name 'AETHER X CI'
+          git config user.email 'aether.x.eg@gmail.com'
+          git add experiments/p5-attestation-provenance experiments/p5-cross-attestation-redteam
+          git diff --cached --check
+          git commit -m 'P5 A5: apply rustfmt to corrected graph gate'
+          git push origin HEAD:development/post-alpha4-behavioral-integrity
