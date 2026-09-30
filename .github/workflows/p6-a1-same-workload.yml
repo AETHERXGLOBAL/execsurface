@@ -1,0 +1,247 @@
+name: P6 A1 same-workload observation corpus
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - 'experiments/p6-competitive-falsification/workload.sh'
+      - 'docs/development/P6_A1_SAME_WORKLOAD_PROTOCOL.md'
+      - '.github/workflows/p6-a1-same-workload.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  WORKLOAD: experiments/p6-competitive-falsification/workload.sh
+  WORKLOAD_BLOB: c5986f1acd8bc79a3945e613acc128d5c8a9d168
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  ALPHA4_TAG: v0.1.0-alpha.4
+  HARDEN_RUNNER_ACTION: e14015d583714f6e62063499dc959a02595150a1
+  CICD_SENSOR_ACTION: 6511eb44c91d71b2b93d71193b1bf2cb18352f66
+
+jobs:
+  freeze-check:
+    name: verify frozen A1 inputs
+    runs-on: ubuntu-24.04
+    outputs:
+      source_sha: ${{ steps.meta.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - id: meta
+        name: Verify A0 and workload freeze
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object "$WORKLOAD")" = "$WORKLOAD_BLOB"
+          test "$(git rev-list -n 1 v0.1.0-alpha.4)" = "$ALPHA4_SOURCE"
+          test "$(git rev-list -n 1 v0.1)" = "$ALPHA4_SOURCE"
+          python3 - <<'PY'
+          import json
+          d=json.load(open('experiments/p6-competitive-falsification/p6-a0-manifest.json'))
+          assert d['a0_state'] == 'P6_A0_OVERLAP_MATRIX_FROZEN'
+          assert d['live_benchmark_authorized'] is True
+          assert d['aggregate_score_forbidden'] is True
+          assert d['comparators']['harden_runner']['action_ref'] == 'e14015d583714f6e62063499dc959a02595150a1'
+          assert d['comparators']['cicd_sensor']['action_ref'] == '6511eb44c91d71b2b93d71193b1bf2cb18352f66'
+          assert d['comparators']['tetragon']['live_lane_authorized'] is False
+          PY
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          {
+            echo "workload_blob=$WORKLOAD_BLOB"
+            echo "runner_image=ubuntu-24.04"
+            echo "kernel=$(uname -r)"
+            echo "tetragon_live_lane=NOT_TESTABLE_YET"
+          } | tee freeze.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p6-a1-freeze-${{ github.run_id }}
+          path: freeze.txt
+          retention-days: 30
+
+  execsurface:
+    name: ES alpha4 same workload
+    needs: freeze-check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Verify workload blob
+        shell: bash
+        run: test "$(git hash-object "$WORKLOAD")" = "$WORKLOAD_BLOB"
+      - name: Install exact public alpha.4 release
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=x86_64-unknown-linux-gnu
+          asset="execsurface-${ALPHA4_TAG}-${target}.tar.gz"
+          base="https://github.com/AETHERXGLOBAL/execsurface/releases/download/${ALPHA4_TAG}"
+          mkdir -p "$RUNNER_TEMP/p6-es-install"
+          curl -fsSL -o "$RUNNER_TEMP/p6-es-install/$asset" "$base/$asset"
+          curl -fsSL -o "$RUNNER_TEMP/p6-es-install/$asset.sha256" "$base/$asset.sha256"
+          (cd "$RUNNER_TEMP/p6-es-install" && sha256sum -c "$asset.sha256")
+          tar -xzf "$RUNNER_TEMP/p6-es-install/$asset" -C "$RUNNER_TEMP/p6-es-install"
+          bin="$RUNNER_TEMP/p6-es-install/execsurface-${ALPHA4_TAG}-${target}/execsurface"
+          test -x "$bin"
+          test "$("$bin" --version)" = "execsurface ${ALPHA4_TAG#v}"
+          echo "P6_ES_BIN=$bin" >> "$GITHUB_ENV"
+      - name: Learn frozen S0 baseline once
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p p6-a1-es-evidence
+          rm -f execsurface.lock.json
+          "$P6_ES_BIN" learn -- /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S0_CONTROL \
+            2>&1 | tee p6-a1-es-evidence/learn.log
+          test -s execsurface.lock.json
+          cp execsurface.lock.json p6-a1-es-evidence/execsurface.lock.json
+      - name: Execute S0-S3 without relearning
+        shell: bash
+        run: |
+          set -u
+          for s in S0_CONTROL S1_CHILD_PROCESS_EXPANSION S2_NETWORK_DESTINATION_EXPANSION S3_FILE_WRITE_EXPANSION; do
+            set +e
+            "$P6_ES_BIN" check \
+              --baseline execsurface.lock.json \
+              --json-output "p6-a1-es-evidence/${s}.json" \
+              --markdown-output "p6-a1-es-evidence/${s}.md" \
+              -- /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" "$s" \
+              >"p6-a1-es-evidence/${s}.stdout.log" 2>"p6-a1-es-evidence/${s}.stderr.log"
+            rc=$?
+            set -e
+            printf '%s=%s\n' "$s" "$rc" | tee -a p6-a1-es-evidence/status-codes.txt
+            test "$rc" -eq 0 -o "$rc" -eq 10 -o "$rc" -eq 20
+            test -s "p6-a1-es-evidence/${s}.json"
+          done
+          if test -f /tmp/execsurface-p6/s2-resolved-ips.txt; then
+            cp /tmp/execsurface-p6/s2-resolved-ips.txt p6-a1-es-evidence/
+          fi
+      - name: Record ES environment and seal evidence
+        shell: bash
+        run: |
+          {
+            echo "system=ExecSurface"
+            echo "release=$ALPHA4_TAG"
+            echo "source=$ALPHA4_SOURCE"
+            echo "workload_blob=$WORKLOAD_BLOB"
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "kernel=$(uname -r)"
+          } > p6-a1-es-evidence/identity.txt
+          find p6-a1-es-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > p6-a1-es-evidence/SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: p6-a1-es-${{ github.run_id }}
+          path: p6-a1-es-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+  harden-runner:
+    name: HR same workload
+    needs: freeze-check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Start Harden-Runner monitor
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Verify workload blob
+        shell: bash
+        run: test "$(git hash-object "$WORKLOAD")" = "$WORKLOAD_BLOB"
+      - name: HR S0_CONTROL
+        shell: bash
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S0_CONTROL
+      - name: HR S1_CHILD_PROCESS_EXPANSION
+        shell: bash
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S1_CHILD_PROCESS_EXPANSION
+      - name: HR S2_NETWORK_DESTINATION_EXPANSION
+        shell: bash
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S2_NETWORK_DESTINATION_EXPANSION
+      - name: HR S3_FILE_WRITE_EXPANSION
+        shell: bash
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S3_FILE_WRITE_EXPANSION
+      - name: Record HR workload-side evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p p6-a1-hr-evidence
+          {
+            echo "system=Harden-Runner"
+            echo "action=$HARDEN_RUNNER_ACTION"
+            echo "workload_blob=$WORKLOAD_BLOB"
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "kernel=$(uname -r)"
+            echo "native_monitor_evidence=job_logs_and_harden_runner_post_step"
+            echo "telemetry_context=documented_external_service_behavior"
+          } > p6-a1-hr-evidence/identity.txt
+          if test -f /tmp/execsurface-p6/s2-resolved-ips.txt; then
+            cp /tmp/execsurface-p6/s2-resolved-ips.txt p6-a1-hr-evidence/
+          fi
+          find p6-a1-hr-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > p6-a1-hr-evidence/SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: p6-a1-hr-${{ github.run_id }}
+          path: p6-a1-hr-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+  cicd-sensor:
+    name: CS same workload
+    needs: freeze-check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Start cicd-sensor monitor
+        uses: cicd-sensor/cicd-sensor-action@6511eb44c91d71b2b93d71193b1bf2cb18352f66
+        with:
+          enable-html-report: 'false'
+          enable-attestation-artifact: 'true'
+          enable-debug: 'true'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Verify workload blob
+        shell: bash
+        run: test "$(git hash-object "$WORKLOAD")" = "$WORKLOAD_BLOB"
+      - name: CS S0_CONTROL
+        shell: bash
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S0_CONTROL
+      - name: CS S1_CHILD_PROCESS_EXPANSION
+        shell: bash
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S1_CHILD_PROCESS_EXPANSION
+      - name: CS S2_NETWORK_DESTINATION_EXPANSION
+        shell: bash
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S2_NETWORK_DESTINATION_EXPANSION
+      - name: CS S3_FILE_WRITE_EXPANSION
+        shell: bash
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S3_FILE_WRITE_EXPANSION
+      - name: Record CS workload-side evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p p6-a1-cs-evidence
+          {
+            echo "system=cicd-sensor"
+            echo "action=$CICD_SENSOR_ACTION"
+            echo "bundled_sensor=v0.0.45"
+            echo "workload_blob=$WORKLOAD_BLOB"
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "kernel=$(uname -r)"
+            echo "predicate_artifact=cicd-sensor-attestation"
+            echo "debug_artifact=cicd-sensor-debug"
+          } > p6-a1-cs-evidence/identity.txt
+          if test -f /tmp/execsurface-p6/s2-resolved-ips.txt; then
+            cp /tmp/execsurface-p6/s2-resolved-ips.txt p6-a1-cs-evidence/
+          fi
+          find p6-a1-cs-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > p6-a1-cs-evidence/SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: p6-a1-cs-workload-${{ github.run_id }}
+          path: p6-a1-cs-evidence
+          if-no-files-found: error
+          retention-days: 30
