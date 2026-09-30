@@ -17,6 +17,10 @@ pub const EXECSURFACE_ATTRIBUTE: &str =
 pub const SVR_RECORDED_PROPERTY: &str = "EXECSURFACE_VERIFICATION_RECORDED_V1";
 pub const SVR_PASS_PROPERTY: &str = "EXECSURFACE_RUNTIME_BEHAVIOR_PASS_V1";
 const SVR_SCAI_BINDING_PREFIX: &str = "EXECSURFACE_SCAI_SHA256_";
+const SVR_BASELINE_BINDING_PREFIX: &str = "EXECSURFACE_BASELINE_SHA256_";
+const SVR_CURRENT_SURFACE_BINDING_PREFIX: &str = "EXECSURFACE_CURRENT_SURFACE_SHA256_";
+const SVR_SOURCE_BINDING_PREFIX: &str = "EXECSURFACE_SOURCE_IDENTITY_SHA256_";
+const SVR_SOURCE_ABSENT_PROPERTY: &str = "EXECSURFACE_SOURCE_IDENTITY_ABSENT_V1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -268,6 +272,13 @@ fn validate_labeled_digest(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(is_sha256_hex)
 }
 
+fn labeled_digest_hex<'a>(value: &'a str, reason_code: &str) -> Result<&'a str, ModelError> {
+    value
+        .strip_prefix("sha256:")
+        .filter(|hex| is_sha256_hex(hex))
+        .ok_or_else(|| ModelError::new(reason_code))
+}
+
 fn descriptor_digest(descriptor: &ResourceDescriptor) -> Result<String, ModelError> {
     let value = descriptor
         .sha256_hex()
@@ -298,6 +309,19 @@ fn evidence_descriptor(name: &str, labeled_digest: &str) -> ResourceDescriptor {
         digest: BTreeMap::from([("sha256".to_owned(), hex.to_owned())]),
         media_type: Some("application/vnd.in-toto+json".to_owned()),
     }
+}
+
+fn require_single_binding(
+    properties: &[String],
+    prefix: &str,
+    expected: &str,
+    reason_code: &str,
+) -> Result<(), ModelError> {
+    let mut matching = properties.iter().filter(|property| property.starts_with(prefix));
+    if matching.next().map(String::as_str) != Some(expected) || matching.next().is_some() {
+        return Err(ModelError::new(reason_code));
+    }
+    Ok(())
 }
 
 fn validate_input(input: &VerificationInput) -> Result<(), ModelError> {
@@ -468,13 +492,26 @@ pub fn build_bundle(input: &VerificationInput) -> Result<VerificationBundle, Mod
     };
     let scai_digest = canonical_digest("scai-statement", &scai);
 
-    let scai_hex = scai_digest
-        .strip_prefix("sha256:")
-        .expect("internal digest has sha256 label");
+    let scai_hex = labeled_digest_hex(&scai_digest, "internal_scai_digest_malformed")?;
+    let baseline_hex = labeled_digest_hex(&input.baseline_digest, "semantic_digest_malformed")?;
+    let current_hex =
+        labeled_digest_hex(&input.current_surface_digest, "semantic_digest_malformed")?;
     let mut properties = BTreeSet::from([
         SVR_RECORDED_PROPERTY.to_owned(),
         format!("{SVR_SCAI_BINDING_PREFIX}{scai_hex}"),
+        format!("{SVR_BASELINE_BINDING_PREFIX}{baseline_hex}"),
+        format!("{SVR_CURRENT_SURFACE_BINDING_PREFIX}{current_hex}"),
     ]);
+    match &input.source_identity {
+        Some(source) => {
+            let source_digest = canonical_digest("source-identity", source);
+            let source_hex = labeled_digest_hex(&source_digest, "source_identity_digest_malformed")?;
+            properties.insert(format!("{SVR_SOURCE_BINDING_PREFIX}{source_hex}"));
+        }
+        None => {
+            properties.insert(SVR_SOURCE_ABSENT_PROPERTY.to_owned());
+        }
+    }
     if input.verdict == Verdict::Pass {
         properties.insert(SVR_PASS_PROPERTY.to_owned());
     }
@@ -530,6 +567,7 @@ fn bundle_identity_digest(
 }
 
 pub fn recompute_outer_digests_unchecked(bundle: &mut VerificationBundle) {
+    bundle.svr.predicate.properties.sort();
     bundle.runtime_trace_digest =
         canonical_digest("runtime-trace-statement", &bundle.runtime_trace);
     bundle.scai_digest = canonical_digest("scai-statement", &bundle.scai);
@@ -561,6 +599,15 @@ pub fn verify_bundle(bundle: &VerificationBundle) -> Result<(), ModelError> {
     }
     if bundle.runtime_trace.subject.len() != 1 {
         return Err(ModelError::new("unexpected_subject_cardinality"));
+    }
+
+    let properties = &bundle.svr.predicate.properties;
+    let unique_properties = properties.iter().collect::<BTreeSet<_>>();
+    if unique_properties.len() != properties.len() {
+        return Err(ModelError::new("svr_duplicate_semantic_property"));
+    }
+    if properties.windows(2).any(|pair| pair[0] > pair[1]) {
+        return Err(ModelError::new("svr_property_order_not_canonical"));
     }
 
     let runtime_digest = canonical_digest("runtime-trace-statement", &bundle.runtime_trace);
@@ -696,26 +743,79 @@ pub fn verify_bundle(bundle: &VerificationBundle) -> Result<(), ModelError> {
         return Err(ModelError::new("runtime_trace_evidence_mismatch"));
     }
 
-    let scai_hex = scai_digest
-        .strip_prefix("sha256:")
-        .expect("internal digest has sha256 label");
-    let expected_binding = format!("{SVR_SCAI_BINDING_PREFIX}{scai_hex}");
-    if !bundle.svr.predicate.properties.contains(&expected_binding) {
-        return Err(ModelError::new("svr_scai_binding_missing"));
-    }
-    if !bundle
-        .svr
-        .predicate
-        .properties
+    let scai_hex = labeled_digest_hex(&scai_digest, "internal_scai_digest_malformed")?;
+    let expected_scai_binding = format!("{SVR_SCAI_BINDING_PREFIX}{scai_hex}");
+    require_single_binding(
+        properties,
+        SVR_SCAI_BINDING_PREFIX,
+        &expected_scai_binding,
+        "svr_scai_binding_missing",
+    )?;
+
+    if !properties
         .iter()
         .any(|property| property == SVR_RECORDED_PROPERTY)
     {
         return Err(ModelError::new("svr_recorded_property_missing"));
     }
-    let has_pass = bundle
-        .svr
-        .predicate
-        .properties
+
+    let baseline_hex = labeled_digest_hex(
+        &attribute.conditions.baseline_digest,
+        "semantic_digest_malformed",
+    )?;
+    let expected_baseline_binding = format!("{SVR_BASELINE_BINDING_PREFIX}{baseline_hex}");
+    require_single_binding(
+        properties,
+        SVR_BASELINE_BINDING_PREFIX,
+        &expected_baseline_binding,
+        "svr_baseline_binding_mismatch",
+    )?;
+
+    let current_hex = labeled_digest_hex(
+        &attribute.conditions.current_surface_digest,
+        "semantic_digest_malformed",
+    )?;
+    let expected_current_binding = format!("{SVR_CURRENT_SURFACE_BINDING_PREFIX}{current_hex}");
+    require_single_binding(
+        properties,
+        SVR_CURRENT_SURFACE_BINDING_PREFIX,
+        &expected_current_binding,
+        "svr_current_surface_binding_mismatch",
+    )?;
+
+    match &attribute.conditions.source_identity {
+        Some(source) => {
+            if properties
+                .iter()
+                .any(|property| property == SVR_SOURCE_ABSENT_PROPERTY)
+            {
+                return Err(ModelError::new("svr_source_identity_binding_mismatch"));
+            }
+            let source_digest = canonical_digest("source-identity", source);
+            let source_hex =
+                labeled_digest_hex(&source_digest, "source_identity_digest_malformed")?;
+            let expected_source_binding = format!("{SVR_SOURCE_BINDING_PREFIX}{source_hex}");
+            require_single_binding(
+                properties,
+                SVR_SOURCE_BINDING_PREFIX,
+                &expected_source_binding,
+                "svr_source_identity_binding_mismatch",
+            )?;
+        }
+        None => {
+            if properties
+                .iter()
+                .any(|property| property.starts_with(SVR_SOURCE_BINDING_PREFIX))
+                || !properties
+                    .iter()
+                    .any(|property| property == SVR_SOURCE_ABSENT_PROPERTY)
+            {
+                return Err(ModelError::new("svr_source_identity_binding_mismatch"));
+            }
+        }
+    }
+
+    let has_pass = properties
         .iter()
         .any(|property| property == SVR_PASS_PROPERTY);
     if has_pass != (attribute.conditions.verdict == Verdict::Pass) {
