@@ -102,9 +102,10 @@ fn error_unknown_and_miss_flags_each_fail_closed() {
 
 #[test]
 fn parent_exec_id_mismatch_fails_closed() {
-    let json = valid_event().replace(
-        "node-a:90:1\",\n          \"binary",
-        "node-a:91:1\",\n          \"binary",
+    let json = valid_event().replacen(
+        "\"parent_exec_id\":\"node-a:90:1\"",
+        "\"parent_exec_id\":\"node-a:91:1\"",
+        1,
     );
     let record = non_authoritative(&json);
     assert!(record
