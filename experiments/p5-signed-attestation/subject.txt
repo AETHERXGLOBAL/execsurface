@@ -1,0 +1,4 @@
+execsurface:p5-a4-signed-attestation-prototype
+scope=research-only
+p5_a3_accepted_source=d0ee3d0d1bd5a491ddc5796be08458026e1cbd8a
+public_alpha4_source=48e0b9a0707553349e75e97a9dfa096d13f9ab5d
