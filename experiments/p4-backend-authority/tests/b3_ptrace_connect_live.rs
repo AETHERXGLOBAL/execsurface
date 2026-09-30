@@ -98,7 +98,6 @@ fn trace(scenario: &str, port: u16) -> Event {
         st = 0;
         assert_eq!(unsafe { libc::waitpid(pid, &mut st, 0) }, pid);
         if libc::WIFEXITED(st) || libc::WIFSIGNALED(st) {
-            let _ = child.wait();
             break;
         }
         assert!(libc::WIFSTOPPED(st));
@@ -144,6 +143,7 @@ fn trace(scenario: &str, port: u16) -> Event {
         }
         resume(pid);
     }
+    let _ = child.wait();
     panic!("no connect event")
 }
 
