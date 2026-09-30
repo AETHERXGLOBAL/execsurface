@@ -574,6 +574,9 @@ pub fn verify_bundle(bundle: &VerificationBundle) -> Result<(), ModelError> {
     if attribute.target != bundle.runtime_trace.subject[0] {
         return Err(ModelError::new("scai_target_subject_mismatch"));
     }
+    if bundle.scai.predicate.producer != attribute.conditions.verifier_identity {
+        return Err(ModelError::new("scai_producer_verifier_identity_mismatch"));
+    }
 
     if bundle.svr.predicate.verifier.policies.len() != 1 {
         return Err(ModelError::new("svr_policy_cardinality_mismatch"));
@@ -679,6 +682,15 @@ pub fn verify_bundle(bundle: &VerificationBundle) -> Result<(), ModelError> {
     let expected_binding = format!("{SVR_SCAI_BINDING_PREFIX}{scai_hex}");
     if !bundle.svr.predicate.properties.contains(&expected_binding) {
         return Err(ModelError::new("svr_scai_binding_missing"));
+    }
+    if !bundle
+        .svr
+        .predicate
+        .properties
+        .iter()
+        .any(|property| property == SVR_RECORDED_PROPERTY)
+    {
+        return Err(ModelError::new("svr_recorded_property_missing"));
     }
     let has_pass = bundle
         .svr
