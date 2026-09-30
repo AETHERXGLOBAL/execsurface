@@ -1,0 +1,70 @@
+name: P4 B3 live ptrace connect gate
+
+on:
+  push:
+    branches: [development/post-alpha4-behavioral-integrity]
+    paths:
+      - 'experiments/p4-backend-authority/src/bin/b3_connect_fixture.rs'
+      - 'experiments/p4-backend-authority/tests/b3_ptrace_connect_live.rs'
+      - 'experiments/p4-backend-authority/Cargo.toml'
+      - '.github/workflows/p4-b3-live-ptrace.yml'
+      - 'docs/development/P4_B3_CONNECT_DESTINATION_PROTOCOL.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-ptrace:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      EVIDENCE_ROOT: p4-b3-live-ptrace-evidence
+      B2_ACCEPTED_SOURCE: 8d1e7afc034f96969eecac96d7d57e2198deeedf
+      ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Verify immutable boundary
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          git merge-base --is-ancestor "$B2_ACCEPTED_SOURCE" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          if git diff --name-only "$B2_ACCEPTED_SOURCE"..HEAD | grep -q '^crates/'; then exit 1; fi
+          printf 'source_sha=%s\n' "$(git rev-parse HEAD)" | tee "$EVIDENCE_ROOT/source.txt"
+      - name: Lock and static gates
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p4-backend-authority/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --all-targets -- -D warnings
+      - name: Execute mandatory live ptrace corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b3_ptrace_connect_live -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/live.log"
+          grep -q 'test result: ok. 10 passed; 0 failed' "$EVIDENCE_ROOT/live.log"
+      - name: Reprove frozen B3 model
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b3_connect_destination -- --nocapture 2>&1 | tee "$EVIDENCE_ROOT/model.log"
+          grep -q 'test result: ok. 20 passed; 0 failed' "$EVIDENCE_ROOT/model.log"
+      - name: Seal evidence
+        if: always()
+        run: |
+          set -uo pipefail
+          find "$EVIDENCE_ROOT" -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p4-b3-live-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p4-b3-live-ptrace-evidence
+          if-no-files-found: error
+          retention-days: 30
