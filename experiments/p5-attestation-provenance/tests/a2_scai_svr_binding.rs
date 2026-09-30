@@ -316,10 +316,7 @@ fn a2_11_backend_profile_name_cannot_upgrade_weak_semantics() {
     let conditions = &bundle.scai.predicate.attributes[0].conditions;
     assert_eq!(conditions.verdict, Verdict::Review);
     assert_eq!(conditions.authority, AuthorityState::Ambiguous);
-    assert_eq!(
-        conditions.completeness.class,
-        CompletenessClass::Incomplete
-    );
+    assert_eq!(conditions.completeness.class, CompletenessClass::Incomplete);
     verify_bundle(&bundle).expect("non-pass weak evidence remains representable");
 }
 
