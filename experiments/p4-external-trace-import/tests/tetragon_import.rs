@@ -3,7 +3,8 @@ use std::collections::BTreeSet;
 use execsurface_model::semantics_v3::{CompletenessDimension, ProofRequirement};
 use execsurface_p4_backend_authority::{AuthorityState, PropositionCompleteness};
 use execsurface_p4_external_trace_import::{
-    import_tetragon_event, ExternalSchemaIdentity, ImportDecision, IMPORT_PROFILE, INCOMPLETE_REASON,
+    import_tetragon_event, ExternalSchemaIdentity, ImportDecision, IMPORT_PROFILE,
+    INCOMPLETE_REASON,
 };
 
 fn valid_event() -> String {
@@ -85,9 +86,7 @@ fn contradictory_execve_procfs_flags_fail_closed() {
 fn trunc_filename_fails_closed() {
     let json = valid_event().replace("execve clone", "execve truncFilename");
     let record = non_authoritative(&json);
-    assert!(record
-        .reason_codes
-        .contains("external_flag_truncFilename"));
+    assert!(record.reason_codes.contains("external_flag_truncFilename"));
 }
 
 #[test]
@@ -95,13 +94,18 @@ fn error_unknown_and_miss_flags_each_fail_closed() {
     for flag in ["errorFilename", "unknown", "miss"] {
         let json = valid_event().replace("execve clone", &format!("execve {flag}"));
         let record = non_authoritative(&json);
-        assert!(record.reason_codes.contains(&format!("external_flag_{flag}")));
+        assert!(record
+            .reason_codes
+            .contains(&format!("external_flag_{flag}")));
     }
 }
 
 #[test]
 fn parent_exec_id_mismatch_fails_closed() {
-    let json = valid_event().replace("node-a:90:1\",\n          \"binary", "node-a:91:1\",\n          \"binary");
+    let json = valid_event().replace(
+        "node-a:90:1\",\n          \"binary",
+        "node-a:91:1\",\n          \"binary",
+    );
     let record = non_authoritative(&json);
     assert!(record
         .reason_codes
@@ -110,11 +114,12 @@ fn parent_exec_id_mismatch_fails_closed() {
 
 #[test]
 fn missing_causal_parent_identity_fails_closed() {
-    let json = valid_event().replace("\"parent_exec_id\":\"node-a:90:1\",", "\"parent_exec_id\":\"\",");
+    let json = valid_event().replace(
+        "\"parent_exec_id\":\"node-a:90:1\",",
+        "\"parent_exec_id\":\"\",",
+    );
     let record = non_authoritative(&json);
-    assert!(record
-        .reason_codes
-        .contains("missing_parent_exec_identity"));
+    assert!(record.reason_codes.contains("missing_parent_exec_identity"));
 }
 
 #[test]
