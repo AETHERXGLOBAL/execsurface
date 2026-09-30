@@ -173,8 +173,10 @@ pub fn bind_slsa_v1_statement(
         return Err(BindingError::new("slsa_predicate_type_mismatch"));
     }
 
-    let expected_artifact_hex =
-        parse_labeled_sha256(&context.artifact_digest, "expected_artifact_digest_malformed")?;
+    let expected_artifact_hex = parse_labeled_sha256(
+        &context.artifact_digest,
+        "expected_artifact_digest_malformed",
+    )?;
     let subject = statement
         .subject
         .iter()
