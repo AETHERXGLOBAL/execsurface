@@ -6,7 +6,8 @@ use execsurface_p5_attestation_provenance::{
     Verdict, VerificationBundle, VerificationInput, SLSA_PROVENANCE_TYPE, SVR_PASS_PROPERTY,
 };
 use execsurface_p5_cross_attestation_redteam::{
-    graph_manifest_digest, manifest_for_bundle, verify_graph, ExpectedVerificationContext, GraphItem,
+    graph_manifest_digest, manifest_for_bundle, verify_graph, ExpectedVerificationContext,
+    GraphItem,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -174,7 +175,13 @@ fn refresh_scai_binding(bundle: &mut VerificationBundle) {
     recompute_outer_digests_unchecked(bundle);
 }
 
-fn accepted_graph(input: &VerificationInput) -> (VerificationBundle, ExpectedVerificationContext, Vec<GraphItem>) {
+fn accepted_graph(
+    input: &VerificationInput,
+) -> (
+    VerificationBundle,
+    ExpectedVerificationContext,
+    Vec<GraphItem>,
+) {
     let bundle = build_bundle(input).expect("valid bounded fixture");
     let expected = expected_context(input);
     let manifest = manifest_for_bundle(&bundle).expect("valid graph manifest");
@@ -222,7 +229,12 @@ fn a5_02_stale_runtime_trace_cannot_carry_fresh_verdict() {
     let (mut fresh, expected, manifest) = accepted_graph(&fresh_input);
     fresh.runtime_trace = stale.runtime_trace;
     recompute_outer_digests_unchecked(&mut fresh);
-    assert_graph_rejected(&fresh, &expected, &manifest, "stale trace plus fresh verdict");
+    assert_graph_rejected(
+        &fresh,
+        &expected,
+        &manifest,
+        "stale trace plus fresh verdict",
+    );
 }
 
 #[test]
@@ -238,22 +250,35 @@ fn a5_03_fresh_trace_cannot_be_laundered_through_stale_policy() {
     let mut mixed = stale;
     mixed.runtime_trace = fresh.runtime_trace;
     recompute_outer_digests_unchecked(&mut mixed);
-    assert_graph_rejected(&mixed, &expected, &manifest, "fresh trace plus stale policy");
+    assert_graph_rejected(
+        &mixed,
+        &expected,
+        &manifest,
+        "fresh trace plus stale policy",
+    );
 }
 
 #[test]
 fn a5_04_slsa_provenance_replay_from_other_subject_fails_closed() {
     let (mut target, expected, manifest) = accepted_graph(&complete_input());
-    target.scai.predicate.attributes[0].conditions.slsa_provenance =
-        alternate_subject_input().slsa_provenance;
+    target.scai.predicate.attributes[0]
+        .conditions
+        .slsa_provenance = alternate_subject_input().slsa_provenance;
     refresh_scai_binding(&mut target);
-    assert_graph_rejected(&target, &expected, &manifest, "cross-subject provenance replay");
+    assert_graph_rejected(
+        &target,
+        &expected,
+        &manifest,
+        "cross-subject provenance replay",
+    );
 }
 
 #[test]
 fn a5_05_baseline_substitution_cannot_survive_full_attacker_rehash() {
     let (mut attacked, expected, manifest) = accepted_graph(&complete_input());
-    attacked.scai.predicate.attributes[0].conditions.baseline_digest = labeled('4');
+    attacked.scai.predicate.attributes[0]
+        .conditions
+        .baseline_digest = labeled('4');
     refresh_scai_binding(&mut attacked);
     assert_graph_rejected(&attacked, &expected, &manifest, "baseline substitution");
 }
@@ -265,30 +290,48 @@ fn a5_06_current_surface_substitution_cannot_survive_full_attacker_rehash() {
         .conditions
         .current_surface_digest = labeled('5');
     refresh_scai_binding(&mut attacked);
-    assert_graph_rejected(&attacked, &expected, &manifest, "current-surface substitution");
+    assert_graph_rejected(
+        &attacked,
+        &expected,
+        &manifest,
+        "current-surface substitution",
+    );
 }
 
 #[test]
 fn a5_07_partial_evidence_substitution_breaks_cross_graph_binding() {
     let (mut attacked, expected, manifest) = accepted_graph(&complete_input());
-    attacked.scai.predicate.attributes[0].conditions.evidence_digest = labeled('7');
+    attacked.scai.predicate.attributes[0]
+        .conditions
+        .evidence_digest = labeled('7');
     refresh_scai_binding(&mut attacked);
-    assert_graph_rejected(&attacked, &expected, &manifest, "partial evidence substitution");
+    assert_graph_rejected(
+        &attacked,
+        &expected,
+        &manifest,
+        "partial evidence substitution",
+    );
 }
 
 #[test]
 fn a5_08_backend_name_cannot_inflate_ambiguous_graph_to_pass() {
     let input = incomplete_input();
     let (mut attacked, expected, manifest) = accepted_graph(&input);
-    attacked.scai.predicate.attributes[0].conditions.observer_profile =
-        "trusted-super-authority-backend".to_owned();
+    attacked.scai.predicate.attributes[0]
+        .conditions
+        .observer_profile = "trusted-super-authority-backend".to_owned();
     attacked
         .svr
         .predicate
         .properties
         .push(SVR_PASS_PROPERTY.to_owned());
     refresh_scai_binding(&mut attacked);
-    assert_graph_rejected(&attacked, &expected, &manifest, "backend-name authority inflation");
+    assert_graph_rejected(
+        &attacked,
+        &expected,
+        &manifest,
+        "backend-name authority inflation",
+    );
 }
 
 #[test]
@@ -353,7 +396,12 @@ fn a5_11_duplicate_or_reordered_semantic_items_cannot_create_new_accepted_identi
             .clone(),
     );
     recompute_outer_digests_unchecked(&mut duplicate);
-    assert_graph_rejected(&duplicate, &expected, &manifest, "duplicate SVR semantic property");
+    assert_graph_rejected(
+        &duplicate,
+        &expected,
+        &manifest,
+        "duplicate SVR semantic property",
+    );
 
     let mut reordered_manifest = manifest.clone();
     reordered_manifest.reverse();
@@ -388,5 +436,10 @@ fn a5_12_digest_domains_are_separated_and_cross_domain_substitution_fails() {
 
     let mut confused = bundle;
     confused.scai_digest = confused.runtime_trace_digest.clone();
-    assert_graph_rejected(&confused, &expected, &manifest, "cross-domain digest substitution");
+    assert_graph_rejected(
+        &confused,
+        &expected,
+        &manifest,
+        "cross-domain digest substitution",
+    );
 }

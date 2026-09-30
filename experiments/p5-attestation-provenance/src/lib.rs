@@ -317,7 +317,9 @@ fn require_single_binding(
     expected: &str,
     reason_code: &str,
 ) -> Result<(), ModelError> {
-    let mut matching = properties.iter().filter(|property| property.starts_with(prefix));
+    let mut matching = properties
+        .iter()
+        .filter(|property| property.starts_with(prefix));
     if matching.next().map(String::as_str) != Some(expected) || matching.next().is_some() {
         return Err(ModelError::new(reason_code));
     }
@@ -505,7 +507,8 @@ pub fn build_bundle(input: &VerificationInput) -> Result<VerificationBundle, Mod
     match &input.source_identity {
         Some(source) => {
             let source_digest = canonical_digest("source-identity", source);
-            let source_hex = labeled_digest_hex(&source_digest, "source_identity_digest_malformed")?;
+            let source_hex =
+                labeled_digest_hex(&source_digest, "source_identity_digest_malformed")?;
             properties.insert(format!("{SVR_SOURCE_BINDING_PREFIX}{source_hex}"));
         }
         None => {
