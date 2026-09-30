@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use execsurface_p5_attestation_provenance::{
     verify_bundle, AuthorityState, CapabilityState, CompletenessState, ObserverHealth,
-    ProvenanceReference, ResourceDescriptor, VerificationBundle, Verdict,
+    ProvenanceReference, ResourceDescriptor, Verdict, VerificationBundle,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
