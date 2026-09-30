@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use execsurface_p5_attestation_provenance::{
     build_bundle, digest_bundle, parse_strict_input, verify_bundle, verify_bundle_for_subject,
     AuthorityState, CapabilityState, CompletenessClass, CompletenessState, ObserverHealth,
-    ProvenanceReference, ResourceDescriptor, VerificationInput, Verdict, RUNTIME_TRACE_TYPE,
+    ProvenanceReference, ResourceDescriptor, Verdict, VerificationInput, RUNTIME_TRACE_TYPE,
     SCAI_TYPE, SLSA_PROVENANCE_TYPE, STATEMENT_TYPE, SVR_PASS_PROPERTY, SVR_TYPE,
 };
 
@@ -110,7 +110,10 @@ fn a0_01_complete_fixture_represents_every_mandatory_binding() {
     assert_eq!(conditions.artifact_identity, input.artifact_identity);
     assert_eq!(conditions.workflow_identity, input.workflow_identity);
     assert_eq!(conditions.baseline_digest, input.baseline_digest);
-    assert_eq!(conditions.current_surface_digest, input.current_surface_digest);
+    assert_eq!(
+        conditions.current_surface_digest,
+        input.current_surface_digest
+    );
     assert_eq!(conditions.observer_profile, input.observer_profile);
     assert_eq!(conditions.capability_state, input.capability_state);
     assert!(conditions.capability_digest.starts_with("sha256:"));
@@ -234,7 +237,9 @@ fn a0_09_subject_substitution_changes_identity_and_cross_binding_fails() {
     let mut mixed = original;
     mixed.svr.subject = changed.svr.subject;
     assert_eq!(
-        verify_bundle(&mixed).expect_err("mixed subjects must fail").reason_code,
+        verify_bundle(&mixed)
+            .expect_err("mixed subjects must fail")
+            .reason_code,
         "cross_statement_subject_mismatch"
     );
 }
