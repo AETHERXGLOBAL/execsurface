@@ -161,7 +161,8 @@ fn cross_01_entry_only_never_becomes_success() {
     let open_evidence = EvidenceLedger::default()
         .attempt_only(open.clone(), ObservationHealth::healthy())
         .unwrap();
-    let open_record = OpenObjectRecord::build(open_evidence, Some(open_binding(&open, 7, 1))).unwrap();
+    let open_record =
+        OpenObjectRecord::build(open_evidence, Some(open_binding(&open, 7, 1))).unwrap();
     assert!(!open_record.is_success_authority());
 
     let rename = rename_attempt(20);
@@ -228,8 +229,12 @@ fn cross_04_actor_and_entry_substitution_fail_closed() {
     let open_evidence = EvidenceLedger::default()
         .classify_pair(open.clone(), wrong_actor, ObservationHealth::healthy())
         .unwrap();
-    assert!(matches!(open_evidence.state, EvidenceState::Ambiguous { .. }));
-    let open_record = OpenObjectRecord::build(open_evidence, Some(open_binding(&open, 7, 1))).unwrap();
+    assert!(matches!(
+        open_evidence.state,
+        EvidenceState::Ambiguous { .. }
+    ));
+    let open_record =
+        OpenObjectRecord::build(open_evidence, Some(open_binding(&open, 7, 1))).unwrap();
     assert!(!open_record.is_success_authority());
 
     let rename = rename_attempt(90);
@@ -238,7 +243,10 @@ fn cross_04_actor_and_entry_substitution_fail_closed() {
     let rename_evidence = EvidenceLedger::default()
         .classify_pair(rename, wrong_entry, ObservationHealth::healthy())
         .unwrap();
-    assert!(matches!(rename_evidence.state, EvidenceState::Ambiguous { .. }));
+    assert!(matches!(
+        rename_evidence.state,
+        EvidenceState::Ambiguous { .. }
+    ));
     let rename_record = RenameDeleteRecord::build(rename_evidence, rename_context()).unwrap();
     assert!(!rename_record.is_success_authority());
 
@@ -248,7 +256,10 @@ fn cross_04_actor_and_entry_substitution_fail_closed() {
     let connect_evidence = EvidenceLedger::default()
         .classify_pair(connect, wrong_connect_actor, ObservationHealth::healthy())
         .unwrap();
-    assert!(matches!(connect_evidence.state, EvidenceState::Ambiguous { .. }));
+    assert!(matches!(
+        connect_evidence.state,
+        EvidenceState::Ambiguous { .. }
+    ));
     let connect_record = ConnectRecord::build(connect_evidence, connect_context(9)).unwrap();
     assert!(!connect_record.is_success_authority());
 }
@@ -259,7 +270,11 @@ fn cross_05_duplicate_replay_is_rejected_without_authority_inflation() {
     let open_exit = exit_for(&open, 7);
     let mut open_ledger = EvidenceLedger::default();
     assert!(open_ledger
-        .classify_pair(open.clone(), open_exit.clone(), ObservationHealth::healthy())
+        .classify_pair(
+            open.clone(),
+            open_exit.clone(),
+            ObservationHealth::healthy()
+        )
         .is_ok());
     assert!(open_ledger
         .classify_pair(open, open_exit, ObservationHealth::healthy())
@@ -269,7 +284,11 @@ fn cross_05_duplicate_replay_is_rejected_without_authority_inflation() {
     let rename_exit = exit_for(&rename, 0);
     let mut rename_ledger = EvidenceLedger::default();
     assert!(rename_ledger
-        .classify_pair(rename.clone(), rename_exit.clone(), ObservationHealth::healthy())
+        .classify_pair(
+            rename.clone(),
+            rename_exit.clone(),
+            ObservationHealth::healthy()
+        )
         .is_ok());
     assert!(rename_ledger
         .classify_pair(rename, rename_exit, ObservationHealth::healthy())
@@ -279,7 +298,11 @@ fn cross_05_duplicate_replay_is_rejected_without_authority_inflation() {
     let connect_exit = exit_for(&connect, 0);
     let mut connect_ledger = EvidenceLedger::default();
     assert!(connect_ledger
-        .classify_pair(connect.clone(), connect_exit.clone(), ObservationHealth::healthy())
+        .classify_pair(
+            connect.clone(),
+            connect_exit.clone(),
+            ObservationHealth::healthy()
+        )
         .is_ok());
     assert!(connect_ledger
         .classify_pair(connect, connect_exit, ObservationHealth::healthy())
@@ -290,27 +313,26 @@ fn cross_05_duplicate_replay_is_rejected_without_authority_inflation() {
 fn cross_06_fd_reuse_requires_new_object_socket_and_pairing_identity() {
     let first_open = open_attempt(140, 7);
     let first_open_evidence = classify(&first_open, 7, ObservationHealth::healthy());
-    let first_open_record = OpenObjectRecord::build(
-        first_open_evidence,
-        Some(open_binding(&first_open, 7, 1)),
-    )
-    .unwrap();
+    let first_open_record =
+        OpenObjectRecord::build(first_open_evidence, Some(open_binding(&first_open, 7, 1)))
+            .unwrap();
     assert!(first_open_record.is_success_authority());
 
     let mut second_open = first_open.clone();
     second_open.entry_sequence = 150;
     let second_open_evidence = classify(&second_open, 7, ObservationHealth::healthy());
-    let second_open_record = OpenObjectRecord::build(
-        second_open_evidence,
-        Some(open_binding(&second_open, 7, 2)),
-    )
-    .unwrap();
+    let second_open_record =
+        OpenObjectRecord::build(second_open_evidence, Some(open_binding(&second_open, 7, 2)))
+            .unwrap();
     assert!(second_open_record.is_success_authority());
     assert_ne!(
         first_open.pairing_identity().unwrap(),
         second_open.pairing_identity().unwrap()
     );
-    assert_ne!(open_proof(&first_open_record), open_proof(&second_open_record));
+    assert_ne!(
+        open_proof(&first_open_record),
+        open_proof(&second_open_record)
+    );
 
     let first_connect = connect_attempt(160, 9);
     let first_connect_evidence = classify(&first_connect, 0, ObservationHealth::healthy());
@@ -349,19 +371,28 @@ fn cross_07_observer_loss_blocks_success_across_all_propositions() {
         Some(open_binding(&open, 7, 1)),
     )
     .unwrap();
-    assert!(matches!(open_record.authority, OpenObjectAuthority::Lost { .. }));
+    assert!(matches!(
+        open_record.authority,
+        OpenObjectAuthority::Lost { .. }
+    ));
     assert!(!open_record.is_success_authority());
 
     let rename = rename_attempt(190);
     let rename_record =
         RenameDeleteRecord::build(classify(&rename, 0, lost.clone()), rename_context()).unwrap();
-    assert!(matches!(rename_record.authority, RenameDeleteAuthority::Lost { .. }));
+    assert!(matches!(
+        rename_record.authority,
+        RenameDeleteAuthority::Lost { .. }
+    ));
     assert!(!rename_record.is_success_authority());
 
     let connect = connect_attempt(200, 9);
     let connect_record =
         ConnectRecord::build(classify(&connect, 0, lost), connect_context(9)).unwrap();
-    assert!(matches!(connect_record.authority, ConnectAuthority::Lost { .. }));
+    assert!(matches!(
+        connect_record.authority,
+        ConnectAuthority::Lost { .. }
+    ));
     assert!(!connect_record.is_success_authority());
 }
 
@@ -372,7 +403,10 @@ fn cross_08_pathname_or_binding_without_success_exit_cannot_create_open_object_s
         .attempt_only(open.clone(), ObservationHealth::healthy())
         .unwrap();
     let record = OpenObjectRecord::build(attempted, Some(open_binding(&open, 7, 1))).unwrap();
-    assert!(matches!(record.authority, OpenObjectAuthority::NotSuccessful));
+    assert!(matches!(
+        record.authority,
+        OpenObjectAuthority::NotSuccessful
+    ));
     assert!(!record.is_success_authority());
 }
 
@@ -403,21 +437,30 @@ fn cross_10_identical_evidence_reconstructs_identical_bytes_and_proof_digests() 
     let binding = open_binding(&open, 7, 1);
     let open_a = OpenObjectRecord::build(open_evidence.clone(), Some(binding.clone())).unwrap();
     let open_b = OpenObjectRecord::build(open_evidence, Some(binding)).unwrap();
-    assert_eq!(serde_json::to_vec(&open_a).unwrap(), serde_json::to_vec(&open_b).unwrap());
+    assert_eq!(
+        serde_json::to_vec(&open_a).unwrap(),
+        serde_json::to_vec(&open_b).unwrap()
+    );
     assert_eq!(open_proof(&open_a), open_proof(&open_b));
 
     let rename = rename_attempt(260);
     let rename_evidence = classify(&rename, 0, ObservationHealth::healthy());
     let rename_a = RenameDeleteRecord::build(rename_evidence.clone(), rename_context()).unwrap();
     let rename_b = RenameDeleteRecord::build(rename_evidence, rename_context()).unwrap();
-    assert_eq!(serde_json::to_vec(&rename_a).unwrap(), serde_json::to_vec(&rename_b).unwrap());
+    assert_eq!(
+        serde_json::to_vec(&rename_a).unwrap(),
+        serde_json::to_vec(&rename_b).unwrap()
+    );
     assert_eq!(rename_proof(&rename_a), rename_proof(&rename_b));
 
     let connect = connect_attempt(270, 9);
     let connect_evidence = classify(&connect, 0, ObservationHealth::healthy());
     let connect_a = ConnectRecord::build(connect_evidence.clone(), connect_context(9)).unwrap();
     let connect_b = ConnectRecord::build(connect_evidence, connect_context(9)).unwrap();
-    assert_eq!(serde_json::to_vec(&connect_a).unwrap(), serde_json::to_vec(&connect_b).unwrap());
+    assert_eq!(
+        serde_json::to_vec(&connect_a).unwrap(),
+        serde_json::to_vec(&connect_b).unwrap()
+    );
     assert_eq!(connect_proof(&connect_a), connect_proof(&connect_b));
 }
 
@@ -428,7 +471,10 @@ fn cross_11_causal_chain_substitution_cannot_preserve_success_authority() {
     let mut forged_binding = open_binding(&open, 7, 1);
     forged_binding.causal_chain_digest = digest_text("forged-causal-chain");
     let forged_open = OpenObjectRecord::build(open_evidence, Some(forged_binding)).unwrap();
-    assert!(matches!(forged_open.authority, OpenObjectAuthority::Ambiguous { .. }));
+    assert!(matches!(
+        forged_open.authority,
+        OpenObjectAuthority::Ambiguous { .. }
+    ));
     assert!(!forged_open.is_success_authority());
 
     let connect = connect_attempt(290, 9);
