@@ -350,6 +350,34 @@ fn a0_15_runtime_trace_scai_svr_subject_mismatch_fails_closed() {
 fn a0_16_slsa_provenance_digest_or_predicate_substitution_fails_binding() {
     let base = build_bundle(&complete_input()).expect("base");
 
+    let mut digest_tampered = base.clone();
+    digest_tampered.scai.predicate.attributes[0]
+        .conditions
+        .slsa_provenance
+        .as_mut()
+        .expect("provenance")
+        .statement_digest = labeled('4');
+    assert_eq!(
+        verify_bundle(&digest_tampered)
+            .expect_err("post-build provenance digest substitution must fail")
+            .reason_code,
+        "statement_digest_mismatch"
+    );
+
+    let mut predicate_tampered = base.clone();
+    predicate_tampered.scai.predicate.attributes[0]
+        .conditions
+        .slsa_provenance
+        .as_mut()
+        .expect("provenance")
+        .predicate_type = "https://example.invalid/provenance/v1".to_owned();
+    assert_eq!(
+        verify_bundle(&predicate_tampered)
+            .expect_err("post-build provenance predicate substitution must fail")
+            .reason_code,
+        "statement_digest_mismatch"
+    );
+
     let mut digest_changed = complete_input();
     digest_changed
         .slsa_provenance
