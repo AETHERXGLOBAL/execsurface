@@ -1,0 +1,333 @@
+name: P6 A2 adversarial false-pass and identity gate
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - 'docs/development/P6_A2_ADVERSARIAL_PROTOCOL.md'
+      - '.github/workflows/p6-a2-adversarial.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  EVIDENCE_ROOT: p6-a2-adversarial-evidence
+  WORKLOAD: experiments/p6-competitive-falsification/workload.sh
+  WORKLOAD_BLOB: c5986f1acd8bc79a3945e613acc128d5c8a9d168
+  A2_PROTOCOL_SOURCE: 3d9f5df6d25c26494850dffee23e877096e34f1e
+  P5_CLOSEOUT_SOURCE: 1f4df8f45a115a1638c997107e069c6acd74c51b
+  P5_A5_ACCEPTED_SOURCE: d6d0d45b686ed8c9332ea6b0924537a345049bfb
+  P5_A5_TEST_BLOB: 6a64ad84d93a23c35d53e737c90508dc528d9cc1
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  ALPHA4_TAG: v0.1.0-alpha.4
+  CICD_SENSOR_A1_RUN: '36770813526'
+  CICD_SENSOR_ATTESTATION_ARTIFACT: '11123269064'
+  CICD_SENSOR_ATTESTATION_DIGEST: sha256:6dad33b00832f1569fa1f3dd3af2fb98771b9d8761a2215ecb15d0e8499b8ce9
+
+jobs:
+  adversarial:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout frozen branch state
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify frozen boundaries and attack corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          git merge-base --is-ancestor "$A2_PROTOCOL_SOURCE" HEAD
+          git merge-base --is-ancestor "$P5_CLOSEOUT_SOURCE" HEAD
+          git merge-base --is-ancestor "$P5_A5_ACCEPTED_SOURCE" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git hash-object "$WORKLOAD")" = "$WORKLOAD_BLOB"
+          test "$(git rev-parse "HEAD:experiments/p5-cross-attestation-redteam/tests/a5_graph_redteam.rs")" = "$P5_A5_TEST_BLOB"
+          if git diff --name-only "$P5_CLOSEOUT_SOURCE"..HEAD | grep -Eq '^crates/'; then
+            echo 'public crates changed after P5 closeout' >&2
+            exit 1
+          fi
+          grep -q 'PREREGISTERED — NO A2 RESULT YET' docs/development/P6_A2_ADVERSARIAL_PROTOCOL.md
+          grep -q 'P6_A2_NO_FALSE_PASS_IN_FROZEN_SCOPE' docs/development/P6_A2_ADVERSARIAL_PROTOCOL.md
+          {
+            echo "source_sha=$(git rev-parse HEAD)"
+            echo "workload_blob=$WORKLOAD_BLOB"
+            echo "p5_a5_test_blob=$P5_A5_TEST_BLOB"
+            echo "alpha4_source=$ALPHA4_SOURCE"
+            echo "historical_p5_a5_counterexample_run=36755962689"
+            echo "historical_p6_a1_harness_failure_run=36770551463"
+          } | tee "$EVIDENCE_ROOT/freeze.txt"
+
+      - name: Install exact public alpha.4 release
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=x86_64-unknown-linux-gnu
+          asset="execsurface-${ALPHA4_TAG}-${target}.tar.gz"
+          base="https://github.com/AETHERXGLOBAL/execsurface/releases/download/${ALPHA4_TAG}"
+          mkdir -p "$RUNNER_TEMP/p6-a2-alpha4"
+          curl -fsSL -o "$RUNNER_TEMP/p6-a2-alpha4/$asset" "$base/$asset"
+          curl -fsSL -o "$RUNNER_TEMP/p6-a2-alpha4/$asset.sha256" "$base/$asset.sha256"
+          (cd "$RUNNER_TEMP/p6-a2-alpha4" && sha256sum -c "$asset.sha256") \
+            | tee "$EVIDENCE_ROOT/alpha4-checksum.txt"
+          tar -xzf "$RUNNER_TEMP/p6-a2-alpha4/$asset" -C "$RUNNER_TEMP/p6-a2-alpha4"
+          bin="$RUNNER_TEMP/p6-a2-alpha4/execsurface-${ALPHA4_TAG}-${target}/execsurface"
+          test -x "$bin"
+          test "$("$bin" --version)" = "execsurface ${ALPHA4_TAG#v}"
+          echo "P6_ES_BIN=$bin" >> "$GITHUB_ENV"
+
+      - name: Learn S0 baseline exactly once
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f execsurface.lock.json
+          "$P6_ES_BIN" learn -- /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S0_CONTROL \
+            >"$EVIDENCE_ROOT/learn.stdout.log" 2>"$EVIDENCE_ROOT/learn.stderr.log"
+          test -s execsurface.lock.json
+          cp execsurface.lock.json "$EVIDENCE_ROOT/original-baseline.json"
+          python3 - <<'PY' | tee "$EVIDENCE_ROOT/baseline-identity.txt"
+          import json
+          d=json.load(open('execsurface.lock.json'))
+          assert d['schema_version'] == 2
+          print('baseline_digest='+d['baseline_digest'])
+          print('command_executable='+d['payload']['command']['executable']['path']['value'])
+          print('command_argument_count='+str(d['payload']['command']['argument_count']))
+          print('effect_count='+str(len(d['payload']['canonical_surface']['effects'])))
+          PY
+          sha256sum execsurface.lock.json | tee "$EVIDENCE_ROOT/original-baseline-file-sha256.txt"
+
+      - name: Execute frozen E1-E3 drift attacks
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > "$EVIDENCE_ROOT/track-e-status.tsv"
+          : > "$EVIDENCE_ROOT/false-pass-markers.txt"
+          run_attack() {
+            local id="$1" scenario="$2" marker="$3"
+            set +e
+            "$P6_ES_BIN" check \
+              --baseline execsurface.lock.json \
+              --json-output "$EVIDENCE_ROOT/${id}.json" \
+              --markdown-output "$EVIDENCE_ROOT/${id}.md" \
+              -- /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" "$scenario" \
+              >"$EVIDENCE_ROOT/${id}.stdout.log" 2>"$EVIDENCE_ROOT/${id}.stderr.log"
+            local rc=$?
+            set -e
+            printf '%s\t%s\t%s\n' "$id" "$scenario" "$rc" | tee -a "$EVIDENCE_ROOT/track-e-status.tsv"
+            if [ "$rc" -eq 0 ]; then
+              echo "$marker" | tee -a "$EVIDENCE_ROOT/false-pass-markers.txt"
+            fi
+            case "$rc" in 0|2|10|20) ;; *) echo "unexpected_exit_${id}=$rc" | tee -a "$EVIDENCE_ROOT/infra-markers.txt" ;; esac
+          }
+          run_attack E1_PROCESS S1_CHILD_PROCESS_EXPANSION FALSE_PASS_COUNTEREXAMPLE_PROCESS_EXPANSION
+          run_attack E2_FILE S3_FILE_WRITE_EXPANSION FALSE_PASS_COUNTEREXAMPLE_FILE_WRITE
+          run_attack E3_NETWORK S2_NETWORK_DESTINATION_EXPANSION FALSE_PASS_COUNTEREXAMPLE_NETWORK_OR_INCOMPLETE
+
+      - name: Create E4 payload tamper and E5 digest substitution baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import copy, json
+          src=json.load(open('execsurface.lock.json'))
+
+          e4=copy.deepcopy(src)
+          # Semantic payload mutation while intentionally retaining the original stored digest.
+          old=e4['payload']['command']['argument_count']
+          e4['payload']['command']['argument_count']=old+97
+          assert e4['baseline_digest'] == src['baseline_digest']
+          with open('e4-tampered-payload.json','w') as f:
+              json.dump(e4,f,sort_keys=True,separators=(',',':'))
+
+          e5=copy.deepcopy(src)
+          e5['baseline_digest']='sha256:' + ('0'*64)
+          assert e5['payload'] == src['payload']
+          with open('e5-substituted-digest.json','w') as f:
+              json.dump(e5,f,sort_keys=True,separators=(',',':'))
+
+          print('e4_original_argument_count', old)
+          print('e4_tampered_argument_count', old+97)
+          print('e4_stored_digest_retained', e4['baseline_digest'])
+          print('e5_substituted_digest', e5['baseline_digest'])
+          PY
+          sha256sum e4-tampered-payload.json e5-substituted-digest.json \
+            | tee "$EVIDENCE_ROOT/tampered-baseline-file-sha256.txt"
+          cp e4-tampered-payload.json e5-substituted-digest.json "$EVIDENCE_ROOT/"
+
+      - name: Execute frozen E4-E5 baseline integrity attacks
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_baseline_attack() {
+            local id="$1" baseline="$2" marker="$3"
+            set +e
+            "$P6_ES_BIN" check --baseline "$baseline" -- /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S0_CONTROL \
+              >"$EVIDENCE_ROOT/${id}.stdout.log" 2>"$EVIDENCE_ROOT/${id}.stderr.log"
+            local rc=$?
+            set -e
+            printf '%s\tS0_CONTROL\t%s\n' "$id" "$rc" | tee -a "$EVIDENCE_ROOT/track-e-status.tsv"
+            if [ "$rc" -eq 0 ]; then
+              echo "$marker" | tee -a "$EVIDENCE_ROOT/false-pass-markers.txt"
+            fi
+            case "$rc" in 0|2|10|20) ;; *) echo "unexpected_exit_${id}=$rc" | tee -a "$EVIDENCE_ROOT/infra-markers.txt" ;; esac
+          }
+          run_baseline_attack E4_PAYLOAD_TAMPER e4-tampered-payload.json FALSE_PASS_COUNTEREXAMPLE_BASELINE_TAMPER
+          run_baseline_attack E5_DIGEST_SUBSTITUTION e5-substituted-digest.json FALSE_PASS_COUNTEREXAMPLE_BASELINE_DIGEST_SUBSTITUTION
+
+      - name: Execute E6 command-contract mismatch as factual probe only
+        shell: bash
+        run: |
+          set +e
+          "$P6_ES_BIN" check \
+            --baseline execsurface.lock.json \
+            --json-output "$EVIDENCE_ROOT/E6_COMMAND_CONTRACT.json" \
+            --markdown-output "$EVIDENCE_ROOT/E6_COMMAND_CONTRACT.md" \
+            -- /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S0_CONTROL EXTRA_ARGUMENT \
+            >"$EVIDENCE_ROOT/E6_COMMAND_CONTRACT.stdout.log" \
+            2>"$EVIDENCE_ROOT/E6_COMMAND_CONTRACT.stderr.log"
+          rc=$?
+          set -e
+          printf 'E6_COMMAND_CONTRACT\tS0_CONTROL_PLUS_EXTRA_ARGUMENT\t%s\n' "$rc" \
+            | tee -a "$EVIDENCE_ROOT/track-e-status.tsv"
+          case "$rc" in 0|2|10|20) ;; *) echo "unexpected_exit_E6=$rc" | tee -a "$EVIDENCE_ROOT/infra-markers.txt" ;; esac
+
+      - name: Reprove exact frozen P5 A5 12-test corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          cargo +$RUST_TOOLCHAIN generate-lockfile \
+            --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+          test "$(git hash-object experiments/p5-cross-attestation-redteam/tests/a5_graph_redteam.rs)" = "$P5_A5_TEST_BLOB"
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml \
+            --test a5_graph_redteam -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/p5-a5-reproof.log"
+          grep -q 'test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' \
+            "$EVIDENCE_ROOT/p5-a5-reproof.log"
+          echo 'P5_A5_EXACT_12_TEST_REPROOF_PASS' | tee "$EVIDENCE_ROOT/p5-a5-reproof.txt"
+
+      - name: Retrieve and verify frozen cicd-sensor A1 predicate artifact identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p6-cs-attestation"
+          gh api "repos/AETHERXGLOBAL/execsurface/actions/artifacts/${CICD_SENSOR_ATTESTATION_ARTIFACT}" \
+            > "$EVIDENCE_ROOT/cicd-sensor-artifact-metadata.json"
+          jq -e --arg d "$CICD_SENSOR_ATTESTATION_DIGEST" --argjson r "$CICD_SENSOR_A1_RUN" '
+            .digest == $d and .workflow_run.id == $r and .expired == false
+          ' "$EVIDENCE_ROOT/cicd-sensor-artifact-metadata.json" >/dev/null
+          gh api "repos/AETHERXGLOBAL/execsurface/actions/artifacts/${CICD_SENSOR_ATTESTATION_ARTIFACT}/zip" \
+            > "$RUNNER_TEMP/p6-cs-attestation/artifact.zip"
+          unzip -q "$RUNNER_TEMP/p6-cs-attestation/artifact.zip" -d "$RUNNER_TEMP/p6-cs-attestation/unpacked"
+          predicate=$(find "$RUNNER_TEMP/p6-cs-attestation/unpacked" -type f -name predicate.json -print -quit)
+          test -n "$predicate"
+          cp "$predicate" "$EVIDENCE_ROOT/cicd-sensor-predicate-original.json"
+          sha256sum "$RUNNER_TEMP/p6-cs-attestation/artifact.zip" \
+            | tee "$EVIDENCE_ROOT/cicd-sensor-downloaded-zip-sha256.txt"
+          sha256sum "$predicate" | tee "$EVIDENCE_ROOT/cicd-sensor-predicate-sha256.txt"
+
+      - name: Execute frozen C1-C3 cicd-sensor identity and integrity facts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee "$EVIDENCE_ROOT/cicd-sensor-c1-c3.txt"
+          import copy, json
+          p='p6-a2-adversarial-evidence/cicd-sensor-predicate-original.json'
+          d=json.load(open(p))
+          jobkey='https://cicd-sensor.github.io/runtime_trace/job/v1alpha1'
+          resultkey='https://cicd-sensor.github.io/runtime_trace/result/v1alpha1'
+          job=d['monitorLog'][jobkey]
+          original=str(job['github_run_id'])
+          expected_original='36770813526'
+          synthetic_expected='36770813527'
+          assert original == expected_original
+          assert original != synthetic_expected
+          print('C1=IDENTITY_MISMATCH_EXPLICITLY_DETECTABLE_BY_CONSUMER')
+          print('C1_original_run_id='+original)
+          print('C1_synthetic_expected_run_id='+synthetic_expected)
+
+          tampered=copy.deepcopy(d)
+          tampered['monitorLog'][jobkey]['github_run_id']=synthetic_expected
+          with open('p6-a2-adversarial-evidence/cicd-sensor-predicate-tampered.json','w') as f:
+              json.dump(tampered,f,sort_keys=True,separators=(',',':'))
+          reparsed=json.load(open('p6-a2-adversarial-evidence/cicd-sensor-predicate-tampered.json'))
+          assert str(reparsed['monitorLog'][jobkey]['github_run_id']) == synthetic_expected
+          signatureish=[k for k in d.keys() if 'sign' in k.lower() or 'signature' in k.lower()]
+          assert not signatureish
+          print('C2=EXTERNAL_INTEGRITY_REQUIRED_FOR_TAMPER_DETECTION')
+          print('C2_embedded_top_level_signature_fields=none')
+
+          native=d['monitorLog'][resultkey]
+          assert native == 'passed'
+          common_verdict=None
+          assert common_verdict is None
+          print('C3_native_predicate_result='+native)
+          print('C3_common_verdict=null')
+          PY
+          sha256sum "$EVIDENCE_ROOT/cicd-sensor-predicate-tampered.json" \
+            | tee "$EVIDENCE_ROOT/cicd-sensor-predicate-tampered-sha256.txt"
+
+      - name: Evaluate frozen A2 gate without weakening attacks
+        shell: bash
+        run: |
+          set -euo pipefail
+          false_pass_count=0
+          if test -s "$EVIDENCE_ROOT/false-pass-markers.txt"; then
+            false_pass_count=$(wc -l < "$EVIDENCE_ROOT/false-pass-markers.txt")
+          fi
+          infra_count=0
+          if test -s "$EVIDENCE_ROOT/infra-markers.txt"; then
+            infra_count=$(wc -l < "$EVIDENCE_ROOT/infra-markers.txt")
+          fi
+          {
+            echo "false_pass_count=$false_pass_count"
+            echo "infra_marker_count=$infra_count"
+            echo "harden_runner_offline_attestation_replay=NOT_APPLICABLE_TO_OFFLINE_ATTESTATION_REPLAY"
+            echo "tetragon_live_a2=NOT_TESTABLE_YET"
+          } | tee "$EVIDENCE_ROOT/gate-summary.txt"
+
+          if [ "$false_pass_count" -gt 0 ]; then
+            echo 'P6_EXECSURFACE_COUNTEREXAMPLE_FOUND_CANDIDATE' | tee "$EVIDENCE_ROOT/CANDIDATE.txt"
+            exit 1
+          fi
+          if [ "$infra_count" -gt 0 ]; then
+            echo 'P6_A2_INCOMPLETE_CANDIDATE' | tee "$EVIDENCE_ROOT/CANDIDATE.txt"
+            exit 1
+          fi
+          echo 'P6_A2_NO_FALSE_PASS_IN_FROZEN_SCOPE_CANDIDATE' | tee "$EVIDENCE_ROOT/CANDIDATE.txt"
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "source_sha=${GITHUB_SHA}"
+            echo "runner_os=${RUNNER_OS}"
+            echo "runner_arch=${RUNNER_ARCH}"
+            echo "kernel=$(uname -r)"
+          } > "$EVIDENCE_ROOT/run-metadata.txt"
+          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p6-a2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p6-a2-adversarial-evidence
+          if-no-files-found: error
+          retention-days: 30
