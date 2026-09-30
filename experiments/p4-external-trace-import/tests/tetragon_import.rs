@@ -28,7 +28,7 @@ fn valid_event() -> String {
 
 fn evidence(json: &str) -> execsurface_p4_external_trace_import::ImportedExecEvidence {
     match import_tetragon_event(&ExternalSchemaIdentity::pinned_tetragon(), json).expect("import") {
-        ImportDecision::Evidence(record) => record,
+        ImportDecision::Evidence(record) => *record,
         other => panic!("expected evidence, got {other:?}"),
     }
 }
