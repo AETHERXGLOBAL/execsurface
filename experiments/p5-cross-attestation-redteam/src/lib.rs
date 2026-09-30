@@ -243,6 +243,7 @@ pub fn verify_graph(
     manifest: &[GraphItem],
 ) -> Result<(), GraphError> {
     verify_expected_context(bundle, expected)?;
+    let _manifest_digest = graph_manifest_digest(manifest)?;
     verify_manifest(bundle, manifest)?;
     Ok(())
 }
