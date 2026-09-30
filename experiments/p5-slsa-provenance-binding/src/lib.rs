@@ -135,7 +135,7 @@ fn is_hex(value: &str, length: usize) -> bool {
     value.len() == length && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn parse_labeled_sha256(value: &str, reason: &str) -> Result<&str, BindingError> {
+fn parse_labeled_sha256<'a>(value: &'a str, reason: &str) -> Result<&'a str, BindingError> {
     let Some(hex) = value.strip_prefix("sha256:") else {
         return Err(BindingError::new(reason));
     };
