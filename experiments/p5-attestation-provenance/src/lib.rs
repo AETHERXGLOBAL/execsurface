@@ -263,9 +263,7 @@ fn is_sha256_hex(value: &str) -> bool {
 }
 
 fn validate_labeled_digest(value: &str) -> bool {
-    value
-        .strip_prefix("sha256:")
-        .is_some_and(is_sha256_hex)
+    value.strip_prefix("sha256:").is_some_and(is_sha256_hex)
 }
 
 fn descriptor_digest(descriptor: &ResourceDescriptor) -> Result<String, ModelError> {
@@ -388,10 +386,7 @@ pub fn build_bundle(input: &VerificationInput) -> Result<VerificationBundle, Mod
     let trace_policy = BTreeMap::from([
         ("authority".to_owned(), format!("{:?}", input.authority)),
         ("capabilityDigest".to_owned(), capability_digest.clone()),
-        (
-            "completenessDigest".to_owned(),
-            completeness_digest.clone(),
-        ),
+        ("completenessDigest".to_owned(), completeness_digest.clone()),
         ("evidenceDigest".to_owned(), input.evidence_digest.clone()),
         ("observerProfile".to_owned(), input.observer_profile.clone()),
     ]);
