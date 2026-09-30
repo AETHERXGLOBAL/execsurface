@@ -68,3 +68,5 @@ jobs:
           path: p4-b3-live-ptrace-evidence
           if-no-files-found: error
           retention-days: 30
+
+# Rerun after retained formatting-only pre-measurement failure; scientific criteria unchanged.
