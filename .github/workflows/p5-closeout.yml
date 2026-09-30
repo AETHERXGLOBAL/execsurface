@@ -104,7 +104,9 @@ jobs:
           gh run download "$P5_A5_SUCCESS_RUN" \
             --name "$P5_A5_SUCCESS_ARTIFACT_NAME" \
             --dir "$EVIDENCE_ROOT/a5-success"
-          (cd "$EVIDENCE_ROOT/a5-success" && sha256sum -c SHA256SUMS)
+          sed 's#p5-a5-cross-attestation-redteam-evidence/#a5-success/#g' \
+            "$EVIDENCE_ROOT/a5-success/SHA256SUMS" \
+            | (cd "$EVIDENCE_ROOT" && sha256sum -c -)
           grep -q 'test result: ok. 12 passed; 0 failed' "$EVIDENCE_ROOT/a5-success/a5.log"
           grep -q '^P5_A5_CROSS_ATTESTATION_GRAPH_PASS_BOUNDED_CANDIDATE$' \
             "$EVIDENCE_ROOT/a5-success/CANDIDATE.txt"
@@ -131,7 +133,9 @@ jobs:
           gh run download "$P5_A5_NEGATIVE_RUN" \
             --name "$P5_A5_NEGATIVE_ARTIFACT_NAME" \
             --dir "$EVIDENCE_ROOT/a5-negative"
-          (cd "$EVIDENCE_ROOT/a5-negative" && sha256sum -c SHA256SUMS)
+          sed 's#p5-a5-cross-attestation-redteam-evidence/#a5-negative/#g' \
+            "$EVIDENCE_ROOT/a5-negative/SHA256SUMS" \
+            | (cd "$EVIDENCE_ROOT" && sha256sum -c -)
           grep -q '8 passed; 4 failed' "$EVIDENCE_ROOT/a5-negative/a5.log"
 
       - name: Verify mandatory payload and standards composition remain represented
