@@ -33,7 +33,8 @@ fn complete_input() -> VerificationInput {
     VerificationInput {
         subject: subject.clone(),
         command_identity: "cargo test --locked".to_owned(),
-        host_identity: "https://github.com/AETHERXGLOBAL/execsurface/actions/jobs/fixture".to_owned(),
+        host_identity: "https://github.com/AETHERXGLOBAL/execsurface/actions/jobs/fixture"
+            .to_owned(),
         source_identity: Some(descriptor(
             "source",
             'b',
@@ -94,7 +95,9 @@ fn review_input() -> VerificationInput {
     input
 }
 
-fn rebind_svr_to_current_scai(bundle: &mut execsurface_p5_attestation_provenance::VerificationBundle) {
+fn rebind_svr_to_current_scai(
+    bundle: &mut execsurface_p5_attestation_provenance::VerificationBundle,
+) {
     const PREFIX: &str = "EXECSURFACE_SCAI_SHA256_";
     recompute_outer_digests_unchecked(bundle);
     let scai_hex = bundle
@@ -122,9 +125,16 @@ fn a2_01_same_subject_complete_scai_svr_composition_verifies() {
     assert_eq!(bundle.runtime_trace.subject, bundle.scai.subject);
     assert_eq!(bundle.runtime_trace.subject, bundle.svr.subject);
     assert_eq!(attribute.target, bundle.runtime_trace.subject[0]);
-    assert_eq!(attribute.conditions.verifier_identity, bundle.scai.predicate.producer);
+    assert_eq!(
+        attribute.conditions.verifier_identity,
+        bundle.scai.predicate.producer
+    );
     assert_eq!(bundle.svr.predicate.verifier.policies, vec![input.policy]);
-    assert!(bundle.svr.predicate.properties.contains(&SVR_RECORDED_PROPERTY.to_owned()));
+    assert!(bundle
+        .svr
+        .predicate
+        .properties
+        .contains(&SVR_RECORDED_PROPERTY.to_owned()));
     verify_bundle(&bundle).expect("same-subject composition verifies");
 }
 
@@ -134,7 +144,9 @@ fn a2_02_scai_subject_substitution_fails_after_digest_recompute() {
     bundle.scai.subject[0] = descriptor("other", '4', "https://example.invalid/subject");
     recompute_outer_digests_unchecked(&mut bundle);
     assert_eq!(
-        verify_bundle(&bundle).expect_err("SCAI subject substitution").reason_code,
+        verify_bundle(&bundle)
+            .expect_err("SCAI subject substitution")
+            .reason_code,
         "cross_statement_subject_mismatch"
     );
 }
@@ -145,7 +157,9 @@ fn a2_03_svr_subject_substitution_fails_after_digest_recompute() {
     bundle.svr.subject[0] = descriptor("other", '4', "https://example.invalid/subject");
     recompute_outer_digests_unchecked(&mut bundle);
     assert_eq!(
-        verify_bundle(&bundle).expect_err("SVR subject substitution").reason_code,
+        verify_bundle(&bundle)
+            .expect_err("SVR subject substitution")
+            .reason_code,
         "cross_statement_subject_mismatch"
     );
 }
@@ -157,7 +171,9 @@ fn a2_04_scai_target_substitution_fails_closed() {
         descriptor("other", '4', "https://example.invalid/target");
     rebind_svr_to_current_scai(&mut bundle);
     assert_eq!(
-        verify_bundle(&bundle).expect_err("SCAI target substitution").reason_code,
+        verify_bundle(&bundle)
+            .expect_err("SCAI target substitution")
+            .reason_code,
         "scai_target_subject_mismatch"
     );
 }
@@ -169,7 +185,9 @@ fn a2_05_svr_policy_substitution_fails_closed() {
         descriptor("other-policy", '5', "https://example.invalid/policy");
     recompute_outer_digests_unchecked(&mut bundle);
     assert_eq!(
-        verify_bundle(&bundle).expect_err("SVR policy substitution").reason_code,
+        verify_bundle(&bundle)
+            .expect_err("SVR policy substitution")
+            .reason_code,
         "policy_binding_mismatch"
     );
 }
@@ -214,15 +232,21 @@ fn a2_08_missing_or_stale_svr_scai_binding_fails_closed() {
         .retain(|property| !property.starts_with(PREFIX));
     recompute_outer_digests_unchecked(&mut missing);
     assert_eq!(
-        verify_bundle(&missing).expect_err("missing SCAI binding").reason_code,
+        verify_bundle(&missing)
+            .expect_err("missing SCAI binding")
+            .reason_code,
         "svr_scai_binding_missing"
     );
 
     let mut stale = build_bundle(&complete_input()).expect("base");
-    stale.scai.predicate.attributes[0].conditions.baseline_digest = labeled('8');
+    stale.scai.predicate.attributes[0]
+        .conditions
+        .baseline_digest = labeled('8');
     recompute_outer_digests_unchecked(&mut stale);
     assert_eq!(
-        verify_bundle(&stale).expect_err("stale SCAI binding").reason_code,
+        verify_bundle(&stale)
+            .expect_err("stale SCAI binding")
+            .reason_code,
         "svr_scai_binding_missing"
     );
 }
@@ -244,10 +268,16 @@ fn a2_09_svr_recorded_and_pass_summary_integrity_is_enforced() {
     );
 
     let mut review = build_bundle(&review_input()).expect("review");
-    review.svr.predicate.properties.push(SVR_PASS_PROPERTY.to_owned());
+    review
+        .svr
+        .predicate
+        .properties
+        .push(SVR_PASS_PROPERTY.to_owned());
     recompute_outer_digests_unchecked(&mut review);
     assert_eq!(
-        verify_bundle(&review).expect_err("PASS property laundering").reason_code,
+        verify_bundle(&review)
+            .expect_err("PASS property laundering")
+            .reason_code,
         "svr_verdict_binding_mismatch"
     );
 }
@@ -286,7 +316,10 @@ fn a2_11_backend_profile_name_cannot_upgrade_weak_semantics() {
     let conditions = &bundle.scai.predicate.attributes[0].conditions;
     assert_eq!(conditions.verdict, Verdict::Review);
     assert_eq!(conditions.authority, AuthorityState::Ambiguous);
-    assert_eq!(conditions.completeness.class, CompletenessClass::Incomplete);
+    assert_eq!(
+        conditions.completeness.class,
+        CompletenessClass::Incomplete
+    );
     verify_bundle(&bundle).expect("non-pass weak evidence remains representable");
 }
 
@@ -295,7 +328,9 @@ fn a2_12_loss_incompleteness_or_ambiguity_cannot_produce_or_preserve_pass() {
     let mut lost = complete_input();
     lost.observer_health = ObserverHealth::Lost;
     assert_eq!(
-        build_bundle(&lost).expect_err("loss blocks PASS").reason_code,
+        build_bundle(&lost)
+            .expect_err("loss blocks PASS")
+            .reason_code,
         "pass_blocked_by_observer_loss"
     );
 
@@ -305,22 +340,32 @@ fn a2_12_loss_incompleteness_or_ambiguity_cannot_produce_or_preserve_pass() {
         reason_codes: BTreeSet::from(["incomplete".to_owned()]),
     };
     assert_eq!(
-        build_bundle(&incomplete).expect_err("incomplete blocks PASS").reason_code,
+        build_bundle(&incomplete)
+            .expect_err("incomplete blocks PASS")
+            .reason_code,
         "pass_blocked_by_incomplete_evidence"
     );
 
     let mut ambiguous = complete_input();
     ambiguous.authority = AuthorityState::Ambiguous;
     assert_eq!(
-        build_bundle(&ambiguous).expect_err("ambiguous blocks PASS").reason_code,
+        build_bundle(&ambiguous)
+            .expect_err("ambiguous blocks PASS")
+            .reason_code,
         "pass_blocked_by_non_direct_authority"
     );
 
     let mut forged = build_bundle(&review_input()).expect("review");
-    forged.svr.predicate.properties.push(SVR_PASS_PROPERTY.to_owned());
+    forged
+        .svr
+        .predicate
+        .properties
+        .push(SVR_PASS_PROPERTY.to_owned());
     recompute_outer_digests_unchecked(&mut forged);
     assert_eq!(
-        verify_bundle(&forged).expect_err("forged PASS summary").reason_code,
+        verify_bundle(&forged)
+            .expect_err("forged PASS summary")
+            .reason_code,
         "svr_verdict_binding_mismatch"
     );
 }
@@ -341,7 +386,11 @@ fn a2_13_semantic_field_mutations_change_assertion_identity_and_workflow_replay_
     evidence.evidence_digest = labeled('6');
     variants.push(build_bundle(&evidence).expect("evidence variant"));
     let mut source = original_input.clone();
-    source.source_identity = Some(descriptor("other-source", '7', "https://example.invalid/source"));
+    source.source_identity = Some(descriptor(
+        "other-source",
+        '7',
+        "https://example.invalid/source",
+    ));
     variants.push(build_bundle(&source).expect("source variant"));
     let mut workflow = original_input.clone();
     workflow.workflow_identity = Some(descriptor(
