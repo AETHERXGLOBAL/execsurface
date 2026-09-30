@@ -112,10 +112,7 @@ fn review_input() -> VerificationInput {
 #[test]
 fn a3_01_pinned_upstream_fixture_parses_exact_slsa_v1_identity() {
     assert_eq!(UPSTREAM_REPOSITORY, "slsa-framework/slsa-verifier");
-    assert_eq!(
-        UPSTREAM_COMMIT,
-        "30d0be3bbab553fc51557377baba2f7572dfc212"
-    );
+    assert_eq!(UPSTREAM_COMMIT, "30d0be3bbab553fc51557377baba2f7572dfc212");
     assert_eq!(
         UPSTREAM_PATH,
         "verifiers/internal/gcb/testdata/v1.0-gcloud-container-github-single.json"
