@@ -19,7 +19,7 @@ jobs:
     env:
       RUST_TOOLCHAIN: 1.90.0
       EVIDENCE_ROOT: p5-a3-slsa-provenance-evidence
-      P5_A3_FIXTURE: p5-a3-upstream.json
+      P5_A3_FIXTURE: ${{ github.workspace }}/p5-a3-upstream.json
       P5_A2_ACCEPTED_SOURCE: 63b9a9fcde16d9dbb66aa484e73a1e2338afd6cb
       P5_A2_DECISION_SOURCE: 8ef427a57d085f6cc6d45a0beef9599c5c4f002f
       P5_A1_ACCEPTED_SOURCE: 74dc06a3f5a091f2f70e5f73290adf37ef3f2f44
@@ -78,12 +78,12 @@ jobs:
           test "$actual_commit" = "$UPSTREAM_COMMIT"
           actual_blob="$(git -C "$tmp" rev-parse "FETCH_HEAD:$UPSTREAM_PATH")"
           test "$actual_blob" = "$UPSTREAM_BLOB_SHA"
-          git -C "$tmp" show "FETCH_HEAD:$UPSTREAM_PATH" > "$GITHUB_WORKSPACE/$P5_A3_FIXTURE"
-          grep -q 'https://slsa.dev/provenance/v1' "$GITHUB_WORKSPACE/$P5_A3_FIXTURE"
+          git -C "$tmp" show "FETCH_HEAD:$UPSTREAM_PATH" > "$P5_A3_FIXTURE"
+          grep -q 'https://slsa.dev/provenance/v1' "$P5_A3_FIXTURE"
           printf 'upstream_commit=%s\n' "$actual_commit" | tee "$EVIDENCE_ROOT/upstream.txt"
           printf 'upstream_blob=%s\n' "$actual_blob" | tee -a "$EVIDENCE_ROOT/upstream.txt"
           printf 'upstream_path=%s\n' "$UPSTREAM_PATH" | tee -a "$EVIDENCE_ROOT/upstream.txt"
-          sha256sum "$GITHUB_WORKSPACE/$P5_A3_FIXTURE" | tee "$EVIDENCE_ROOT/upstream-file-sha256.txt"
+          sha256sum "$P5_A3_FIXTURE" | tee "$EVIDENCE_ROOT/upstream-file-sha256.txt"
 
       - name: Lock and static gates
         run: |
