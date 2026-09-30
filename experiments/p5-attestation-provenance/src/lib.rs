@@ -634,7 +634,9 @@ pub fn verify_bundle_for_subject(
     expected_subject: &ResourceDescriptor,
 ) -> Result<(), ModelError> {
     verify_bundle(bundle)?;
-    if bundle.runtime_trace.subject.as_slice() != [expected_subject] {
+    if bundle.runtime_trace.subject.len() != 1
+        || bundle.runtime_trace.subject.first() != Some(expected_subject)
+    {
         return Err(ModelError::new("expected_subject_mismatch"));
     }
     Ok(())
