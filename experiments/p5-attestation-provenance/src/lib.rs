@@ -198,6 +198,8 @@ pub struct ScaiAttribute {
 pub struct VerificationConditions {
     #[serde(rename = "commandIdentity")]
     pub command_identity: String,
+    #[serde(rename = "hostIdentity")]
+    pub host_identity: String,
     #[serde(rename = "sourceIdentity")]
     pub source_identity: Option<ResourceDescriptor>,
     #[serde(rename = "artifactIdentity")]
@@ -419,6 +421,7 @@ pub fn build_bundle(input: &VerificationInput) -> Result<VerificationBundle, Mod
 
     let conditions = VerificationConditions {
         command_identity: input.command_identity.clone(),
+        host_identity: input.host_identity.clone(),
         source_identity: input.source_identity.clone(),
         artifact_identity: input.artifact_identity.clone(),
         workflow_identity: input.workflow_identity.clone(),
@@ -481,21 +484,7 @@ pub fn build_bundle(input: &VerificationInput) -> Result<VerificationBundle, Mod
         },
     };
     let svr_digest = canonical_digest("svr-statement", &svr);
-
-    #[derive(Serialize)]
-    struct BundleIdentity<'a> {
-        runtime_trace_digest: &'a str,
-        scai_digest: &'a str,
-        svr_digest: &'a str,
-    }
-    let bundle_digest = canonical_digest(
-        "verification-bundle",
-        &BundleIdentity {
-            runtime_trace_digest: &runtime_trace_digest,
-            scai_digest: &scai_digest,
-            svr_digest: &svr_digest,
-        },
-    );
+    let bundle_digest = bundle_identity_digest(&runtime_trace_digest, &scai_digest, &svr_digest);
 
     let bundle = VerificationBundle {
         runtime_trace,
@@ -508,6 +497,35 @@ pub fn build_bundle(input: &VerificationInput) -> Result<VerificationBundle, Mod
     };
     verify_bundle(&bundle)?;
     Ok(bundle)
+}
+
+fn bundle_identity_digest(runtime_trace_digest: &str, scai_digest: &str, svr_digest: &str) -> String {
+    #[derive(Serialize)]
+    struct BundleIdentity<'a> {
+        runtime_trace_digest: &'a str,
+        scai_digest: &'a str,
+        svr_digest: &'a str,
+    }
+
+    canonical_digest(
+        "verification-bundle",
+        &BundleIdentity {
+            runtime_trace_digest,
+            scai_digest,
+            svr_digest,
+        },
+    )
+}
+
+pub fn recompute_outer_digests_unchecked(bundle: &mut VerificationBundle) {
+    bundle.runtime_trace_digest = canonical_digest("runtime-trace-statement", &bundle.runtime_trace);
+    bundle.scai_digest = canonical_digest("scai-statement", &bundle.scai);
+    bundle.svr_digest = canonical_digest("svr-statement", &bundle.svr);
+    bundle.bundle_digest = bundle_identity_digest(
+        &bundle.runtime_trace_digest,
+        &bundle.scai_digest,
+        &bundle.svr_digest,
+    );
 }
 
 pub fn verify_bundle(bundle: &VerificationBundle) -> Result<(), ModelError> {
@@ -551,19 +569,97 @@ pub fn verify_bundle(bundle: &VerificationBundle) -> Result<(), ModelError> {
     if attribute.target != bundle.runtime_trace.subject[0] {
         return Err(ModelError::new("scai_target_subject_mismatch"));
     }
+
+    if bundle.svr.predicate.verifier.policies.len() != 1 {
+        return Err(ModelError::new("svr_policy_cardinality_mismatch"));
+    }
+    let policy = &bundle.svr.predicate.verifier.policies[0];
+    if attribute.conditions.policy_digest != descriptor_digest(policy)? {
+        return Err(ModelError::new("policy_binding_mismatch"));
+    }
+
+    let monitor = &bundle.runtime_trace.predicate.monitor;
+    if monitor.monitor_type != EXECSURFACE_MONITOR_TYPE {
+        return Err(ModelError::new("runtime_monitor_type_mismatch"));
+    }
+    if monitor.config_source != *policy {
+        return Err(ModelError::new("runtime_monitor_config_policy_mismatch"));
+    }
+
+    let expected_capability_digest =
+        canonical_digest("capability-state", &attribute.conditions.capability_state);
+    if expected_capability_digest != attribute.conditions.capability_digest {
+        return Err(ModelError::new("capability_digest_mismatch"));
+    }
+    let expected_completeness_digest =
+        canonical_digest("completeness-state", &attribute.conditions.completeness);
+    if expected_completeness_digest != attribute.conditions.completeness_digest {
+        return Err(ModelError::new("completeness_digest_mismatch"));
+    }
+
+    let expected_trace_policy = BTreeMap::from([
+        (
+            "authority".to_owned(),
+            format!("{:?}", attribute.conditions.authority),
+        ),
+        (
+            "capabilityDigest".to_owned(),
+            attribute.conditions.capability_digest.clone(),
+        ),
+        (
+            "completenessDigest".to_owned(),
+            attribute.conditions.completeness_digest.clone(),
+        ),
+        (
+            "evidenceDigest".to_owned(),
+            attribute.conditions.evidence_digest.clone(),
+        ),
+        (
+            "observerProfile".to_owned(),
+            attribute.conditions.observer_profile.clone(),
+        ),
+    ]);
+    if monitor.trace_policy != expected_trace_policy {
+        return Err(ModelError::new("runtime_trace_policy_binding_mismatch"));
+    }
+
+    let monitored_process = &bundle.runtime_trace.predicate.monitored_process;
+    if monitored_process.process_type != EXECSURFACE_PROCESS_TYPE {
+        return Err(ModelError::new("runtime_process_type_mismatch"));
+    }
+    if monitored_process.host_id != attribute.conditions.host_identity {
+        return Err(ModelError::new("runtime_host_identity_mismatch"));
+    }
+    if monitored_process.event != attribute.conditions.command_identity {
+        return Err(ModelError::new("runtime_command_identity_mismatch"));
+    }
+
+    let [process_record] = bundle.runtime_trace.predicate.monitor_log.process.as_slice() else {
+        return Err(ModelError::new("runtime_process_log_cardinality_mismatch"));
+    };
+    let expected_process_record = BTreeMap::from([
+        (
+            "commandIdentity".to_owned(),
+            attribute.conditions.command_identity.clone(),
+        ),
+        (
+            "evidenceDigest".to_owned(),
+            attribute.conditions.evidence_digest.clone(),
+        ),
+        (
+            "observerProfile".to_owned(),
+            attribute.conditions.observer_profile.clone(),
+        ),
+    ]);
+    if process_record != &expected_process_record {
+        return Err(ModelError::new("runtime_process_log_binding_mismatch"));
+    }
+
     if attribute.conditions.runtime_trace_statement_digest != runtime_digest {
         return Err(ModelError::new("runtime_trace_binding_mismatch"));
     }
     if descriptor_digest(&attribute.evidence)? != runtime_digest {
         return Err(ModelError::new("runtime_trace_evidence_mismatch"));
-    }
-    if attribute.conditions.policy_digest
-        != descriptor_digest(&bundle.svr.predicate.verifier.policies[0])?
-    {
-        return Err(ModelError::new("policy_binding_mismatch"));
-    }
-    if bundle.svr.predicate.verifier.policies.len() != 1 {
-        return Err(ModelError::new("svr_policy_cardinality_mismatch"));
     }
 
     let scai_hex = scai_digest
@@ -608,20 +704,8 @@ pub fn verify_bundle(bundle: &VerificationBundle) -> Result<(), ModelError> {
         }
     }
 
-    #[derive(Serialize)]
-    struct BundleIdentity<'a> {
-        runtime_trace_digest: &'a str,
-        scai_digest: &'a str,
-        svr_digest: &'a str,
-    }
-    let expected_bundle_digest = canonical_digest(
-        "verification-bundle",
-        &BundleIdentity {
-            runtime_trace_digest: &bundle.runtime_trace_digest,
-            scai_digest: &bundle.scai_digest,
-            svr_digest: &bundle.svr_digest,
-        },
-    );
+    let expected_bundle_digest =
+        bundle_identity_digest(&bundle.runtime_trace_digest, &bundle.scai_digest, &bundle.svr_digest);
     if expected_bundle_digest != bundle.bundle_digest {
         return Err(ModelError::new("bundle_digest_mismatch"));
     }
@@ -638,6 +722,28 @@ pub fn verify_bundle_for_subject(
         || bundle.runtime_trace.subject.first() != Some(expected_subject)
     {
         return Err(ModelError::new("expected_subject_mismatch"));
+    }
+    Ok(())
+}
+
+pub fn verify_bundle_for_context(
+    bundle: &VerificationBundle,
+    expected_workflow: &ResourceDescriptor,
+    expected_command: &str,
+    expected_host: &str,
+) -> Result<(), ModelError> {
+    verify_bundle(bundle)?;
+    let [attribute] = bundle.scai.predicate.attributes.as_slice() else {
+        return Err(ModelError::new("scai_attribute_cardinality_mismatch"));
+    };
+    if attribute.conditions.workflow_identity.as_ref() != Some(expected_workflow) {
+        return Err(ModelError::new("expected_workflow_mismatch"));
+    }
+    if attribute.conditions.command_identity != expected_command {
+        return Err(ModelError::new("expected_command_mismatch"));
+    }
+    if attribute.conditions.host_identity != expected_host {
+        return Err(ModelError::new("expected_host_mismatch"));
     }
     Ok(())
 }
