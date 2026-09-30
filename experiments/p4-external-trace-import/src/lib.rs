@@ -277,12 +277,14 @@ pub fn import_tetragon_event(
             reason_code: INCOMPLETE_REASON.to_owned(),
         },
     );
-    proof
-        .completeness
-        .insert(CompletenessDimension::Capability, CompletenessState::Complete);
-    proof
-        .completeness
-        .insert(CompletenessDimension::Lifecycle, CompletenessState::Complete);
+    proof.completeness.insert(
+        CompletenessDimension::Capability,
+        CompletenessState::Complete,
+    );
+    proof.completeness.insert(
+        CompletenessDimension::Lifecycle,
+        CompletenessState::Complete,
+    );
     proof.completeness.insert(
         CompletenessDimension::CausalLineage,
         CompletenessState::Complete,
@@ -299,7 +301,9 @@ pub fn import_tetragon_event(
         },
         reason_codes: BTreeSet::from([INCOMPLETE_REASON.to_owned()]),
     };
-    adapter.validate().map_err(|reason_code| ImportError { reason_code })?;
+    adapter
+        .validate()
+        .map_err(|reason_code| ImportError { reason_code })?;
 
     #[derive(Serialize)]
     struct Identity<'a> {
