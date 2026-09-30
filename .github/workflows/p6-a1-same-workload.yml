@@ -112,15 +112,28 @@ jobs:
             rc=$?
             set -e
             printf '%s=%s\n' "$s" "$rc" | tee -a p6-a1-es-evidence/status-codes.txt
-            test "$rc" -eq 0 -o "$rc" -eq 10 -o "$rc" -eq 20
-            test -s "p6-a1-es-evidence/${s}.json"
+            case "$rc" in
+              0|10|20)
+                test -s "p6-a1-es-evidence/${s}.json"
+                ;;
+              2)
+                printf 'native_execsurface_error=true\nscenario=%s\n' "$s" > "p6-a1-es-evidence/${s}.native-error.txt"
+                cat "p6-a1-es-evidence/${s}.stderr.log"
+                ;;
+              *)
+                echo "unexpected ExecSurface exit code $rc for $s" >&2
+                exit 1
+                ;;
+            esac
           done
           if test -f /tmp/execsurface-p6/s2-resolved-ips.txt; then
             cp /tmp/execsurface-p6/s2-resolved-ips.txt p6-a1-es-evidence/
           fi
       - name: Record ES environment and seal evidence
+        if: always()
         shell: bash
         run: |
+          mkdir -p p6-a1-es-evidence
           {
             echo "system=ExecSurface"
             echo "release=$ALPHA4_TAG"
@@ -130,7 +143,7 @@ jobs:
             echo "runner_arch=$RUNNER_ARCH"
             echo "kernel=$(uname -r)"
           } > p6-a1-es-evidence/identity.txt
-          find p6-a1-es-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > p6-a1-es-evidence/SHA256SUMS
+          find p6-a1-es-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > p6-a1-es-evidence/SHA256SUMS
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
