@@ -49,7 +49,7 @@ jobs:
           printf 'head=%s\np5_closeout=%s\nalpha4=%s\n' "$(git rev-parse HEAD)" "$P5_CLOSEOUT_SOURCE" "$ALPHA4_SOURCE" \
             | tee "$EVIDENCE_ROOT/execsurface-boundary.txt"
 
-      - name: Validate machine-readable manifest
+      - name: Validate machine-readable manifest lifecycle
         shell: bash
         run: |
           set -euo pipefail
@@ -68,10 +68,29 @@ jobs:
           assert c['falco']['source_commit'] == 'e12b1d43e47a2903c07e14479e034d74d523ab9d'
           assert c['tracee']['source_commit'] == '2f9dc40c20b17c2ba27f6d92b25e62790bd48a62'
           assert d['aggregate_score_forbidden'] is True
-          assert d['live_benchmark_authorized'] is False
+
+          state = d['a0_state']
+          if state == 'SOURCE_PIN_GATE_PENDING':
+              assert d['live_benchmark_authorized'] is False
+              print('a0_state=SOURCE_PIN_GATE_PENDING')
+              print('live_benchmark_authorized=false')
+          elif state == 'P6_A0_OVERLAP_MATRIX_FROZEN':
+              assert d['live_benchmark_authorized'] is True
+              e = d['a0_evidence']
+              assert e['source_sha'] == 'f2174f08134d62ed3e19879b8ff54ff7e1a07aea'
+              assert e['run_id'] == 36769654116
+              assert e['conclusion'] == 'success'
+              assert e['artifact_id'] == 11122743690
+              assert e['artifact_digest'] == 'sha256:23fb182b3bc1fc269883059c2ccdd700a414033aeae5fb26264866fcf01f08f5'
+              assert c['tetragon']['live_lane_authorized'] is False
+              print('a0_state=P6_A0_OVERLAP_MATRIX_FROZEN')
+              print('live_benchmark_authorized=true_under_A1_preregistration')
+              print('tetragon_live_lane_authorized=false')
+          else:
+              raise AssertionError(f'unrecognized A0 lifecycle state: {state}')
+
           print('manifest_json=valid')
           print('aggregate_score_forbidden=true')
-          print('live_benchmark_authorized=false')
           PY
 
       - name: Verify immutable action tags
@@ -147,17 +166,21 @@ jobs:
             docker version --format 'docker_client={{.Client.Version}} docker_server={{.Server.Version}}'
           } | tee "$EVIDENCE_ROOT/runner-preflight.txt"
 
-      - name: Record A0 source-pin candidate only
+      - name: Record A0 lifecycle reproof only
         shell: bash
         run: |
           set -euo pipefail
-          cat > "$EVIDENCE_ROOT/decision-candidate.txt" <<'EOF'
-          P6_A0_SOURCE_PIN_GATE_PASS_CANDIDATE
-          This is not P6-A0 closeout.
-          No live competitor workload was executed by this gate.
-          No composite score or overall competitive verdict is authorized.
-          EOF
-          cat "$EVIDENCE_ROOT/decision-candidate.txt"
+          state=$(python3 -c "import json; print(json.load(open('experiments/p6-competitive-falsification/p6-a0-manifest.json'))['a0_state'])")
+          if [ "$state" = "P6_A0_OVERLAP_MATRIX_FROZEN" ]; then
+            marker=P6_A0_FROZEN_STATE_REPROOF_PASS
+          else
+            marker=P6_A0_SOURCE_PIN_GATE_PASS_CANDIDATE
+          fi
+          {
+            echo "$marker"
+            echo "No live competitor workload was executed by this gate."
+            echo "No composite score or overall competitive verdict is authorized."
+          } | tee "$EVIDENCE_ROOT/decision-candidate.txt"
 
       - name: Seal evidence
         if: always()
