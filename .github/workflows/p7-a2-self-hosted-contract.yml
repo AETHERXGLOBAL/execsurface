@@ -1,0 +1,237 @@
+name: P7 A2 self-hosted packaging contract gate
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - '.github/workflows/p7-a2-self-hosted-contract.yml'
+      - 'docs/development/P7_A2_SELF_HOSTED_CI_PROTOCOL.md'
+      - 'experiments/p7-platform-ci/self_hosted_package.py'
+      - 'experiments/p7-platform-ci/test_self_hosted_package.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  P7_A1_DECISION_SOURCE: 1a648cb6a44eb1f87edfc44a67d2b822daab8280
+  PROTOCOL_BLOB: 46b12048939f80587bbaaaf631fda0b84b16be99
+  PACKAGE_MODEL_BLOB: 00933986a1154f1d2ea8bd215b6fc63d1a909299
+  TEST_BLOB: 91b28a0db60ba1513edf05639045a473b79a32ce
+  WORKLOAD: experiments/p6-competitive-falsification/workload.sh
+  WORKLOAD_BLOB: c5986f1acd8bc79a3945e613acc128d5c8a9d168
+  RELEASE_ASSET: execsurface-v0.1.0-alpha.4-x86_64-unknown-linux-gnu.tar.gz
+  RELEASE_SHA256: 55776cd130784d1c03451a14ab05ed113ffae4fa714c986666cbcadf242d8d1d
+  EVIDENCE_ROOT: p7-a2-self-hosted-evidence
+
+jobs:
+  self-hosted-package-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout research branch with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Verify frozen predecessors and public boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          git merge-base --is-ancestor "$P7_A1_DECISION_SOURCE" HEAD
+          if git diff --name-only "$P7_A1_DECISION_SOURCE"..HEAD | grep -q '^crates/'; then
+            echo 'P7-A2 modified public crates/' >&2
+            exit 1
+          fi
+          test "$(git hash-object "$WORKLOAD")" = "$WORKLOAD_BLOB"
+          grep -q 'PREREGISTERED — NO A2 RESULT YET' docs/development/P7_A2_SELF_HOSTED_CI_PROTOCOL.md
+          {
+            echo "head=$(git rev-parse HEAD)"
+            echo "alpha4_source=$ALPHA4_SOURCE"
+            echo "p7_a1_decision_source=$P7_A1_DECISION_SOURCE"
+            echo "workload_blob=$WORKLOAD_BLOB"
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "kernel=$(uname -r)"
+          } | tee "$EVIDENCE_ROOT/boundaries.txt"
+
+      - name: Verify frozen A2 blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object docs/development/P7_A2_SELF_HOSTED_CI_PROTOCOL.md)" = "$PROTOCOL_BLOB"
+          test "$(git hash-object experiments/p7-platform-ci/self_hosted_package.py)" = "$PACKAGE_MODEL_BLOB"
+          test "$(git hash-object experiments/p7-platform-ci/test_self_hosted_package.py)" = "$TEST_BLOB"
+          {
+            echo "protocol_blob=$PROTOCOL_BLOB"
+            echo "package_model_blob=$PACKAGE_MODEL_BLOB"
+            echo "test_blob=$TEST_BLOB"
+          } | tee "$EVIDENCE_ROOT/frozen-blobs.txt"
+
+      - name: Static syntax gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            experiments/p7-platform-ci/self_hosted_package.py \
+            experiments/p7-platform-ci/test_self_hosted_package.py
+          python3 --version | tee "$EVIDENCE_ROOT/python-version.txt"
+
+      - name: Execute frozen 18-test falsification corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover \
+            -s experiments/p7-platform-ci \
+            -p 'test_self_hosted_package.py' -v 2>&1 | tee "$EVIDENCE_ROOT/tests.log"
+          grep -q '^Ran 18 tests' "$EVIDENCE_ROOT/tests.log"
+          grep -q '^OK$' "$EVIDENCE_ROOT/tests.log"
+
+      - name: Download and verify exact alpha.4 package
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="$RUNNER_TEMP/p7-a2-package"
+          mkdir -p "$package_dir"
+          url="https://github.com/AETHERXGLOBAL/execsurface/releases/download/v0.1.0-alpha.4/$RELEASE_ASSET"
+          curl --fail --location --silent --show-error "$url" -o "$package_dir/$RELEASE_ASSET"
+          printf '%s  %s\n' "$RELEASE_SHA256" "$package_dir/$RELEASE_ASSET" | sha256sum -c -
+          actual="$(sha256sum "$package_dir/$RELEASE_ASSET" | awk '{print $1}')"
+          test "$actual" = "$RELEASE_SHA256"
+          mkdir -p "$package_dir/extracted"
+          tar -xzf "$package_dir/$RELEASE_ASSET" -C "$package_dir/extracted"
+          mapfile -t bins < <(find "$package_dir/extracted" -type f -name execsurface -print)
+          test "${#bins[@]}" -eq 1
+          bin="$(realpath "${bins[0]}")"
+          test -x "$bin"
+          test "$("$bin" --version)" = 'execsurface 0.1.0-alpha.4'
+          echo "P7_A2_BIN=$bin" >> "$GITHUB_ENV"
+          {
+            echo "release_asset=$RELEASE_ASSET"
+            echo "release_sha256=$actual"
+            echo "binary=$bin"
+            echo "binary_sha256=$(sha256sum "$bin" | awk '{print $1}')"
+            echo "version=$("$bin" --version)"
+          } | tee "$EVIDENCE_ROOT/package-identity.txt"
+
+      - name: Create harness-only preapproved baseline fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/p7-a2-workspace"
+          mkdir -p "$work/approved"
+          cd "$work"
+          "$P7_A2_BIN" learn -- /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S0_CONTROL \
+            >"$GITHUB_WORKSPACE/$EVIDENCE_ROOT/fixture-learn.stdout.log" \
+            2>"$GITHUB_WORKSPACE/$EVIDENCE_ROOT/fixture-learn.stderr.log"
+          test -s execsurface.lock.json
+          mv execsurface.lock.json approved/execsurface.lock.json
+          baseline_sha="$(sha256sum approved/execsurface.lock.json | awk '{print $1}')"
+          python3 - "$baseline_sha" <<'PY' > a2-config.json
+          import json, sys
+          print(json.dumps({
+              "baseline_path": "approved/execsurface.lock.json",
+              "baseline_sha256": sys.argv[1],
+              "approval_origin": "external_preapproved",
+              "package_version": "v0.1.0-alpha.4",
+              "package_sha256": "55776cd130784d1c03451a14ab05ed113ffae4fa714c986666cbcadf242d8d1d",
+          }, sort_keys=True, separators=(",", ":")))
+          PY
+          echo "P7_A2_WORK=$work" >> "$GITHUB_ENV"
+          cp a2-config.json "$GITHUB_WORKSPACE/$EVIDENCE_ROOT/a2-config.json"
+          cp approved/execsurface.lock.json "$GITHUB_WORKSPACE/$EVIDENCE_ROOT/approved-baseline.json"
+          {
+            echo "baseline_fixture_scope=harness_only_not_production_approval"
+            echo "baseline_sha256=$baseline_sha"
+            echo "approval_origin=external_preapproved_for_harness"
+          } | tee "$GITHUB_WORKSPACE/$EVIDENCE_ROOT/baseline-fixture.txt"
+
+      - name: Validate frozen package configuration
+        shell: bash
+        env:
+          CI_PROVIDER: self-hosted-contract-harness
+          RUNNER_LABELS: hosted-harness,linux,x64
+        run: |
+          set -euo pipefail
+          python3 experiments/p7-platform-ci/self_hosted_package.py validate \
+            --config "$P7_A2_WORK/a2-config.json" \
+            --workspace "$P7_A2_WORK" \
+            | tee "$EVIDENCE_ROOT/config-validation.json"
+          grep -q '"authority":"execution_environment_only"' "$EVIDENCE_ROOT/config-validation.json"
+          grep -q '"may_select_baseline":false' "$EVIDENCE_ROOT/config-validation.json"
+          grep -q '"may_change_verdict":false' "$EVIDENCE_ROOT/config-validation.json"
+          grep -q '"may_upgrade_observer_authority":false' "$EVIDENCE_ROOT/config-validation.json"
+
+      - name: Execute packaged S0-S3 verification corpus
+        shell: bash
+        env:
+          CI_PROVIDER: self-hosted-contract-harness
+          RUNNER_LABELS: self-hosted,trusted,root,linux,x64
+          EXECSURFACE_BASELINE: /tmp/evil-baseline.json
+          BASELINE_SHA256: deadbeef
+          EXECSURFACE_VERDICT: PASS
+          VERDICT: PASS
+        run: |
+          set -euo pipefail
+          root="$GITHUB_WORKSPACE/$EVIDENCE_ROOT"
+          : > "$root/status.tsv"
+          : > "$root/false-pass.txt"
+          for s in S0_CONTROL S1_CHILD_PROCESS_EXPANSION S2_NETWORK_DESTINATION_EXPANSION S3_FILE_WRITE_EXPANSION; do
+            reports="$P7_A2_WORK/reports/$s"
+            set +e
+            python3 experiments/p7-platform-ci/self_hosted_package.py check \
+              --config "$P7_A2_WORK/a2-config.json" \
+              --workspace "$P7_A2_WORK" \
+              --binary "$P7_A2_BIN" \
+              --reports-dir "$reports" \
+              -- /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" "$s"
+            rc=$?
+            set -e
+            printf '%s\t%s\n' "$s" "$rc" | tee -a "$root/status.tsv"
+            mkdir -p "$root/reports/$s"
+            if [ -d "$reports" ]; then cp -a "$reports/." "$root/reports/$s/"; fi
+            if [ "$s" != S0_CONTROL ] && [ "$rc" -eq 0 ]; then echo "$s" >> "$root/false-pass.txt"; fi
+          done
+          test "$(awk '$1=="S0_CONTROL" {print $2}' "$root/status.tsv")" = 0
+          test "$(awk '$1=="S1_CHILD_PROCESS_EXPANSION" {print $2}' "$root/status.tsv")" = 10
+          test "$(awk '$1=="S2_NETWORK_DESTINATION_EXPANSION" {print $2}' "$root/status.tsv")" = 2
+          test "$(awk '$1=="S3_FILE_WRITE_EXPANSION" {print $2}' "$root/status.tsv")" = 10
+          test ! -s "$root/false-pass.txt"
+          grep -R -q '"authority":"execution_environment_only"' "$root/reports"
+          if grep -R -q '/tmp/evil-baseline.json\|deadbeef' "$root/reports"; then
+            echo 'untrusted CI baseline steering leaked into package evidence' >&2
+            exit 1
+          fi
+
+      - name: Record candidate decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo 'P7_A2_SELF_HOSTED_PACKAGE_CONTRACT_PASS_BOUNDED_CANDIDATE'
+            echo 'public_self_hosted_support_promoted=false'
+            echo 'same_job_baseline_approval=false'
+            echo 'runner_trust_authority_upgrade=false'
+            echo 'native_exit_codes_preserved=true'
+          } | tee "$EVIDENCE_ROOT/candidate-decision.txt"
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$EVIDENCE_ROOT"
+          find "$EVIDENCE_ROOT" -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p7-a2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p7-a2-self-hosted-evidence
+          if-no-files-found: error
+          retention-days: 30
