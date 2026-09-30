@@ -1,0 +1,186 @@
+name: P7 A0 native arm64 parity gate
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - '.github/workflows/p7-a0-arm64-parity.yml'
+      - 'docs/development/P7_A0_ARM64_PARITY_PROTOCOL.md'
+      - 'experiments/p7-platform-ci/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  RUST_TOOLCHAIN: '1.90.0'
+  WORKLOAD: experiments/p6-competitive-falsification/workload.sh
+  WORKLOAD_BLOB: c5986f1acd8bc79a3945e613acc128d5c8a9d168
+
+jobs:
+  native-parity:
+    name: native-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout research branch with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Freeze identities and immutable public boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "p7-a0-${{ matrix.arch }}-evidence"
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git hash-object "$WORKLOAD")" = "$WORKLOAD_BLOB"
+          grep -q 'PREREGISTERED — NO A0 RESULT YET' docs/development/P7_A0_ARM64_PARITY_PROTOCOL.md
+          {
+            echo "research_head=$(git rev-parse HEAD)"
+            echo "alpha4_source=$ALPHA4_SOURCE"
+            echo "workload_blob=$WORKLOAD_BLOB"
+            echo "matrix_arch=${{ matrix.arch }}"
+            echo "runner_label=${{ matrix.runner }}"
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "uname_machine=$(uname -m)"
+            echo "kernel=$(uname -r)"
+          } | tee "p7-a0-${{ matrix.arch }}-evidence/freeze.txt"
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          cargo +"$RUST_TOOLCHAIN" --version | tee "p7-a0-${{ matrix.arch }}-evidence/cargo-version.txt"
+          rustc +"$RUST_TOOLCHAIN" -vV | tee "p7-a0-${{ matrix.arch }}-evidence/rustc-version.txt"
+
+      - name: Create exact alpha.4 detached worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          ALPHA4_DIR="$RUNNER_TEMP/execsurface-alpha4-${{ matrix.arch }}"
+          git worktree add --detach "$ALPHA4_DIR" "$ALPHA4_SOURCE"
+          test "$(git -C "$ALPHA4_DIR" rev-parse HEAD)" = "$ALPHA4_SOURCE"
+          echo "ALPHA4_DIR=$ALPHA4_DIR" >> "$GITHUB_ENV"
+
+      - name: Test exact alpha.4 source natively
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          cargo +"$RUST_TOOLCHAIN" test --locked --workspace \
+            --manifest-path "$ALPHA4_DIR/Cargo.toml" \
+            2>&1 | tee "p7-a0-${{ matrix.arch }}-evidence/cargo-test.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "cargo_test_rc=$rc" | tee "p7-a0-${{ matrix.arch }}-evidence/cargo-test-status.txt"
+          exit "$rc"
+
+      - name: Build exact alpha.4 source natively
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          cargo +"$RUST_TOOLCHAIN" build --locked --release --bin execsurface \
+            --manifest-path "$ALPHA4_DIR/Cargo.toml" \
+            2>&1 | tee "p7-a0-${{ matrix.arch }}-evidence/cargo-build.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "cargo_build_rc=$rc" | tee "p7-a0-${{ matrix.arch }}-evidence/cargo-build-status.txt"
+          if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+          bin="$ALPHA4_DIR/target/release/execsurface"
+          test -x "$bin"
+          test "$("$bin" --version)" = 'execsurface 0.1.0-alpha.4'
+          sha256sum "$bin" | tee "p7-a0-${{ matrix.arch }}-evidence/binary-sha256.txt"
+          file "$bin" | tee "p7-a0-${{ matrix.arch }}-evidence/binary-file.txt"
+          echo "P7_ES_BIN=$bin" >> "$GITHUB_ENV"
+
+      - name: Learn independent S0 baseline once
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f execsurface.lock.json
+          "$P7_ES_BIN" learn -- /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S0_CONTROL \
+            >"p7-a0-${{ matrix.arch }}-evidence/learn.stdout.log" \
+            2>"p7-a0-${{ matrix.arch }}-evidence/learn.stderr.log"
+          test -s execsurface.lock.json
+          cp execsurface.lock.json "p7-a0-${{ matrix.arch }}-evidence/baseline.json"
+          python3 - <<'PY' > "p7-a0-${{ matrix.arch }}-evidence/baseline-identity.txt"
+          import json
+          d=json.load(open('execsurface.lock.json'))
+          print('baseline_digest='+d['baseline_digest'])
+          print('effects='+str(len(d['payload']['canonical_surface']['effects'])))
+          PY
+
+      - name: Execute frozen S0-S3 corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="p7-a0-${{ matrix.arch }}-evidence"
+          : > "$root/status.tsv"
+          : > "$root/false-pass.txt"
+          : > "$root/unexpected-exit.txt"
+          for s in S0_CONTROL S1_CHILD_PROCESS_EXPANSION S2_NETWORK_DESTINATION_EXPANSION S3_FILE_WRITE_EXPANSION; do
+            set +e
+            "$P7_ES_BIN" check --baseline execsurface.lock.json \
+              --json-output "$root/${s}.json" \
+              --markdown-output "$root/${s}.md" \
+              -- /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" "$s" \
+              >"$root/${s}.stdout.log" 2>"$root/${s}.stderr.log"
+            rc=$?
+            set -e
+            printf '%s\t%s\n' "$s" "$rc" | tee -a "$root/status.tsv"
+            case "$rc" in 0|2|10|20) ;; *) echo "$s=$rc" >> "$root/unexpected-exit.txt" ;; esac
+            if [ "$s" != S0_CONTROL ] && [ "$rc" -eq 0 ]; then
+              echo "$s" >> "$root/false-pass.txt"
+            fi
+          done
+          test "$(awk '$1=="S0_CONTROL" {print $2}' "$root/status.tsv")" = '0'
+          test ! -s "$root/false-pass.txt"
+          test ! -s "$root/unexpected-exit.txt"
+          if test -f /tmp/execsurface-p6/s2-resolved-ips.txt; then
+            cp /tmp/execsurface-p6/s2-resolved-ips.txt "$root/"
+          fi
+
+      - name: Seal native evidence
+        if: always()
+        shell: bash
+        run: |
+          root="p7-a0-${{ matrix.arch }}-evidence"
+          mkdir -p "$root"
+          {
+            echo "matrix_arch=${{ matrix.arch }}"
+            echo "runner_label=${{ matrix.runner }}"
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "uname_machine=$(uname -m)"
+            echo "kernel=$(uname -r)"
+            echo "alpha4_source=$ALPHA4_SOURCE"
+            echo "workload_blob=$WORKLOAD_BLOB"
+            echo "public_support_promoted=false"
+            echo "baseline_interchangeability_claim=false"
+            echo "architecture_specific_threshold_change=false"
+          } > "$root/operational-context.txt"
+          find "$root" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$root/SHA256SUMS"
+
+      - name: Upload native evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p7-a0-${{ matrix.arch }}-${{ github.run_id }}
+          path: p7-a0-${{ matrix.arch }}-evidence
+          if-no-files-found: error
+          retention-days: 30
