@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use execsurface_p5_attestation_provenance::{
-    verify_bundle, AuthorityState, CompletenessState, ProvenanceReference, ResourceDescriptor,
-    VerificationBundle, Verdict,
+    verify_bundle, AuthorityState, CapabilityState, CompletenessState, ObserverHealth,
+    ProvenanceReference, ResourceDescriptor, VerificationBundle, Verdict,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -40,10 +40,15 @@ pub struct ExpectedVerificationContext {
     pub current_surface_digest: String,
     pub evidence_digest: String,
     pub observer_profile: String,
+    pub capability_state: CapabilityState,
+    pub observer_health: ObserverHealth,
     pub policy: ResourceDescriptor,
     pub authority: AuthorityState,
     pub completeness: CompletenessState,
     pub verdict: Verdict,
+    pub verifier: ResourceDescriptor,
+    pub verifier_id: String,
+    pub created_at: String,
     pub provenance: Option<ProvenanceReference>,
 }
 
@@ -100,6 +105,19 @@ fn canonicalize_manifest(items: &[GraphItem]) -> Result<Vec<GraphItem>, GraphErr
     Ok(canonical)
 }
 
+fn verify_svr_properties_canonical(bundle: &VerificationBundle) -> Result<(), GraphError> {
+    if bundle
+        .svr
+        .predicate
+        .properties
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+    {
+        return Err(GraphError::new("svr_properties_noncanonical"));
+    }
+    Ok(())
+}
+
 pub fn graph_manifest_digest(items: &[GraphItem]) -> Result<String, GraphError> {
     let canonical = canonicalize_manifest(items)?;
     let bytes = serde_json::to_vec(&canonical)
@@ -140,6 +158,7 @@ pub fn verify_expected_context(
     expected: &ExpectedVerificationContext,
 ) -> Result<(), GraphError> {
     verify_bundle(bundle).map_err(|error| GraphError::new(error.reason_code))?;
+    verify_svr_properties_canonical(bundle)?;
 
     let [subject] = bundle.runtime_trace.subject.as_slice() else {
         return Err(GraphError::new("unexpected_subject_cardinality"));
@@ -180,6 +199,12 @@ pub fn verify_expected_context(
     if conditions.observer_profile != expected.observer_profile {
         return Err(GraphError::new("expected_observer_profile_mismatch"));
     }
+    if conditions.capability_state != expected.capability_state {
+        return Err(GraphError::new("expected_capability_state_mismatch"));
+    }
+    if conditions.observer_health != expected.observer_health {
+        return Err(GraphError::new("expected_observer_health_mismatch"));
+    }
     if conditions.authority != expected.authority {
         return Err(GraphError::new("expected_authority_mismatch"));
     }
@@ -192,12 +217,21 @@ pub fn verify_expected_context(
     if conditions.slsa_provenance != expected.provenance {
         return Err(GraphError::new("expected_provenance_mismatch"));
     }
+    if conditions.verifier_identity != expected.verifier {
+        return Err(GraphError::new("expected_verifier_identity_mismatch"));
+    }
 
     let [policy] = bundle.svr.predicate.verifier.policies.as_slice() else {
         return Err(GraphError::new("svr_policy_cardinality_mismatch"));
     };
     if policy != &expected.policy {
         return Err(GraphError::new("expected_policy_mismatch"));
+    }
+    if bundle.svr.predicate.verifier.id != expected.verifier_id {
+        return Err(GraphError::new("expected_verifier_id_mismatch"));
+    }
+    if bundle.svr.predicate.time_created != expected.created_at {
+        return Err(GraphError::new("expected_verification_time_mismatch"));
     }
 
     Ok(())
