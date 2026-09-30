@@ -1,0 +1,154 @@
+name: P7 A2 self-hosted packaging evidence gate
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - '.github/workflows/p7-a2-self-hosted-evidence.yml'
+      - 'docs/development/P7_A2_SELF_HOSTED_EVIDENCE_PROTOCOL.md'
+      - 'experiments/p7-platform-ci/self_hosted_evidence_contract.py'
+      - 'experiments/p7-platform-ci/test_self_hosted_evidence_contract.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  P5_CLOSEOUT_SOURCE: 1f4df8f45a115a1638c997107e069c6acd74c51b
+  P6_CLOSEOUT_SOURCE: 2fd32bf61275e733ddfb11df4f382cde6deab74b
+  P7_A0_DECISION_SOURCE: 5cc80b7b3188b0879bcc585362579aff644c76f6
+  P7_A1_DECISION_SOURCE: 1a648cb6a44eb1f87edfc44a67d2b822daab8280
+  PROTOCOL_BLOB: 4e0e44db564a292fb8b688a9e75e4504986b5b0c
+  CONTRACT_BLOB: 606fecd50900f3895721e50625c8d73792ee2c42
+  TEST_BLOB: ea23d13943c8c4e0a91b06e2ee5afe3909139fd4
+  EVIDENCE_ROOT: p7-a2-self-hosted-evidence
+
+jobs:
+  self-hosted-evidence-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout research branch with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Verify frozen predecessors and public boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          git merge-base --is-ancestor "$P5_CLOSEOUT_SOURCE" HEAD
+          git merge-base --is-ancestor "$P6_CLOSEOUT_SOURCE" HEAD
+          git merge-base --is-ancestor "$P7_A0_DECISION_SOURCE" HEAD
+          git merge-base --is-ancestor "$P7_A1_DECISION_SOURCE" HEAD
+          if git diff --name-only "$P6_CLOSEOUT_SOURCE"..HEAD | grep -q '^crates/'; then
+            echo 'P7 modified public crates/ after P6 closeout' >&2
+            exit 1
+          fi
+          grep -q 'P7_A0_ARM64_NOT_PORTABLE' docs/development/P7_A0_ARM64_DECISION.md
+          grep -q 'P7_A1_GITLAB_CONTEXT_ADAPTER_PASS_BOUNDED' docs/development/P7_A1_DECISION.md
+          grep -q 'Run: `36774938918`' docs/development/P7_A1_DECISION.md
+          grep -q 'Result: \*\*13/14 PASS\*\*' docs/development/P7_A1_DECISION.md
+          grep -q 'PREREGISTERED — NO A2 RESULT YET' docs/development/P7_A2_SELF_HOSTED_EVIDENCE_PROTOCOL.md
+          {
+            echo "head=$(git rev-parse HEAD)"
+            echo "alpha4_source=$ALPHA4_SOURCE"
+            echo "p5_closeout=$P5_CLOSEOUT_SOURCE"
+            echo "p6_closeout=$P6_CLOSEOUT_SOURCE"
+            echo "p7_a0=$P7_A0_DECISION_SOURCE"
+            echo "p7_a1=$P7_A1_DECISION_SOURCE"
+          } | tee "$EVIDENCE_ROOT/boundaries.txt"
+
+      - name: Verify frozen A2 blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object docs/development/P7_A2_SELF_HOSTED_EVIDENCE_PROTOCOL.md)" = "$PROTOCOL_BLOB"
+          test "$(git hash-object experiments/p7-platform-ci/self_hosted_evidence_contract.py)" = "$CONTRACT_BLOB"
+          test "$(git hash-object experiments/p7-platform-ci/test_self_hosted_evidence_contract.py)" = "$TEST_BLOB"
+          {
+            echo "protocol_blob=$PROTOCOL_BLOB"
+            echo "contract_blob=$CONTRACT_BLOB"
+            echo "test_blob=$TEST_BLOB"
+          } | tee "$EVIDENCE_ROOT/frozen-blobs.txt"
+
+      - name: Static syntax gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            experiments/p7-platform-ci/self_hosted_evidence_contract.py \
+            experiments/p7-platform-ci/test_self_hosted_evidence_contract.py
+          python3 --version | tee "$EVIDENCE_ROOT/python-version.txt"
+
+      - name: Execute frozen 16-test falsification corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover \
+            -s experiments/p7-platform-ci \
+            -p 'test_self_hosted_evidence_contract.py' -v \
+            2>&1 | tee "$EVIDENCE_ROOT/tests.log"
+          grep -q '^Ran 16 tests' "$EVIDENCE_ROOT/tests.log"
+          grep -q '^OK$' "$EVIDENCE_ROOT/tests.log"
+
+      - name: Emit deterministic package and evidence reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=experiments/p7-platform-ci python3 - <<'PY' | tee "$EVIDENCE_ROOT/reference.json"
+          import json
+          from self_hosted_evidence_contract import build_package_contract, bind_verification_evidence
+          runner = {
+              'provider': 'self-hosted-ci',
+              'runner_id': 'reference-runner',
+              'os': 'linux',
+              'arch': 'x86_64',
+              'labels': ['self-hosted', 'trusted', 'prod'],
+          }
+          package = build_package_contract(runner)
+          evidence = bind_verification_evidence(
+              package,
+              verdict='REVIEW',
+              evidence_digest='b' * 64,
+              observer_authority='derived',
+              observer_completeness='complete',
+          )
+          print(json.dumps({'package': package.output(), 'evidence': evidence.output()}, sort_keys=True, separators=(',', ':')))
+          PY
+          grep -q '"authority":"context_only"' "$EVIDENCE_ROOT/reference.json"
+          grep -q '"package_eligible":true' "$EVIDENCE_ROOT/reference.json"
+          grep -q '"authority_upgraded_by_runner":false' "$EVIDENCE_ROOT/reference.json"
+          grep -q '"completeness_upgraded_by_runner":false' "$EVIDENCE_ROOT/reference.json"
+          grep -q '"may_infer_baseline":false' "$EVIDENCE_ROOT/reference.json"
+          grep -q '"may_change_verdict":false' "$EVIDENCE_ROOT/reference.json"
+
+      - name: Record candidate decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'P7_A2_SELF_HOSTED_EVIDENCE_CONTRACT_PASS_BOUNDED_CANDIDATE' | tee "$EVIDENCE_ROOT/candidate-decision.txt"
+          echo 'public_self_hosted_support_promoted=false' | tee -a "$EVIDENCE_ROOT/candidate-decision.txt"
+          echo 'runner_metadata_authority=context_only' | tee -a "$EVIDENCE_ROOT/candidate-decision.txt"
+          echo 'arm64_support_promoted=false' | tee -a "$EVIDENCE_ROOT/candidate-decision.txt"
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$EVIDENCE_ROOT"
+          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p7-a2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p7-a2-self-hosted-evidence
+          if-no-files-found: error
+          retention-days: 30
