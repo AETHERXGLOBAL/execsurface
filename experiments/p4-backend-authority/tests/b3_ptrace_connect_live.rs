@@ -35,6 +35,22 @@ fn digest_text(value: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(value.as_bytes()))
 }
 
+fn retain_non_live_model_variants_for_target_compilation() {
+    // The live ptrace corpus is intentionally bounded to AF_INET. Construct the
+    // other frozen model variants here so per-target `-D dead-code` does not
+    // mistake research-model reachability for live-backend authority.
+    let _ = ConnectDestination::Inet6 {
+        address: [0; 16],
+        port: 1,
+        flowinfo: 0,
+        scope_id: 0,
+    };
+    let _ = ConnectDestination::Unix {
+        path_bytes: b"x".to_vec(),
+        abstract_namespace: false,
+    };
+}
+
 fn resume(pid: libc::pid_t) {
     let rc = unsafe {
         libc::ptrace(
@@ -395,6 +411,7 @@ fn live_observer_loss_blocks_success_authority() {
 fn live_identical_evidence_has_deterministic_proof_identity() {
     use std::net::TcpListener;
 
+    retain_non_live_model_variants_for_target_compilation();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let event = trace("connect", port);
