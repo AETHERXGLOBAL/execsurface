@@ -1,0 +1,159 @@
+name: P7 bounded closeout evidence gate
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - '.github/workflows/p7-closeout.yml'
+      - 'docs/development/P7_CLOSEOUT_PROTOCOL.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  P6_CLOSEOUT_SOURCE: 2fd32bf61275e733ddfb11df4f382cde6deab74b
+  P7_A0_DECISION_SOURCE: 5cc80b7b3188b0879bcc585362579aff644c76f6
+  P7_A1_DECISION_SOURCE: 1a648cb6a44eb1f87edfc44a67d2b822daab8280
+  P7_A2_CONSOLIDATED_SOURCE: a9a12be8855b9eb791e9daa3807cc92afc983bfb
+  CLOSEOUT_PROTOCOL_BLOB: 3c27ba8434b0c5abb8bb0eb300cfe7645b4b0bcf
+  EVIDENCE_ROOT: p7-closeout-evidence
+
+jobs:
+  p7-closeout:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout research branch with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Verify immutable boundary and decision ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          git merge-base --is-ancestor "$P6_CLOSEOUT_SOURCE" HEAD
+          git merge-base --is-ancestor "$P7_A0_DECISION_SOURCE" HEAD
+          git merge-base --is-ancestor "$P7_A1_DECISION_SOURCE" HEAD
+          git merge-base --is-ancestor "$P7_A2_CONSOLIDATED_SOURCE" HEAD
+          test "$(git hash-object docs/development/P7_CLOSEOUT_PROTOCOL.md)" = "$CLOSEOUT_PROTOCOL_BLOB"
+          if git diff --name-only "$P6_CLOSEOUT_SOURCE"..HEAD | grep -q '^crates/'; then
+            echo 'P7 modified public crates/ after P6 closeout' >&2
+            exit 1
+          fi
+          grep -q 'P7_A0_ARM64_NOT_PORTABLE' docs/development/P7_A0_ARM64_DECISION.md
+          grep -q 'P7_A1_GITLAB_CONTEXT_ADAPTER_PASS_BOUNDED' docs/development/P7_A1_DECISION.md
+          grep -q 'Result: \*\*13/14 PASS\*\*' docs/development/P7_A1_DECISION.md
+          grep -q 'P7_A2_SELF_HOSTED_CONTRACTS_PASS_BOUNDED' docs/development/P7_A2_CONSOLIDATED_DECISION.md
+          {
+            echo "head=$(git rev-parse HEAD)"
+            echo "alpha4_source=$ALPHA4_SOURCE"
+            echo "p6_closeout=$P6_CLOSEOUT_SOURCE"
+            echo "p7_a0=$P7_A0_DECISION_SOURCE"
+            echo "p7_a1=$P7_A1_DECISION_SOURCE"
+            echo "p7_a2=$P7_A2_CONSOLIDATED_SOURCE"
+          } | tee "$EVIDENCE_ROOT/boundaries.txt"
+
+      - name: Reverify exact workflow conclusions
+        shell: bash
+        env:
+          API_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          get_run() {
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer $API_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              "$api/actions/runs/$1"
+          }
+          a0="$(get_run 36774237512)"
+          a1="$(get_run 36775178743)"
+          a2p="$(get_run 36775768709)"
+          a2e="$(get_run 36775802501)"
+          test "$(jq -r .conclusion <<<"$a0")" = failure
+          test "$(jq -r .conclusion <<<"$a1")" = success
+          test "$(jq -r .conclusion <<<"$a2p")" = success
+          test "$(jq -r .conclusion <<<"$a2e")" = success
+          {
+            echo -e 'gate\trun\tconclusion\thead_sha'
+            echo -e "A0\t36774237512\t$(jq -r .conclusion <<<"$a0")\t$(jq -r .head_sha <<<"$a0")"
+            echo -e "A1\t36775178743\t$(jq -r .conclusion <<<"$a1")\t$(jq -r .head_sha <<<"$a1")"
+            echo -e "A2-P\t36775768709\t$(jq -r .conclusion <<<"$a2p")\t$(jq -r .head_sha <<<"$a2p")"
+            echo -e "A2-E\t36775802501\t$(jq -r .conclusion <<<"$a2e")\t$(jq -r .head_sha <<<"$a2e")"
+          } | tee "$EVIDENCE_ROOT/runs.tsv"
+
+      - name: Reverify artifact identities and digests
+        shell: bash
+        env:
+          API_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          verify_artifact() {
+            id="$1" expected="$2" label="$3"
+            body="$(curl --fail --silent --show-error \
+              -H "Authorization: Bearer $API_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              "$api/actions/artifacts/$id")"
+            test "$(jq -r .expired <<<"$body")" = false
+            test "$(jq -r .digest <<<"$body")" = "$expected"
+            printf '%s\t%s\t%s\t%s\n' "$label" "$id" "$(jq -r .name <<<"$body")" "$(jq -r .digest <<<"$body")"
+          }
+          echo -e 'gate\tartifact_id\tname\tdigest' > "$EVIDENCE_ROOT/artifacts.tsv"
+          verify_artifact 11125646709 'sha256:b86b68056751301db72da23b2fab52939a4212192913e004bafce3254a7fd1fe' A1 >> "$EVIDENCE_ROOT/artifacts.tsv"
+          verify_artifact 11125257579 'sha256:f3736483d24fbfad4b7f2fe110c544d0ef23d438e8b97e49e7e1a1d4d52412b2' A2-P >> "$EVIDENCE_ROOT/artifacts.tsv"
+          verify_artifact 11125232540 'sha256:b8455e5ad2eecf26cccfe204bb0466c220f4d5416d3513b62531aee06370a8ed' A2-E >> "$EVIDENCE_ROOT/artifacts.tsv"
+          cat "$EVIDENCE_ROOT/artifacts.tsv"
+
+      - name: Verify retained A0 artifacts remain addressable
+        shell: bash
+        env:
+          API_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          for id in 11125085724 11124618384; do
+            body="$(curl --fail --silent --show-error \
+              -H "Authorization: Bearer $API_TOKEN" \
+              -H 'Accept: application/vnd.github+json' \
+              "$api/actions/artifacts/$id")"
+            test "$(jq -r .expired <<<"$body")" = false
+            jq -r '[.id,.name,.digest] | @tsv' <<<"$body"
+          done | tee "$EVIDENCE_ROOT/a0-artifacts.tsv"
+
+      - name: Record bounded closeout candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo 'P7_PLATFORM_CI_RESEARCH_COMPLETE_BOUNDED_CANDIDATE'
+            echo 'arm64_public_support=false'
+            echo 'gitlab_public_support=false'
+            echo 'self_hosted_public_support=false'
+            echo 'additional_os_opened=false'
+            echo 'public_semantics_changed=false'
+          } | tee "$EVIDENCE_ROOT/candidate-decision.txt"
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$EVIDENCE_ROOT"
+          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p7-closeout-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p7-closeout-evidence
+          if-no-files-found: error
+          retention-days: 30
