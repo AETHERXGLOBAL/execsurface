@@ -36,7 +36,7 @@ fn addr(port: u16) -> libc::sockaddr_in {
         sin_family: libc::AF_INET as libc::sa_family_t,
         sin_port: port.to_be(),
         sin_addr: libc::in_addr {
-            s_addr: u32::from_ne_bytes([127, 0, 0, 1]).to_be(),
+            s_addr: u32::from_be_bytes([127, 0, 0, 1]).to_be(),
         },
         sin_zero: [0; 8],
     }
