@@ -74,7 +74,7 @@ pub struct UnsupportedImport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum ImportDecision {
-    Evidence(ImportedExecEvidence),
+    Evidence(Box<ImportedExecEvidence>),
     NonAuthoritative(NonAuthoritativeImport),
     Unsupported(UnsupportedImport),
 }
@@ -323,7 +323,7 @@ pub fn import_tetragon_event(
         adapter: &adapter,
     });
 
-    Ok(ImportDecision::Evidence(ImportedExecEvidence {
+    Ok(ImportDecision::Evidence(Box::new(ImportedExecEvidence {
         external: schema.clone(),
         producer_profile: IMPORT_PROFILE.to_owned(),
         raw_event_digest,
@@ -331,5 +331,5 @@ pub fn import_tetragon_event(
         subject_exec_id: subject_exec_id.to_owned(),
         parent_exec_id: parent_exec_id.to_owned(),
         adapter,
-    }))
+    })))
 }
