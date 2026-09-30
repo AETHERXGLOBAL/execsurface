@@ -20,6 +20,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RUST_TOOLCHAIN: 1.90.0
       EVIDENCE_ROOT: p5-a5-cross-attestation-redteam-evidence
+      P5_A3_FIXTURE: ${{ github.workspace }}/p5-a3-upstream.json
+      P5_A3_UPSTREAM_REPOSITORY: https://github.com/slsa-framework/slsa-verifier.git
+      P5_A3_UPSTREAM_COMMIT: 30d0be3bbab553fc51557377baba2f7572dfc212
+      P5_A3_UPSTREAM_PATH: verifiers/internal/gcb/testdata/v1.0-gcloud-container-github-single.json
+      P5_A3_UPSTREAM_BLOB_SHA: 7102e40887a758e01184ac79ca10cb34b7281627
       P5_A4_ACCEPTED_SOURCE: 862f0830511fe1421de20717187645d6e0a9a52e
       P5_A4_DECISION_SOURCE: 9fe4d1f81a79bd75064f8c14571b6580948af569
       P5_A3_ACCEPTED_SOURCE: d0ee3d0d1bd5a491ddc5796be08458026e1cbd8a
@@ -122,6 +127,24 @@ jobs:
               ((.verificationResult.verifiedTimestamps // []) | length > 0)
             )
           ' "$EVIDENCE_ROOT/a4-reverify.json" >/dev/null
+
+      - name: Restore and verify pinned P5 A3 fixture
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          git -C "$tmp" init -q
+          git -C "$tmp" remote add origin "$P5_A3_UPSTREAM_REPOSITORY"
+          git -C "$tmp" fetch -q --depth=1 origin "$P5_A3_UPSTREAM_COMMIT"
+          actual_commit="$(git -C "$tmp" rev-parse FETCH_HEAD)"
+          test "$actual_commit" = "$P5_A3_UPSTREAM_COMMIT"
+          actual_blob="$(git -C "$tmp" rev-parse "FETCH_HEAD:$P5_A3_UPSTREAM_PATH")"
+          test "$actual_blob" = "$P5_A3_UPSTREAM_BLOB_SHA"
+          git -C "$tmp" show "FETCH_HEAD:$P5_A3_UPSTREAM_PATH" > "$P5_A3_FIXTURE"
+          grep -q 'https://slsa.dev/provenance/v1' "$P5_A3_FIXTURE"
+          printf 'a3_upstream_commit=%s\n' "$actual_commit" | tee "$EVIDENCE_ROOT/a3-upstream.txt"
+          printf 'a3_upstream_blob=%s\n' "$actual_blob" | tee -a "$EVIDENCE_ROOT/a3-upstream.txt"
+          printf 'a3_upstream_path=%s\n' "$P5_A3_UPSTREAM_PATH" | tee -a "$EVIDENCE_ROOT/a3-upstream.txt"
+          sha256sum "$P5_A3_FIXTURE" | tee "$EVIDENCE_ROOT/a3-upstream-file-sha256.txt"
 
       - name: Reprove P5 A3 A2 A1 and A0
         run: |
