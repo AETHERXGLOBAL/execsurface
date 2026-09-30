@@ -242,10 +242,13 @@ fn live_sync_success_binds_actor_entry_fd_destination_and_rc_zero() {
     assert!(event.actor_tid > 0);
     assert!(event.exit_seq > event.entry_seq);
     assert_eq!(context.socket_fd, event.fd);
-    assert_eq!(context.destination, ConnectDestination::Inet4 {
-        address: [127, 0, 0, 1],
-        port,
-    });
+    assert_eq!(
+        context.destination,
+        ConnectDestination::Inet4 {
+            address: [127, 0, 0, 1],
+            port,
+        }
+    );
     assert!(record.is_success_authority());
 }
 
@@ -260,7 +263,10 @@ fn live_negative_connect_remains_explicit_failure() {
     let record = record_from_event(&event, ObservationHealth::healthy());
 
     assert!(event.raw_return < 0);
-    assert!(matches!(record.authority, ConnectAuthority::FailureObserved { .. }));
+    assert!(matches!(
+        record.authority,
+        ConnectAuthority::FailureObserved { .. }
+    ));
     assert!(!record.is_success_authority());
 }
 
@@ -307,11 +313,7 @@ fn live_fd_substitution_reuse_and_replay_cannot_transfer_authority() {
     let exit = exit_from_event(&event);
 
     let evidence = EvidenceLedger::default()
-        .classify_pair(
-            entry.clone(),
-            exit.clone(),
-            ObservationHealth::healthy(),
-        )
+        .classify_pair(entry.clone(), exit.clone(), ObservationHealth::healthy())
         .unwrap();
     let mut substituted = original.clone();
     substituted.socket_fd += 1;
@@ -344,13 +346,12 @@ fn live_actor_and_entry_substitution_fail_closed() {
     wrong_actor.actor.process_identity = format!("ptrace-live-tid:{}", wrong_actor.actor.tid);
     wrong_actor.actor.causal_chain_digest = digest_text(&wrong_actor.actor.process_identity);
     let actor_result = EvidenceLedger::default()
-        .classify_pair(
-            entry.clone(),
-            wrong_actor,
-            ObservationHealth::healthy(),
-        )
+        .classify_pair(entry.clone(), wrong_actor, ObservationHealth::healthy())
         .unwrap();
-    assert!(matches!(actor_result.state, EvidenceState::Ambiguous { .. }));
+    assert!(matches!(
+        actor_result.state,
+        EvidenceState::Ambiguous { .. }
+    ));
     assert!(!actor_result.state.is_success());
 
     let mut wrong_entry = exit_from_event(&event);
@@ -358,7 +359,10 @@ fn live_actor_and_entry_substitution_fail_closed() {
     let entry_result = EvidenceLedger::default()
         .classify_pair(entry, wrong_entry, ObservationHealth::healthy())
         .unwrap();
-    assert!(matches!(entry_result.state, EvidenceState::Ambiguous { .. }));
+    assert!(matches!(
+        entry_result.state,
+        EvidenceState::Ambiguous { .. }
+    ));
     assert!(!entry_result.state.is_success());
 }
 
@@ -430,6 +434,9 @@ fn live_later_socket_state_cannot_relabel_recorded_failure() {
     assert!(later.is_ok());
 
     assert_eq!(record.authority, original);
-    assert!(matches!(record.authority, ConnectAuthority::FailureObserved { .. }));
+    assert!(matches!(
+        record.authority,
+        ConnectAuthority::FailureObserved { .. }
+    ));
     assert!(!record.is_success_authority());
 }
