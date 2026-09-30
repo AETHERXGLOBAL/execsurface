@@ -75,6 +75,7 @@ jobs:
           printf 'p5_a4_accepted_source=%s\n' "$P5_A4_ACCEPTED_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
           printf 'p4_closeout_source=%s\n' "$P4_CLOSEOUT_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
           printf 'alpha4_source=%s\n' "$ALPHA4_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
+          printf 'historical_counterexample_run=36755962689\n' | tee -a "$EVIDENCE_ROOT/source.txt"
           gh version | tee "$EVIDENCE_ROOT/gh-version.txt"
 
       - name: Lock and static gates
@@ -98,8 +99,8 @@ jobs:
         run: |
           set -euo pipefail
           cargo +$RUST_TOOLCHAIN test --locked \
-            --manifest-path experiments/p5-attestation-provenance/Cargo.toml \
-            --test a5_cross_attestation_redteam -- --nocapture \
+            --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml \
+            --test a5_graph_redteam -- --nocapture \
             2>&1 | tee "$EVIDENCE_ROOT/a5.log"
           grep -q 'test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' \
             "$EVIDENCE_ROOT/a5.log"
