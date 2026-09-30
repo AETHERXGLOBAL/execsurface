@@ -95,7 +95,8 @@ class GitLabContextAdapterTests(unittest.TestCase):
         changed = bind_gitlab_context(env)
         self.assertEqual(base.context_digest, changed.context_digest)
         self.assertFalse(changed.output()["may_select_baseline"])
-        self.assertNotIn("baseline", changed.canonical_json)
+        self.assertNotIn("/tmp/evil.json", changed.canonical_json)
+        self.assertNotIn("deadbeef", changed.canonical_json)
 
     def test_12_ci_variables_cannot_supply_or_override_verdict(self):
         base = bind_gitlab_context(self.valid_env())
