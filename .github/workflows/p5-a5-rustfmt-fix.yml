@@ -1,4 +1,4 @@
-name: P5 A5 one-shot rustfmt fix
+name: P5 A5 one-shot harness correction
 
 on:
   push:
@@ -10,39 +10,55 @@ permissions:
   contents: write
 
 jobs:
-  rustfmt-only:
+  harness-only:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
-      - name: Install pinned Rustfmt
+      - name: Install pinned Rust tooling
         run: |
           set -euo pipefail
           rustup toolchain install 1.90.0 --profile minimal
-          rustup component add --toolchain 1.90.0 rustfmt
+          rustup component add --toolchain 1.90.0 rustfmt clippy
 
-      - name: Apply rustfmt only to A5 research crates
+      - name: Use graph digest in frozen A5-11 reorder check
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('experiments/p5-attestation-provenance/tests/a5_cross_attestation_redteam.rs')
+          text = path.read_text()
+          old_import = 'use graph_verifier::{manifest_for_bundle, verify_graph, ExpectedVerificationContext};'
+          new_import = 'use graph_verifier::{\n    graph_manifest_digest, manifest_for_bundle, verify_graph, ExpectedVerificationContext,\n};'
+          if old_import not in text:
+              raise SystemExit('frozen import pattern not found')
+          text = text.replace(old_import, new_import, 1)
+          old_block = '''    let canonical_manifest =\n        manifest_for_bundle(&reordered).expect("canonical reconstruction has manifest");\n    verify_graph(&reordered, &expected, &canonical_manifest)\n        .expect("canonical reconstruction must verify");'''
+          new_block = '''    let canonical_manifest =\n        manifest_for_bundle(&reordered).expect("canonical reconstruction has manifest");\n    let mut reordered_manifest = canonical_manifest.clone();\n    reordered_manifest.reverse();\n    assert_eq!(\n        graph_manifest_digest(&canonical_manifest).expect("canonical manifest digest"),\n        graph_manifest_digest(&reordered_manifest).expect("reordered manifest digest"),\n        "order-insensitive graph manifest must have one canonical identity"\n    );\n    verify_graph(&reordered, &expected, &reordered_manifest)\n        .expect("canonical reconstruction through reordered manifest must verify");'''
+          if old_block not in text:
+              raise SystemExit('frozen A5-11 reconstruction block not found')
+          path.write_text(text.replace(old_block, new_block, 1))
+          PY
           cargo +1.90.0 fmt --manifest-path experiments/p5-attestation-provenance/Cargo.toml
-          cargo +1.90.0 fmt --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
-
           changed="$(git diff --name-only)"
           printf '%s\n' "$changed"
-          test -n "$changed"
-          if printf '%s\n' "$changed" | grep -Ev '^(experiments/p5-attestation-provenance/|experiments/p5-cross-attestation-redteam/)'; then
-            echo 'rustfmt touched a path outside the frozen A5 research boundary' >&2
-            exit 1
-          fi
+          test "$changed" = 'experiments/p5-attestation-provenance/tests/a5_cross_attestation_redteam.rs'
 
-      - name: Commit formatting-only correction
+      - name: Prove correction clears predecessor static gate
+        run: |
+          set -euo pipefail
+          cargo +1.90.0 generate-lockfile --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +1.90.0 fmt --manifest-path experiments/p5-attestation-provenance/Cargo.toml -- --check
+          cargo +1.90.0 clippy --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --all-targets -- -D warnings
+
+      - name: Commit harness-only correction
         run: |
           set -euo pipefail
           git config user.name 'AETHER X CI'
           git config user.email 'aether.x.eg@gmail.com'
-          git add experiments/p5-attestation-provenance experiments/p5-cross-attestation-redteam
+          git add experiments/p5-attestation-provenance/tests/a5_cross_attestation_redteam.rs
           git diff --cached --check
-          git commit -m 'P5 A5: apply rustfmt to corrected graph gate'
+          git commit -m 'P5 A5: exercise canonical graph digest in frozen reorder attack'
           git push origin HEAD:development/post-alpha4-behavioral-integrity
