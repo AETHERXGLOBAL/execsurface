@@ -364,7 +364,10 @@ fn a5_12_digest_domains_are_separated_and_cross_domain_substitution_fails() {
     assert_ne!(scai_domain, svr_domain);
     assert_ne!(scai_domain, bundle_domain);
     assert_ne!(svr_domain, bundle_domain);
-    assert_eq!(trace_domain, domain_digest("runtime-trace-statement", payload));
+    assert_eq!(
+        trace_domain,
+        domain_digest("runtime-trace-statement", payload)
+    );
 
     let mut confused = bundle;
     confused.scai_digest = confused.runtime_trace_digest.clone();
