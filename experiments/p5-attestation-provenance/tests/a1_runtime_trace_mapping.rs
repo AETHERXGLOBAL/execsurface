@@ -72,7 +72,7 @@ fn complete_input() -> VerificationInput {
         verifier: descriptor(
             "execsurface-verifier",
             '2',
-            "https://github.com/AETHERXGLOBAL/execsurface",
+            "https://github.com/AETHERXGLOBAL/execsurface/verifier/v1",
         ),
         verifier_id: "https://github.com/AETHERXGLOBAL/execsurface/verifier/v1".to_owned(),
         created_at: "2026-09-30T16:20:00Z".to_owned(),
