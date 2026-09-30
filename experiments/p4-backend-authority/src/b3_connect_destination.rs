@@ -8,14 +8,20 @@ use crate::b0_success_evidence::{
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "family", rename_all = "snake_case")]
 pub enum ConnectDestination {
-    Inet4 { address: [u8; 4], port: u16 },
+    Inet4 {
+        address: [u8; 4],
+        port: u16,
+    },
     Inet6 {
         address: [u8; 16],
         port: u16,
         flowinfo: u32,
         scope_id: u32,
     },
-    Unix { path_bytes: Vec<u8>, abstract_namespace: bool },
+    Unix {
+        path_bytes: Vec<u8>,
+        abstract_namespace: bool,
+    },
 }
 
 impl ConnectDestination {
@@ -64,19 +70,33 @@ impl ConnectContext {
     }
 
     pub fn target_identity(&self) -> Result<String, String> {
-        Ok(format!("fd:{}@{}", self.socket_fd, self.destination.identity()?))
+        Ok(format!(
+            "fd:{}@{}",
+            self.socket_fd,
+            self.destination.identity()?
+        ))
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "authority", rename_all = "snake_case")]
 pub enum ConnectAuthority {
-    SynchronousSuccessBounded { proof_digest: String },
-    Pending { errno: i32 },
+    SynchronousSuccessBounded {
+        proof_digest: String,
+    },
+    Pending {
+        errno: i32,
+    },
     AttemptOnly,
-    FailureObserved { errno: i32 },
-    Ambiguous { reason_codes: std::collections::BTreeSet<String> },
-    Lost { reason_codes: std::collections::BTreeSet<String> },
+    FailureObserved {
+        errno: i32,
+    },
+    Ambiguous {
+        reason_codes: std::collections::BTreeSet<String>,
+    },
+    Lost {
+        reason_codes: std::collections::BTreeSet<String>,
+    },
 }
 
 impl ConnectAuthority {
@@ -115,9 +135,14 @@ impl ConnectRecord {
 
         let authority = match &success_evidence.state {
             EvidenceState::AttemptObserved => ConnectAuthority::AttemptOnly,
-            EvidenceState::SuccessObserved { raw_return, returned_fd } => {
+            EvidenceState::SuccessObserved {
+                raw_return,
+                returned_fd,
+            } => {
                 if *raw_return != 0 || returned_fd.is_some() {
-                    return Err("connect success requires synchronous rc=0 and no returned fd".to_owned());
+                    return Err(
+                        "connect success requires synchronous rc=0 and no returned fd".to_owned(),
+                    );
                 }
                 ConnectAuthority::SynchronousSuccessBounded {
                     proof_digest: proof_digest(&success_evidence, &context)?,
@@ -135,7 +160,11 @@ impl ConnectRecord {
             },
         };
 
-        Ok(Self { success_evidence, context, authority })
+        Ok(Self {
+            success_evidence,
+            context,
+            authority,
+        })
     }
 
     pub fn is_success_authority(&self) -> bool {
@@ -147,6 +176,7 @@ fn proof_digest(
     success_evidence: &SuccessEvidenceRecord,
     context: &ConnectContext,
 ) -> Result<String, String> {
-    let bytes = serde_json::to_vec(&(success_evidence, context)).map_err(|error| error.to_string())?;
+    let bytes =
+        serde_json::to_vec(&(success_evidence, context)).map_err(|error| error.to_string())?;
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
 }
