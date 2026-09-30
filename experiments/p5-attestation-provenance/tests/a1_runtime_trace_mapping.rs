@@ -34,7 +34,8 @@ fn complete_input() -> VerificationInput {
     VerificationInput {
         subject: subject.clone(),
         command_identity: "cargo test --locked".to_owned(),
-        host_identity: "https://github.com/AETHERXGLOBAL/execsurface/actions/jobs/fixture".to_owned(),
+        host_identity: "https://github.com/AETHERXGLOBAL/execsurface/actions/jobs/fixture"
+            .to_owned(),
         source_identity: Some(descriptor(
             "source",
             'b',
@@ -103,14 +104,23 @@ fn a1_01_complete_fixture_maps_exact_bounded_runtime_trace_contract() {
 
     assert_eq!(trace.statement_type, STATEMENT_TYPE);
     assert_eq!(trace.predicate_type, RUNTIME_TRACE_TYPE);
-    assert_eq!(trace.predicate.monitor.monitor_type, EXECSURFACE_MONITOR_TYPE);
+    assert_eq!(
+        trace.predicate.monitor.monitor_type,
+        EXECSURFACE_MONITOR_TYPE
+    );
     assert_eq!(trace.predicate.monitor.config_source, input.policy);
     assert_eq!(
         trace.predicate.monitored_process.process_type,
         EXECSURFACE_PROCESS_TYPE
     );
-    assert_eq!(trace.predicate.monitored_process.host_id, input.host_identity);
-    assert_eq!(trace.predicate.monitored_process.event, input.command_identity);
+    assert_eq!(
+        trace.predicate.monitored_process.host_id,
+        input.host_identity
+    );
+    assert_eq!(
+        trace.predicate.monitored_process.event,
+        input.command_identity
+    );
     assert_eq!(trace.predicate.monitor_log.process.len(), 1);
     verify_bundle(&bundle).expect("complete A1 mapping verifies");
 }
@@ -206,7 +216,10 @@ fn a1_05_backend_name_cannot_upgrade_and_trace_profile_mismatch_fails() {
 fn a1_06_process_log_command_evidence_or_profile_mutation_fails_closed() {
     for (key, value) in [
         ("commandIdentity", "other-command"),
-        ("evidenceDigest", "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+        (
+            "evidenceDigest",
+            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        ),
         ("observerProfile", "other-profile"),
     ] {
         let mut bundle = build_bundle(&complete_input()).expect("base");
@@ -280,9 +293,14 @@ fn a1_09_replay_under_different_expected_workflow_or_command_is_rejected() {
         "expected_workflow_mismatch"
     );
     assert_eq!(
-        verify_bundle_for_context(&bundle, expected_workflow, "other-command", &input.host_identity)
-            .expect_err("command replay must fail")
-            .reason_code,
+        verify_bundle_for_context(
+            &bundle,
+            expected_workflow,
+            "other-command",
+            &input.host_identity
+        )
+        .expect_err("command replay must fail")
+        .reason_code,
         "expected_command_mismatch"
     );
     assert_eq!(
