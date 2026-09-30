@@ -1,0 +1,183 @@
+name: P6 A0 source and capability freeze
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - 'docs/development/P6_*'
+      - 'experiments/p6-competitive-falsification/**'
+      - '.github/workflows/p6-a0-source-freeze.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  P5_CLOSEOUT_SOURCE: 1f4df8f45a115a1638c997107e069c6acd74c51b
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  HARDEN_RUNNER_SOURCE: e14015d583714f6e62063499dc959a02595150a1
+  CICD_SENSOR_SOURCE: 1f031a106e23edda1eb496b0bae51fb12e85d62d
+  CICD_SENSOR_ACTION: 6511eb44c91d71b2b93d71193b1bf2cb18352f66
+  TETRAGON_SOURCE: 666efe6f91e3605ad58683ad226d759d9cf970ca
+  FALCO_SOURCE: e12b1d43e47a2903c07e14479e034d74d523ab9d
+  TRACEE_SOURCE: 2f9dc40c20b17c2ba27f6d92b25e62790bd48a62
+  EVIDENCE_ROOT: p6-a0-source-freeze-evidence
+
+jobs:
+  freeze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout ExecSurface
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Verify frozen ExecSurface boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          git merge-base --is-ancestor "$P5_CLOSEOUT_SOURCE" HEAD
+          test "$(git rev-list -n 1 v0.1.0-alpha.4)" = "$ALPHA4_SOURCE"
+          test "$(git rev-list -n 1 v0.1)" = "$ALPHA4_SOURCE"
+          if git diff --name-only "$P5_CLOSEOUT_SOURCE"..HEAD | grep -Eq '^crates/'; then
+            echo 'public crates changed after P5 closeout' >&2
+            exit 1
+          fi
+          printf 'head=%s\np5_closeout=%s\nalpha4=%s\n' "$(git rev-parse HEAD)" "$P5_CLOSEOUT_SOURCE" "$ALPHA4_SOURCE" \
+            | tee "$EVIDENCE_ROOT/execsurface-boundary.txt"
+
+      - name: Validate machine-readable manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee "$EVIDENCE_ROOT/manifest-validation.txt"
+          import json
+          from pathlib import Path
+          p = Path('experiments/p6-competitive-falsification/p6-a0-manifest.json')
+          d = json.loads(p.read_text())
+          assert d['schema'] == 'execsurface.p6.a0.v1'
+          assert d['execsurface']['p5_closeout_source'] == '1f4df8f45a115a1638c997107e069c6acd74c51b'
+          assert d['execsurface']['alpha4_source'] == '48e0b9a0707553349e75e97a9dfa096d13f9ab5d'
+          c = d['comparators']
+          assert c['harden_runner']['action_ref'] == 'e14015d583714f6e62063499dc959a02595150a1'
+          assert c['cicd_sensor']['action_ref'] == '6511eb44c91d71b2b93d71193b1bf2cb18352f66'
+          assert c['tetragon']['source_commit'] == '666efe6f91e3605ad58683ad226d759d9cf970ca'
+          assert c['falco']['source_commit'] == 'e12b1d43e47a2903c07e14479e034d74d523ab9d'
+          assert c['tracee']['source_commit'] == '2f9dc40c20b17c2ba27f6d92b25e62790bd48a62'
+          assert d['aggregate_score_forbidden'] is True
+          assert d['live_benchmark_authorized'] is False
+          print('manifest_json=valid')
+          print('aggregate_score_forbidden=true')
+          print('live_benchmark_authorized=false')
+          PY
+
+      - name: Verify immutable action tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          hr=$(git ls-remote https://github.com/step-security/harden-runner.git refs/tags/v2.21.1 | awk '{print $1}')
+          test "$hr" = "$HARDEN_RUNNER_SOURCE"
+          cs=$(git ls-remote https://github.com/cicd-sensor/cicd-sensor-action.git 'refs/tags/v0.0.38^{}' | awk '{print $1}')
+          test "$cs" = "$CICD_SENSOR_ACTION"
+          printf 'harden_runner_v2.21.1=%s\ncicd_sensor_action_v0.0.38=%s\n' "$hr" "$cs" \
+            | tee "$EVIDENCE_ROOT/action-tags.txt"
+
+      - name: Verify frozen external source commits are fetchable
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_commit() {
+            local repo="$1" sha="$2" name="$3"
+            local dir
+            dir=$(mktemp -d)
+            git -C "$dir" init -q
+            git -C "$dir" fetch -q --depth=1 "https://github.com/${repo}.git" "$sha"
+            test "$(git -C "$dir" rev-parse FETCH_HEAD)" = "$sha"
+            printf '%s=%s\n' "$name" "$sha" >> "$EVIDENCE_ROOT/source-commits.txt"
+            rm -rf "$dir"
+          }
+          verify_commit step-security/harden-runner "$HARDEN_RUNNER_SOURCE" harden_runner
+          verify_commit cicd-sensor/cicd-sensor "$CICD_SENSOR_SOURCE" cicd_sensor
+          verify_commit cicd-sensor/cicd-sensor-action "$CICD_SENSOR_ACTION" cicd_sensor_action
+          verify_commit cilium/tetragon "$TETRAGON_SOURCE" tetragon
+          verify_commit falcosecurity/falco "$FALCO_SOURCE" falco
+          verify_commit aquasecurity/tracee "$TRACEE_SOURCE" tracee
+          cat "$EVIDENCE_ROOT/source-commits.txt"
+
+      - name: Verify pinned capability contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          curl -fsSL "https://raw.githubusercontent.com/step-security/harden-runner/${HARDEN_RUNNER_SOURCE}/action.yml" > "$EVIDENCE_ROOT/harden-runner-action.yml"
+          grep -q 'egress-policy:' "$EVIDENCE_ROOT/harden-runner-action.yml"
+          grep -q 'disable-file-monitoring:' "$EVIDENCE_ROOT/harden-runner-action.yml"
+          if grep -q '^outputs:' "$EVIDENCE_ROOT/harden-runner-action.yml"; then
+            echo 'harden_runner_declared_outputs=true' > "$EVIDENCE_ROOT/harden-runner-cp4.txt"
+          else
+            echo 'harden_runner_declared_outputs=false' > "$EVIDENCE_ROOT/harden-runner-cp4.txt"
+          fi
+
+          curl -fsSL "https://raw.githubusercontent.com/cicd-sensor/cicd-sensor/${CICD_SENSOR_SOURCE}/docs/user-guide/attestation-predicate.md" > "$EVIDENCE_ROOT/cicd-sensor-attestation.md"
+          grep -q 'cicd-sensor-attestation' "$EVIDENCE_ROOT/cicd-sensor-attestation.md"
+          grep -q 'predicate.json' "$EVIDENCE_ROOT/cicd-sensor-attestation.md"
+          grep -q 'runtime-trace.*v0.1' "$EVIDENCE_ROOT/cicd-sensor-attestation.md"
+          grep -q 'does not sign the predicate' "$EVIDENCE_ROOT/cicd-sensor-attestation.md"
+          grep -q 'File access is not emitted as a dedicated runtime-trace' "$EVIDENCE_ROOT/cicd-sensor-attestation.md"
+
+          curl -fsSL "https://raw.githubusercontent.com/cilium/tetragon/${TETRAGON_SOURCE}/api/v1/tetragon/events.proto" > "$EVIDENCE_ROOT/tetragon-events.proto"
+          grep -q 'process_exec' "$EVIDENCE_ROOT/tetragon-events.proto"
+          curl -fsSL "https://raw.githubusercontent.com/cilium/tetragon/${TETRAGON_SOURCE}/examples/tracingpolicy/tcp-connect.yaml" > "$EVIDENCE_ROOT/tetragon-tcp-connect.yaml"
+          test -s "$EVIDENCE_ROOT/tetragon-tcp-connect.yaml"
+
+          printf 'harden_runner_action_contract=verified\ncicd_sensor_cp4_contract=verified\ntetragon_event_contract=verified\n' \
+            | tee "$EVIDENCE_ROOT/capability-contracts.txt"
+
+      - name: Record runner preflight without competitor execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "kernel=$(uname -r)"
+            docker version --format 'docker_client={{.Client.Version}} docker_server={{.Server.Version}}'
+          } | tee "$EVIDENCE_ROOT/runner-preflight.txt"
+
+      - name: Record A0 source-pin candidate only
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$EVIDENCE_ROOT/decision-candidate.txt" <<'EOF'
+          P6_A0_SOURCE_PIN_GATE_PASS_CANDIDATE
+          This is not P6-A0 closeout.
+          No live competitor workload was executed by this gate.
+          No composite score or overall competitive verdict is authorized.
+          EOF
+          cat "$EVIDENCE_ROOT/decision-candidate.txt"
+
+      - name: Seal evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "source_sha=${GITHUB_SHA}"
+            echo "workflow=${GITHUB_WORKFLOW}"
+          } > "$EVIDENCE_ROOT/run-metadata.txt"
+          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p6-a0-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p6-a0-source-freeze-evidence
+          if-no-files-found: error
+          retention-days: 30
