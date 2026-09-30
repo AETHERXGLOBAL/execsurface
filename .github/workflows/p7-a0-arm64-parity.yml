@@ -75,7 +75,7 @@ jobs:
           test "$(git -C "$ALPHA4_DIR" rev-parse HEAD)" = "$ALPHA4_SOURCE"
           echo "ALPHA4_DIR=$ALPHA4_DIR" >> "$GITHUB_ENV"
 
-      - name: Test exact alpha.4 source natively
+      - name: Test exact alpha.4 source natively and retain result
         shell: bash
         run: |
           set -o pipefail
@@ -86,7 +86,11 @@ jobs:
           rc=${PIPESTATUS[0]}
           set -e
           echo "cargo_test_rc=$rc" | tee "p7-a0-${{ matrix.arch }}-evidence/cargo-test-status.txt"
-          exit "$rc"
+          echo "P7_CARGO_TEST_RC=$rc" >> "$GITHUB_ENV"
+          # A non-zero test result is retained scientific portability evidence.
+          # Continue to build/runtime so the gate can distinguish test-contract
+          # divergence from inability to compile or execute the exact source.
+          exit 0
 
       - name: Build exact alpha.4 source natively
         shell: bash
@@ -111,13 +115,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          root="p7-a0-${{ matrix.arch }}-evidence"
           rm -f execsurface.lock.json
+          set +e
           "$P7_ES_BIN" learn -- /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S0_CONTROL \
-            >"p7-a0-${{ matrix.arch }}-evidence/learn.stdout.log" \
-            2>"p7-a0-${{ matrix.arch }}-evidence/learn.stderr.log"
+            >"$root/learn.stdout.log" 2>"$root/learn.stderr.log"
+          rc=$?
+          set -e
+          echo "baseline_learn_rc=$rc" | tee "$root/baseline-learn-status.txt"
+          if [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
           test -s execsurface.lock.json
-          cp execsurface.lock.json "p7-a0-${{ matrix.arch }}-evidence/baseline.json"
-          python3 - <<'PY' > "p7-a0-${{ matrix.arch }}-evidence/baseline-identity.txt"
+          cp execsurface.lock.json "$root/baseline.json"
+          python3 - <<'PY' > "$root/baseline-identity.txt"
           import json
           d=json.load(open('execsurface.lock.json'))
           print('baseline_digest='+d['baseline_digest'])
@@ -169,6 +180,7 @@ jobs:
             echo "kernel=$(uname -r)"
             echo "alpha4_source=$ALPHA4_SOURCE"
             echo "workload_blob=$WORKLOAD_BLOB"
+            echo "cargo_test_rc=${P7_CARGO_TEST_RC:-not_reached}"
             echo "public_support_promoted=false"
             echo "baseline_interchangeability_claim=false"
             echo "architecture_specific_threshold_change=false"
