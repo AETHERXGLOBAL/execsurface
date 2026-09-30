@@ -97,7 +97,7 @@ fn trace(scenario: &str, port: u16) -> Event {
     loop {
         st = 0;
         assert_eq!(unsafe { libc::waitpid(pid, &mut st, 0) }, pid);
-        if libc::WIFEXITED(st) {
+        if libc::WIFEXITED(st) || libc::WIFSIGNALED(st) {
             let _ = child.wait();
             break;
         }
