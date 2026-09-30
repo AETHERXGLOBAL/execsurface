@@ -1,0 +1,373 @@
+name: P5 A4 signed GitHub Sigstore attestation gate
+
+on:
+  push:
+    branches: [development/post-alpha4-behavioral-integrity]
+    paths:
+      - 'experiments/p5-signed-attestation/**'
+      - 'experiments/p5-slsa-provenance-binding/**'
+      - 'experiments/p5-attestation-provenance/**'
+      - 'docs/development/P5_A4_SIGNED_ATTESTATION_PROTOCOL.md'
+      - '.github/workflows/p5-a4-signed-attestation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  signed-attestation:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      EVIDENCE_ROOT: p5-a4-signed-attestation-evidence
+      SUBJECT_PATH: experiments/p5-signed-attestation/subject.txt
+      SUBJECT_SHA256: 41d288d8bff5b1088d451a9ce7193192f7ce3204031085a7134e207df4062015
+      P5_A3_ACCEPTED_SOURCE: d0ee3d0d1bd5a491ddc5796be08458026e1cbd8a
+      P5_A3_DECISION_SOURCE: 19624d64de370a90323f14d87cbaf59c3322108f
+      P5_A2_ACCEPTED_SOURCE: 63b9a9fcde16d9dbb66aa484e73a1e2338afd6cb
+      P5_A1_ACCEPTED_SOURCE: 74dc06a3f5a091f2f70e5f73290adf37ef3f2f44
+      P5_A0_ACCEPTED_SOURCE: 9ff34d9baaa01a90cf6d2cb95e1930dc4c011e11
+      P4_CLOSEOUT_SOURCE: 320c865d3e81071a8214ad726dca7a587b0fc479
+      ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+      P5_A3_FIXTURE: ${{ github.workspace }}/p5-a3-upstream.json
+      A3_UPSTREAM_REPOSITORY: https://github.com/slsa-framework/slsa-verifier.git
+      A3_UPSTREAM_COMMIT: 30d0be3bbab553fc51557377baba2f7572dfc212
+      A3_UPSTREAM_PATH: verifiers/internal/gcb/testdata/v1.0-gcloud-container-github-single.json
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify frozen boundaries and A4 preregistration
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          git merge-base --is-ancestor "$P5_A3_ACCEPTED_SOURCE" HEAD
+          git merge-base --is-ancestor "$P5_A3_DECISION_SOURCE" HEAD
+          git merge-base --is-ancestor "$P5_A2_ACCEPTED_SOURCE" HEAD
+          git merge-base --is-ancestor "$P5_A1_ACCEPTED_SOURCE" HEAD
+          git merge-base --is-ancestor "$P5_A0_ACCEPTED_SOURCE" HEAD
+          git merge-base --is-ancestor "$P4_CLOSEOUT_SOURCE" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          if git diff --name-only "$P5_A3_ACCEPTED_SOURCE"..HEAD | grep -q '^crates/'; then
+            echo "Public crates changed after accepted P5-A3 source" >&2
+            exit 1
+          fi
+          grep -q 'PREREGISTERED — EXACTLY 12 LIVE CHECKS / RESEARCH-ONLY' \
+            docs/development/P5_A4_SIGNED_ATTESTATION_PROTOCOL.md
+          grep -q 'Acceptance requires 12/12 PASS' \
+            docs/development/P5_A4_SIGNED_ATTESTATION_PROTOCOL.md
+          printf 'source_sha=%s\n' "$(git rev-parse HEAD)" | tee "$EVIDENCE_ROOT/source.txt"
+          printf 'p5_a3_accepted_source=%s\n' "$P5_A3_ACCEPTED_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
+          printf 'p5_a3_decision_source=%s\n' "$P5_A3_DECISION_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
+          printf 'p4_closeout_source=%s\n' "$P4_CLOSEOUT_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
+          printf 'alpha4_source=%s\n' "$ALPHA4_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
+          printf 'attest_action=actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6\n' \
+            | tee -a "$EVIDENCE_ROOT/source.txt"
+
+      - name: Install pinned Rust and record verifier version
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+          gh --version | tee "$EVIDENCE_ROOT/gh-version.txt"
+
+      - name: Prepare exact P5 A3 predecessor fixture
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          git -C "$tmp" init -q
+          git -C "$tmp" remote add origin "$A3_UPSTREAM_REPOSITORY"
+          git -C "$tmp" fetch -q --depth=1 origin "$A3_UPSTREAM_COMMIT"
+          test "$(git -C "$tmp" rev-parse FETCH_HEAD)" = "$A3_UPSTREAM_COMMIT"
+          git -C "$tmp" show "FETCH_HEAD:$A3_UPSTREAM_PATH" > "$P5_A3_FIXTURE"
+          sha256sum "$P5_A3_FIXTURE" | tee "$EVIDENCE_ROOT/a3-upstream-sha256.txt"
+
+      - name: A4-01 deterministic subject identity
+        run: |
+          set -euo pipefail
+          test -f "$SUBJECT_PATH"
+          actual="$(sha256sum "$SUBJECT_PATH" | awk '{print $1}')"
+          test "$actual" = "$SUBJECT_SHA256"
+          printf 'subject_name=subject.txt\nsubject_sha256=%s\n' "$actual" \
+            | tee "$EVIDENCE_ROOT/a4-01-subject.txt"
+
+      - name: A4-02a pinned live attestation creation
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: ${{ github.workspace }}/experiments/p5-signed-attestation/subject.txt
+
+      - name: A4-02b validate live attestation outputs
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+          ATTESTATION_ID: ${{ steps.attest.outputs.attestation-id }}
+          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
+        run: |
+          set -euo pipefail
+          test -n "$BUNDLE_PATH"
+          test -n "$ATTESTATION_ID"
+          test -n "$ATTESTATION_URL"
+          test -s "$BUNDLE_PATH"
+          cp "$BUNDLE_PATH" "$EVIDENCE_ROOT/attestation-bundle.json"
+          printf 'bundle_path=%s\nattestation_id=%s\nattestation_url=%s\n' \
+            "$BUNDLE_PATH" "$ATTESTATION_ID" "$ATTESTATION_URL" \
+            | tee "$EVIDENCE_ROOT/a4-02-attestation.txt"
+
+      - name: A4-03 exact positive cryptographic verification
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "$SUBJECT_PATH" \
+            --bundle "$BUNDLE_PATH" \
+            --repo AETHERXGLOBAL/execsurface \
+            --signer-workflow AETHERXGLOBAL/execsurface/.github/workflows/p5-a4-signed-attestation.yml \
+            --source-digest "$GITHUB_SHA" \
+            --source-ref "$GITHUB_REF" \
+            --predicate-type https://slsa.dev/provenance/v1 \
+            --format json \
+            | tee "$EVIDENCE_ROOT/a4-03-verified.json"
+
+      - name: A4-04 mutated subject rejection
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          cp "$SUBJECT_PATH" "$RUNNER_TEMP/mutated-subject.txt"
+          printf 'x' >> "$RUNNER_TEMP/mutated-subject.txt"
+          if gh attestation verify "$RUNNER_TEMP/mutated-subject.txt" \
+            --bundle "$BUNDLE_PATH" --repo AETHERXGLOBAL/execsurface \
+            --signer-workflow AETHERXGLOBAL/execsurface/.github/workflows/p5-a4-signed-attestation.yml \
+            --source-digest "$GITHUB_SHA" --source-ref "$GITHUB_REF" \
+            --predicate-type https://slsa.dev/provenance/v1 \
+            >"$EVIDENCE_ROOT/a4-04.stdout" 2>"$EVIDENCE_ROOT/a4-04.stderr"; then
+            echo 'mutated subject unexpectedly verified' >&2
+            exit 1
+          fi
+
+      - name: A4-05 wrong repository rejection
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          if gh attestation verify "$SUBJECT_PATH" \
+            --bundle "$BUNDLE_PATH" --repo AETHERXGLOBAL/aether-x-research \
+            --signer-workflow AETHERXGLOBAL/execsurface/.github/workflows/p5-a4-signed-attestation.yml \
+            --source-digest "$GITHUB_SHA" --source-ref "$GITHUB_REF" \
+            --predicate-type https://slsa.dev/provenance/v1 \
+            >"$EVIDENCE_ROOT/a4-05.stdout" 2>"$EVIDENCE_ROOT/a4-05.stderr"; then
+            echo 'wrong repository unexpectedly verified' >&2
+            exit 1
+          fi
+
+      - name: A4-06 wrong signer workflow rejection
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          if gh attestation verify "$SUBJECT_PATH" \
+            --bundle "$BUNDLE_PATH" --repo AETHERXGLOBAL/execsurface \
+            --signer-workflow AETHERXGLOBAL/execsurface/.github/workflows/not-p5-a4.yml \
+            --source-digest "$GITHUB_SHA" --source-ref "$GITHUB_REF" \
+            --predicate-type https://slsa.dev/provenance/v1 \
+            >"$EVIDENCE_ROOT/a4-06.stdout" 2>"$EVIDENCE_ROOT/a4-06.stderr"; then
+            echo 'wrong signer workflow unexpectedly verified' >&2
+            exit 1
+          fi
+
+      - name: A4-07 wrong source digest rejection
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          wrong_sha=0000000000000000000000000000000000000000
+          if gh attestation verify "$SUBJECT_PATH" \
+            --bundle "$BUNDLE_PATH" --repo AETHERXGLOBAL/execsurface \
+            --signer-workflow AETHERXGLOBAL/execsurface/.github/workflows/p5-a4-signed-attestation.yml \
+            --source-digest "$wrong_sha" --source-ref "$GITHUB_REF" \
+            --predicate-type https://slsa.dev/provenance/v1 \
+            >"$EVIDENCE_ROOT/a4-07.stdout" 2>"$EVIDENCE_ROOT/a4-07.stderr"; then
+            echo 'wrong source digest unexpectedly verified' >&2
+            exit 1
+          fi
+
+      - name: A4-08 wrong source ref rejection
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          if gh attestation verify "$SUBJECT_PATH" \
+            --bundle "$BUNDLE_PATH" --repo AETHERXGLOBAL/execsurface \
+            --signer-workflow AETHERXGLOBAL/execsurface/.github/workflows/p5-a4-signed-attestation.yml \
+            --source-digest "$GITHUB_SHA" --source-ref refs/heads/not-the-a4-branch \
+            --predicate-type https://slsa.dev/provenance/v1 \
+            >"$EVIDENCE_ROOT/a4-08.stdout" 2>"$EVIDENCE_ROOT/a4-08.stderr"; then
+            echo 'wrong source ref unexpectedly verified' >&2
+            exit 1
+          fi
+
+      - name: A4-09 wrong predicate type rejection
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          if gh attestation verify "$SUBJECT_PATH" \
+            --bundle "$BUNDLE_PATH" --repo AETHERXGLOBAL/execsurface \
+            --signer-workflow AETHERXGLOBAL/execsurface/.github/workflows/p5-a4-signed-attestation.yml \
+            --source-digest "$GITHUB_SHA" --source-ref "$GITHUB_REF" \
+            --predicate-type https://example.com/not-slsa \
+            >"$EVIDENCE_ROOT/a4-09.stdout" 2>"$EVIDENCE_ROOT/a4-09.stderr"; then
+            echo 'wrong predicate unexpectedly verified' >&2
+            exit 1
+          fi
+
+      - name: A4-10 tampered signed bundle rejection
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          tampered="$RUNNER_TEMP/tampered-attestation.json"
+          jq '
+            if (.dsseEnvelope.signatures[0].sig? // "") != "" then
+              .dsseEnvelope.signatures[0].sig |=
+                (if startswith("A") then "B" + .[1:] else "A" + .[1:] end)
+            elif (.messageSignature.signature? // "") != "" then
+              .messageSignature.signature |=
+                (if startswith("A") then "B" + .[1:] else "A" + .[1:] end)
+            else
+              error("no supported signature field found")
+            end
+          ' "$BUNDLE_PATH" > "$tampered"
+          jq -e . "$tampered" >/dev/null
+          if gh attestation verify "$SUBJECT_PATH" \
+            --bundle "$tampered" --repo AETHERXGLOBAL/execsurface \
+            --signer-workflow AETHERXGLOBAL/execsurface/.github/workflows/p5-a4-signed-attestation.yml \
+            --source-digest "$GITHUB_SHA" --source-ref "$GITHUB_REF" \
+            --predicate-type https://slsa.dev/provenance/v1 \
+            >"$EVIDENCE_ROOT/a4-10.stdout" 2>"$EVIDENCE_ROOT/a4-10.stderr"; then
+            echo 'tampered signed bundle unexpectedly verified' >&2
+            exit 1
+          fi
+          cp "$tampered" "$EVIDENCE_ROOT/a4-10-tampered-bundle.json"
+
+      - name: A4-11 verified result exact binding inspection
+        run: |
+          set -euo pipefail
+          jq -e --arg digest "$SUBJECT_SHA256" '
+            length == 1 and
+            .[0].verificationResult.statement.predicateType == "https://slsa.dev/provenance/v1" and
+            any(.[0].verificationResult.statement.subject[];
+              .name == "subject.txt" and .digest.sha256 == $digest) and
+            (.[0].verificationResult.signature.certificate != null) and
+            (((.[0].verificationResult.verifiedTimestamps // []) | length) >= 1)
+          ' "$EVIDENCE_ROOT/a4-03-verified.json" >/dev/null
+          jq '.[0].verificationResult | {
+            subject: .statement.subject,
+            predicateType: .statement.predicateType,
+            certificate: .signature.certificate,
+            verifiedTimestamps: .verifiedTimestamps
+          }' "$EVIDENCE_ROOT/a4-03-verified.json" \
+            > "$EVIDENCE_ROOT/a4-11-binding.json"
+
+      - name: A4-12 semantic non-inflation guard
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile \
+            --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml \
+            --test a3_slsa_provenance_binding \
+            a3_12_provenance_presence_does_not_infer_slsa_level_or_semantic_authority \
+            -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/a4-12-semantic-guard.log"
+          grep -q 'test result: ok. 1 passed; 0 failed' \
+            "$EVIDENCE_ROOT/a4-12-semantic-guard.log"
+
+      - name: Reprove full P5 A3 A2 A1 and A0
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml \
+            --test a3_slsa_provenance_binding -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/a3.log"
+          grep -q 'test result: ok. 12 passed; 0 failed' "$EVIDENCE_ROOT/a3.log"
+          cargo +$RUST_TOOLCHAIN generate-lockfile \
+            --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p5-attestation-provenance/Cargo.toml \
+            --test a2_scai_svr_binding -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/a2.log"
+          grep -q 'test result: ok. 14 passed; 0 failed' "$EVIDENCE_ROOT/a2.log"
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p5-attestation-provenance/Cargo.toml \
+            --test a2_verifier_identity_addendum -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/a2-verifier-id.log"
+          grep -q 'test result: ok. 4 passed; 0 failed' "$EVIDENCE_ROOT/a2-verifier-id.log"
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p5-attestation-provenance/Cargo.toml \
+            --test a1_runtime_trace_mapping -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/a1.log"
+          grep -q 'test result: ok. 12 passed; 0 failed' "$EVIDENCE_ROOT/a1.log"
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p5-attestation-provenance/Cargo.toml \
+            --test a0_standards_composition -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/a0.log"
+          grep -q 'test result: ok. 18 passed; 0 failed' "$EVIDENCE_ROOT/a0.log"
+
+      - name: Reprove critical P4 authority gates
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile \
+            --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p4-backend-authority/Cargo.toml \
+            --test b_cross_proposition_falsification -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/p4-cross.log"
+          grep -q 'test result: ok. 12 passed; 0 failed' "$EVIDENCE_ROOT/p4-cross.log"
+          for test_target in b1_ptrace_open_live b2_ptrace_rename_delete_live b3_ptrace_connect_live; do
+            cargo +$RUST_TOOLCHAIN test --locked \
+              --manifest-path experiments/p4-backend-authority/Cargo.toml \
+              --test "$test_target" -- --nocapture \
+              2>&1 | tee "$EVIDENCE_ROOT/${test_target}.log"
+            grep -q 'test result: ok. 10 passed; 0 failed' \
+              "$EVIDENCE_ROOT/${test_target}.log"
+          done
+
+      - name: Reprove Semantics v3 and public M11
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --all-targets \
+            2>&1 | tee "$EVIDENCE_ROOT/semantics-v3.log"
+          grep -q 'test result: ok. 7 passed; 0 failed' "$EVIDENCE_ROOT/semantics-v3.log"
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe \
+            --test m11_shared_fd_ambiguity \
+            2>&1 | tee "$EVIDENCE_ROOT/public-m11.log"
+          grep -q 'test result: ok. 6 passed; 0 failed' "$EVIDENCE_ROOT/public-m11.log"
+
+      - name: Record candidate decision only after full gate
+        run: |
+          set -euo pipefail
+          printf 'P5_A4_SIGNED_ATTESTATION_PASS_BOUNDED_CANDIDATE\n' \
+            | tee "$EVIDENCE_ROOT/CANDIDATE.txt"
+
+      - name: Seal evidence
+        if: always()
+        run: |
+          set -uo pipefail
+          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p5-a4-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p5-a4-signed-attestation-evidence
+          if-no-files-found: error
+          retention-days: 30
