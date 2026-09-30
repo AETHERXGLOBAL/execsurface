@@ -1,4 +1,7 @@
-use std::{collections::{BTreeMap, BTreeSet}, fs};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use execsurface_p5_attestation_provenance::{
@@ -21,7 +24,8 @@ const WORKFLOW_PATH: &str = "cloudbuild.yaml";
 const BUILDER_ID: &str = "https://cloudbuild.googleapis.com/GoogleHostedWorker";
 
 fn fixture_document() -> Value {
-    let path = std::env::var("P5_A3_FIXTURE").expect("P5_A3_FIXTURE must point to pinned upstream fixture");
+    let path = std::env::var("P5_A3_FIXTURE")
+        .expect("P5_A3_FIXTURE must point to pinned upstream fixture");
     let bytes = fs::read(path).expect("read pinned upstream fixture");
     serde_json::from_slice(&bytes).expect("parse pinned upstream fixture wrapper")
 }
@@ -31,12 +35,13 @@ fn upstream_statement_bytes() -> Vec<u8> {
     let payload = document["provenance_summary"]["provenance"][0]["envelope"]["payload"]
         .as_str()
         .expect("pinned fixture DSSE payload");
-    STANDARD.decode(payload).expect("decode pinned DSSE payload")
+    STANDARD
+        .decode(payload)
+        .expect("decode pinned DSSE payload")
 }
 
 fn embedded_statement() -> Value {
-    fixture_document()["provenance_summary"]["provenance"][0]["build"]
-        ["inTotoSlsaProvenanceV1"]
+    fixture_document()["provenance_summary"]["provenance"][0]["build"]["inTotoSlsaProvenanceV1"]
         .clone()
 }
 
@@ -107,9 +112,18 @@ fn review_input() -> VerificationInput {
 #[test]
 fn a3_01_pinned_upstream_fixture_parses_exact_slsa_v1_identity() {
     assert_eq!(UPSTREAM_REPOSITORY, "slsa-framework/slsa-verifier");
-    assert_eq!(UPSTREAM_COMMIT, "30d0be3bbab553fc51557377baba2f7572dfc212");
-    assert_eq!(UPSTREAM_PATH, "verifiers/internal/gcb/testdata/v1.0-gcloud-container-github-single.json");
-    assert_eq!(UPSTREAM_BLOB_SHA, "7102e40887a758e01184ac79ca10cb34b7281627");
+    assert_eq!(
+        UPSTREAM_COMMIT,
+        "30d0be3bbab553fc51557377baba2f7572dfc212"
+    );
+    assert_eq!(
+        UPSTREAM_PATH,
+        "verifiers/internal/gcb/testdata/v1.0-gcloud-container-github-single.json"
+    );
+    assert_eq!(
+        UPSTREAM_BLOB_SHA,
+        "7102e40887a758e01184ac79ca10cb34b7281627"
+    );
 
     let bytes = upstream_statement_bytes();
     let decoded: Value = serde_json::from_slice(&bytes).expect("decoded statement JSON");
@@ -208,9 +222,11 @@ fn a3_06_workflow_or_build_config_substitution_fails_closed() {
 #[test]
 fn a3_07_unverified_provenance_cannot_become_verified_reference() {
     let fixture = fixture_document();
-    assert!(fixture["provenance_summary"]["provenance"][0]["envelope"]["signatures"]
-        .as_array()
-        .is_some_and(|signatures| !signatures.is_empty()));
+    assert!(
+        fixture["provenance_summary"]["provenance"][0]["envelope"]["signatures"]
+            .as_array()
+            .is_some_and(|signatures| !signatures.is_empty())
+    );
 
     let bytes = upstream_statement_bytes();
     let bound = bind_slsa_v1_statement(&bytes, &context(&bytes), VerificationState::Unverified)
@@ -228,12 +244,9 @@ fn a3_07_unverified_provenance_cannot_become_verified_reference() {
 #[test]
 fn a3_08_provenance_absence_cannot_be_laundered_into_success() {
     let bytes = upstream_statement_bytes();
-    let absent = bind_optional_slsa_v1_statement(
-        None,
-        &context(&bytes),
-        VerificationState::Verified,
-    )
-    .expect("absence is explicit");
+    let absent =
+        bind_optional_slsa_v1_statement(None, &context(&bytes), VerificationState::Verified)
+            .expect("absence is explicit");
     assert!(absent.is_none());
 }
 
@@ -298,28 +311,40 @@ fn a3_11_malformed_truncated_or_missing_required_binding_fields_fail_closed() {
         source_revision: SOURCE_REVISION.to_owned(),
         workflow_path: WORKFLOW_PATH.to_owned(),
     };
-    assert!(bind_slsa_v1_statement(malformed, &malformed_context, VerificationState::Verified).is_err());
+    assert!(
+        bind_slsa_v1_statement(malformed, &malformed_context, VerificationState::Verified).is_err()
+    );
 
     let bytes = upstream_statement_bytes();
     let variants = [
         mutate_statement(&bytes, |value| {
-            value["subject"][0]["digest"].as_object_mut().expect("digest object").remove("sha256");
+            value["subject"][0]["digest"]
+                .as_object_mut()
+                .expect("digest object")
+                .remove("sha256");
         }),
         mutate_statement(&bytes, |value| {
             value["predicate"]["buildDefinition"]["externalParameters"]["buildConfigSource"]
-                .as_object_mut().expect("source object").remove("repository");
+                .as_object_mut()
+                .expect("source object")
+                .remove("repository");
         }),
         mutate_statement(&bytes, |value| {
             value["predicate"]["buildDefinition"]["resolvedDependencies"] = Value::Array(vec![]);
         }),
         mutate_statement(&bytes, |value| {
             value["predicate"]["buildDefinition"]["externalParameters"]["buildConfigSource"]
-                .as_object_mut().expect("source object").remove("path");
+                .as_object_mut()
+                .expect("source object")
+                .remove("path");
         }),
     ];
 
     for variant in variants {
-        assert!(bind_slsa_v1_statement(&variant, &context(&variant), VerificationState::Verified).is_err());
+        assert!(
+            bind_slsa_v1_statement(&variant, &context(&variant), VerificationState::Verified)
+                .is_err()
+        );
     }
 }
 
@@ -345,7 +370,14 @@ fn a3_12_provenance_presence_does_not_infer_slsa_level_or_semantic_authority() {
     assert_eq!(input.completeness, original_completeness);
     assert_eq!(input.verdict, original_verdict);
 
-    let bundle = build_bundle(&input).expect("review bundle remains valid with provenance reference");
-    assert_eq!(bundle.scai.predicate.attributes[0].conditions.authority, AuthorityState::Ambiguous);
-    assert_eq!(bundle.scai.predicate.attributes[0].conditions.verdict, Verdict::Review);
+    let bundle =
+        build_bundle(&input).expect("review bundle remains valid with provenance reference");
+    assert_eq!(
+        bundle.scai.predicate.attributes[0].conditions.authority,
+        AuthorityState::Ambiguous
+    );
+    assert_eq!(
+        bundle.scai.predicate.attributes[0].conditions.verdict,
+        Verdict::Review
+    );
 }
