@@ -69,7 +69,7 @@ fn read_bytes(pid: libc::pid_t, addr: u64, len: usize) -> Vec<u8> {
 }
 
 fn trace(scenario: &str, port: u16) -> Event {
-    let child = Command::new(fixture())
+    let mut child = Command::new(fixture())
         .arg(scenario)
         .arg(port.to_string())
         .spawn()
@@ -98,6 +98,7 @@ fn trace(scenario: &str, port: u16) -> Event {
         st = 0;
         assert_eq!(unsafe { libc::waitpid(pid, &mut st, 0) }, pid);
         if libc::WIFEXITED(st) {
+            let _ = child.wait();
             break;
         }
         assert!(libc::WIFSTOPPED(st));
@@ -106,7 +107,7 @@ fn trace(scenario: &str, port: u16) -> Event {
             let r = regs(pid);
             if entering && r.orig_rax as libc::c_long == libc::SYS_connect {
                 let len = r.rdx as usize;
-                let bytes = if len >= 2 && len <= 128 {
+                let bytes = if (2..=128).contains(&len) {
                     read_bytes(pid, r.rsi, len)
                 } else {
                     Vec::new()
@@ -129,6 +130,7 @@ fn trace(scenario: &str, port: u16) -> Event {
                     unsafe { libc::kill(pid, libc::SIGKILL) };
                     let mut end = 0;
                     unsafe { libc::waitpid(pid, &mut end, 0) };
+                    let _ = child.wait();
                     return Event {
                         fd,
                         entry_seq: entry,
