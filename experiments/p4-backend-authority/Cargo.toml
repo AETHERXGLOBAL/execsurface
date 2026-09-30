@@ -20,4 +20,8 @@ path = "src/bin/b1_open_fixture.rs"
 name = "b2-rename-delete-fixture"
 path = "src/bin/b2_rename_delete_fixture.rs"
 
+[[bin]]
+name = "b3-connect-fixture"
+path = "src/bin/b3_connect_fixture.rs"
+
 [workspace]
