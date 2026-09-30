@@ -1,0 +1,198 @@
+name: P5 A5 cross-attestation red-team gate
+
+on:
+  push:
+    branches: [development/post-alpha4-behavioral-integrity]
+    paths:
+      - 'experiments/p5-attestation-provenance/**'
+      - 'docs/development/P5_A5_CROSS_ATTESTATION_REDTEAM_PROTOCOL.md'
+      - '.github/workflows/p5-a5-cross-attestation-redteam.yml'
+  workflow_dispatch:
+
+jobs:
+  cross-attestation-redteam:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUST_TOOLCHAIN: 1.90.0
+      EVIDENCE_ROOT: p5-a5-cross-attestation-redteam-evidence
+      P5_A4_ACCEPTED_SOURCE: 862f0830511fe1421de20717187645d6e0a9a52e
+      P5_A4_DECISION_SOURCE: 9fe4d1f81a79bd75064f8c14571b6580948af569
+      P5_A3_ACCEPTED_SOURCE: d0ee3d0d1bd5a491ddc5796be08458026e1cbd8a
+      P5_A2_ACCEPTED_SOURCE: 63b9a9fcde16d9dbb66aa484e73a1e2338afd6cb
+      P5_A2_DECISION_SOURCE: 8ef427a57d085f6cc6d45a0beef9599c5c4f002f
+      P5_A1_ACCEPTED_SOURCE: 74dc06a3f5a091f2f70e5f73290adf37ef3f2f44
+      P5_A0_ACCEPTED_SOURCE: 9ff34d9baaa01a90cf6d2cb95e1930dc4c011e11
+      P4_CLOSEOUT_SOURCE: 320c865d3e81071a8214ad726dca7a587b0fc479
+      ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+      A4_SUBJECT_PATH: experiments/p5-signed-attestation/subject.txt
+      A4_SIGNER_WORKFLOW: AETHERXGLOBAL/execsurface/.github/workflows/p5-a4-signed-attestation.yml
+      A4_SOURCE_REF: refs/heads/development/post-alpha4-behavioral-integrity
+      A4_PREDICATE_TYPE: https://slsa.dev/provenance/v1
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Verify frozen boundaries and A5 preregistration
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_ROOT"
+          git merge-base --is-ancestor "$P5_A4_ACCEPTED_SOURCE" HEAD
+          git merge-base --is-ancestor "$P5_A4_DECISION_SOURCE" HEAD
+          git merge-base --is-ancestor "$P5_A3_ACCEPTED_SOURCE" HEAD
+          git merge-base --is-ancestor "$P5_A2_ACCEPTED_SOURCE" HEAD
+          git merge-base --is-ancestor "$P5_A2_DECISION_SOURCE" HEAD
+          git merge-base --is-ancestor "$P5_A1_ACCEPTED_SOURCE" HEAD
+          git merge-base --is-ancestor "$P5_A0_ACCEPTED_SOURCE" HEAD
+          git merge-base --is-ancestor "$P4_CLOSEOUT_SOURCE" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          if git diff --name-only "$P5_A4_ACCEPTED_SOURCE"..HEAD | grep -q '^crates/'; then
+            echo "Public crates changed after accepted P5-A4 source" >&2
+            exit 1
+          fi
+          grep -q 'PREREGISTERED — EXACTLY 12 CROSS-ATTESTATION ATTACKS / RESEARCH-ONLY' \
+            docs/development/P5_A5_CROSS_ATTESTATION_REDTEAM_PROTOCOL.md
+          grep -q 'Exactly \*\*12 adversarial tests\*\* are required' \
+            docs/development/P5_A5_CROSS_ATTESTATION_REDTEAM_PROTOCOL.md
+          printf 'source_sha=%s\n' "$(git rev-parse HEAD)" | tee "$EVIDENCE_ROOT/source.txt"
+          printf 'source_ref=%s\n' "$GITHUB_REF" | tee -a "$EVIDENCE_ROOT/source.txt"
+          printf 'p5_a4_accepted_source=%s\n' "$P5_A4_ACCEPTED_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
+          printf 'p4_closeout_source=%s\n' "$P4_CLOSEOUT_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
+          printf 'alpha4_source=%s\n' "$ALPHA4_SOURCE" | tee -a "$EVIDENCE_ROOT/source.txt"
+          gh version | tee "$EVIDENCE_ROOT/gh-version.txt"
+
+      - name: Lock and static gates
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile \
+            --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p5-attestation-provenance/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked \
+            --manifest-path experiments/p5-attestation-provenance/Cargo.toml \
+            --all-targets -- -D warnings
+
+      - name: Execute frozen 12-test P5 A5 corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p5-attestation-provenance/Cargo.toml \
+            --test a5_cross_attestation_redteam -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/a5.log"
+          grep -q 'test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' \
+            "$EVIDENCE_ROOT/a5.log"
+
+      - name: Reverify accepted P5 A4 live Sigstore attestation
+        run: |
+          set -euo pipefail
+          gh attestation verify "$A4_SUBJECT_PATH" \
+            --repo AETHERXGLOBAL/execsurface \
+            --signer-workflow "$A4_SIGNER_WORKFLOW" \
+            --source-digest "$P5_A4_ACCEPTED_SOURCE" \
+            --source-ref "$A4_SOURCE_REF" \
+            --predicate-type "$A4_PREDICATE_TYPE" \
+            --format json \
+            > "$EVIDENCE_ROOT/a4-reverify.json"
+          jq -e --arg sha "$P5_A4_ACCEPTED_SOURCE" '
+            length > 0 and any(.[];
+              .verificationResult.signature.certificate.githubWorkflowSHA == $sha and
+              ((.verificationResult.verifiedTimestamps // []) | length > 0)
+            )
+          ' "$EVIDENCE_ROOT/a4-reverify.json" >/dev/null
+
+      - name: Reprove P5 A3 A2 A1 and A0
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile \
+            --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml \
+            --test a3_slsa_provenance_binding -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/a3.log"
+          grep -q 'test result: ok. 12 passed; 0 failed' "$EVIDENCE_ROOT/a3.log"
+
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p5-attestation-provenance/Cargo.toml \
+            --test a2_scai_svr_binding -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/a2.log"
+          grep -q 'test result: ok. 14 passed; 0 failed' "$EVIDENCE_ROOT/a2.log"
+
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p5-attestation-provenance/Cargo.toml \
+            --test a2_verifier_identity_addendum -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/a2-verifier-id.log"
+          grep -q 'test result: ok. 4 passed; 0 failed' "$EVIDENCE_ROOT/a2-verifier-id.log"
+
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p5-attestation-provenance/Cargo.toml \
+            --test a1_runtime_trace_mapping -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/a1.log"
+          grep -q 'test result: ok. 12 passed; 0 failed' "$EVIDENCE_ROOT/a1.log"
+
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p5-attestation-provenance/Cargo.toml \
+            --test a0_standards_composition -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/a0.log"
+          grep -q 'test result: ok. 18 passed; 0 failed' "$EVIDENCE_ROOT/a0.log"
+
+      - name: Reprove critical P4 authority gates
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile \
+            --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked \
+            --manifest-path experiments/p4-backend-authority/Cargo.toml \
+            --test b_cross_proposition_falsification -- --nocapture \
+            2>&1 | tee "$EVIDENCE_ROOT/p4-cross.log"
+          grep -q 'test result: ok. 12 passed; 0 failed' "$EVIDENCE_ROOT/p4-cross.log"
+          for test_target in b1_ptrace_open_live b2_ptrace_rename_delete_live b3_ptrace_connect_live; do
+            cargo +$RUST_TOOLCHAIN test --locked \
+              --manifest-path experiments/p4-backend-authority/Cargo.toml \
+              --test "$test_target" -- --nocapture \
+              2>&1 | tee "$EVIDENCE_ROOT/${test_target}.log"
+            grep -q 'test result: ok. 10 passed; 0 failed' "$EVIDENCE_ROOT/${test_target}.log"
+          done
+
+      - name: Reprove Semantics v3 and public M11
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --all-targets \
+            2>&1 | tee "$EVIDENCE_ROOT/semantics-v3.log"
+          grep -q 'test result: ok. 7 passed; 0 failed' "$EVIDENCE_ROOT/semantics-v3.log"
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe \
+            --test m11_shared_fd_ambiguity \
+            2>&1 | tee "$EVIDENCE_ROOT/public-m11.log"
+          grep -q 'test result: ok. 6 passed; 0 failed' "$EVIDENCE_ROOT/public-m11.log"
+
+      - name: Record candidate decision only after full gate
+        run: |
+          set -euo pipefail
+          printf 'P5_A5_CROSS_ATTESTATION_GRAPH_PASS_BOUNDED_CANDIDATE\n' \
+            | tee "$EVIDENCE_ROOT/CANDIDATE.txt"
+
+      - name: Seal evidence
+        if: always()
+        run: |
+          set -uo pipefail
+          find "$EVIDENCE_ROOT" -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > "$EVIDENCE_ROOT/SHA256SUMS"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p5-a5-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p5-a5-cross-attestation-redteam-evidence
+          if-no-files-found: error
+          retention-days: 30
