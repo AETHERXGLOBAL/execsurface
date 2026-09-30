@@ -1,0 +1,49 @@
+{
+  "schema": "execsurface.p6.a2.adversarial.v1",
+  "date": "2026-09-30",
+  "issue": 111,
+  "workflow": {
+    "source_sha": "411116ee87bbe45270b1fd8ce84b17abcecd8642",
+    "run_id": 36772303119,
+    "job_id": 110081460858,
+    "conclusion": "success",
+    "artifact_id": 11124710931,
+    "artifact_digest": "sha256:aa2205eb719baf4a9168ee9694bc6da0cfc5d94fab2230db181ab3fe0a3ba8b8"
+  },
+  "execsurface": {
+    "target": "v0.1.0-alpha.4",
+    "source": "48e0b9a0707553349e75e97a9dfa096d13f9ab5d",
+    "baseline_digest": "sha256:36256b582d59622b3e795fd2470a68cbbc1382e6b7c92ca2a2caeafc98e6d2f1",
+    "attacks": {
+      "E1_PROCESS_EXPANSION": {"exit": 10, "native_result": "REVIEW", "false_pass": false},
+      "E2_FILE_WRITE": {"exit": 10, "native_result": "REVIEW", "false_pass": false},
+      "E3_NETWORK_OR_INCOMPLETE": {"exit": 2, "native_result": "ERROR_INCOMPLETE", "false_pass": false},
+      "E4_BASELINE_PAYLOAD_TAMPER": {"exit": 2, "native_result": "BASELINE_DIGEST_MISMATCH", "false_pass": false},
+      "E5_BASELINE_DIGEST_SUBSTITUTION": {"exit": 2, "native_result": "BASELINE_DIGEST_MISMATCH", "false_pass": false},
+      "E6_COMMAND_ARGUMENT_COUNT_MISMATCH": {"exit": 2, "native_result": "NOT_COMPARABLE_ARGUMENT_COUNT", "false_pass_classification": "FACTUAL_PROBE_ONLY"}
+    },
+    "false_pass_count": 0,
+    "infra_marker_count": 0
+  },
+  "p5_a5_reproof": {
+    "accepted_source": "d6d0d45b686ed8c9332ea6b0924537a345049bfb",
+    "test_blob": "6a64ad84d93a23c35d53e737c90508dc528d9cc1",
+    "passed": 12,
+    "failed": 0
+  },
+  "cicd_sensor": {
+    "source_a1_run": 36770813526,
+    "artifact_id": 11123269064,
+    "artifact_digest": "sha256:6dad33b00832f1569fa1f3dd3af2fb98771b9d8761a2215ecb15d0e8499b8ce9",
+    "predicate_sha256": "079d43102504a902d38e3eee70794ece94b3b7b110b31ad98949c8432e591d1e",
+    "C1": "IDENTITY_MISMATCH_EXPLICITLY_DETECTABLE_BY_CONSUMER",
+    "C2": "EXTERNAL_INTEGRITY_REQUIRED_FOR_TAMPER_DETECTION",
+    "C3_native_predicate_result": "passed",
+    "C3_common_verdict": null
+  },
+  "harden_runner_offline_attestation_replay": "NOT_APPLICABLE_TO_OFFLINE_ATTESTATION_REPLAY",
+  "tetragon_live_a2": "NOT_TESTABLE_YET",
+  "aggregate_score_forbidden": true,
+  "overall_winner": null,
+  "decision_candidate": "P6_A2_NO_FALSE_PASS_IN_FROZEN_SCOPE"
+}
