@@ -499,7 +499,11 @@ pub fn build_bundle(input: &VerificationInput) -> Result<VerificationBundle, Mod
     Ok(bundle)
 }
 
-fn bundle_identity_digest(runtime_trace_digest: &str, scai_digest: &str, svr_digest: &str) -> String {
+fn bundle_identity_digest(
+    runtime_trace_digest: &str,
+    scai_digest: &str,
+    svr_digest: &str,
+) -> String {
     #[derive(Serialize)]
     struct BundleIdentity<'a> {
         runtime_trace_digest: &'a str,
@@ -518,7 +522,8 @@ fn bundle_identity_digest(runtime_trace_digest: &str, scai_digest: &str, svr_dig
 }
 
 pub fn recompute_outer_digests_unchecked(bundle: &mut VerificationBundle) {
-    bundle.runtime_trace_digest = canonical_digest("runtime-trace-statement", &bundle.runtime_trace);
+    bundle.runtime_trace_digest =
+        canonical_digest("runtime-trace-statement", &bundle.runtime_trace);
     bundle.scai_digest = canonical_digest("scai-statement", &bundle.scai);
     bundle.svr_digest = canonical_digest("svr-statement", &bundle.svr);
     bundle.bundle_digest = bundle_identity_digest(
@@ -634,7 +639,13 @@ pub fn verify_bundle(bundle: &VerificationBundle) -> Result<(), ModelError> {
         return Err(ModelError::new("runtime_command_identity_mismatch"));
     }
 
-    let [process_record] = bundle.runtime_trace.predicate.monitor_log.process.as_slice() else {
+    let [process_record] = bundle
+        .runtime_trace
+        .predicate
+        .monitor_log
+        .process
+        .as_slice()
+    else {
         return Err(ModelError::new("runtime_process_log_cardinality_mismatch"));
     };
     let expected_process_record = BTreeMap::from([
@@ -704,8 +715,11 @@ pub fn verify_bundle(bundle: &VerificationBundle) -> Result<(), ModelError> {
         }
     }
 
-    let expected_bundle_digest =
-        bundle_identity_digest(&bundle.runtime_trace_digest, &bundle.scai_digest, &bundle.svr_digest);
+    let expected_bundle_digest = bundle_identity_digest(
+        &bundle.runtime_trace_digest,
+        &bundle.scai_digest,
+        &bundle.svr_digest,
+    );
     if expected_bundle_digest != bundle.bundle_digest {
         return Err(ModelError::new("bundle_digest_mismatch"));
     }
