@@ -4,11 +4,11 @@ mod b3_connect_destination;
 
 use std::collections::BTreeSet;
 
-use b3_connect_destination::{ConnectAuthority, ConnectContext, ConnectDestination, ConnectRecord};
 use b0_success_evidence::{
     ActorIdentity, AttemptEvidence, EvidenceLedger, EvidenceState, ExitEvidence, ObservationHealth,
     OperationKind, TargetProposition,
 };
+use b3_connect_destination::{ConnectAuthority, ConnectContext, ConnectDestination, ConnectRecord};
 
 fn actor(tid: i32) -> ActorIdentity {
     ActorIdentity {
@@ -21,7 +21,10 @@ fn actor(tid: i32) -> ActorIdentity {
 fn context(fd: i32, port: u16) -> ConnectContext {
     ConnectContext {
         socket_fd: fd,
-        destination: ConnectDestination::Inet4 { address: [127, 0, 0, 1], port },
+        destination: ConnectDestination::Inet4 {
+            address: [127, 0, 0, 1],
+            port,
+        },
         sockaddr_len: 16,
         sockaddr_complete: true,
     }
@@ -50,7 +53,11 @@ fn exit(entry: &AttemptEvidence, sequence: u64, rc: i64) -> ExitEvidence {
 fn classify(ctx: &ConnectContext, entry_seq: u64, rc: i64) -> ConnectRecord {
     let entry = attempt(ctx, entry_seq, 101);
     let result = EvidenceLedger::default()
-        .classify_pair(entry.clone(), exit(&entry, entry_seq + 1, rc), ObservationHealth::healthy())
+        .classify_pair(
+            entry.clone(),
+            exit(&entry, entry_seq + 1, rc),
+            ObservationHealth::healthy(),
+        )
         .unwrap();
     ConnectRecord::build(result, ctx.clone()).unwrap()
 }
@@ -63,14 +70,20 @@ fn b3_sync_zero_is_bounded_success() {
 #[test]
 fn b3_einprogress_is_pending_not_success() {
     let record = classify(&context(3, 8080), 10, -115);
-    assert!(matches!(record.authority, ConnectAuthority::Pending { errno: 115 }));
+    assert!(matches!(
+        record.authority,
+        ConnectAuthority::Pending { errno: 115 }
+    ));
     assert!(!record.is_success_authority());
 }
 
 #[test]
 fn b3_negative_errno_is_failure() {
     let record = classify(&context(3, 8080), 20, -111);
-    assert!(matches!(record.authority, ConnectAuthority::FailureObserved { errno: 111 }));
+    assert!(matches!(
+        record.authority,
+        ConnectAuthority::FailureObserved { errno: 111 }
+    ));
 }
 
 #[test]
@@ -113,7 +126,11 @@ fn b3_destination_substitution_is_rejected() {
     let changed = context(3, 8081);
     let entry = attempt(&original, 60, 101);
     let evidence = EvidenceLedger::default()
-        .classify_pair(entry.clone(), exit(&entry, 61, 0), ObservationHealth::healthy())
+        .classify_pair(
+            entry.clone(),
+            exit(&entry, 61, 0),
+            ObservationHealth::healthy(),
+        )
         .unwrap();
     assert!(ConnectRecord::build(evidence, changed).is_err());
 }
@@ -124,7 +141,11 @@ fn b3_fd_substitution_is_rejected() {
     let changed = context(4, 8080);
     let entry = attempt(&original, 70, 101);
     let evidence = EvidenceLedger::default()
-        .classify_pair(entry.clone(), exit(&entry, 71, 0), ObservationHealth::healthy())
+        .classify_pair(
+            entry.clone(),
+            exit(&entry, 71, 0),
+            ObservationHealth::healthy(),
+        )
         .unwrap();
     assert!(ConnectRecord::build(evidence, changed).is_err());
 }
@@ -135,8 +156,12 @@ fn b3_replay_is_rejected() {
     let entry = attempt(&ctx, 80, 101);
     let result = exit(&entry, 81, 0);
     let mut ledger = EvidenceLedger::default();
-    assert!(ledger.classify_pair(entry.clone(), result.clone(), ObservationHealth::healthy()).is_ok());
-    assert!(ledger.classify_pair(entry, result, ObservationHealth::healthy()).is_err());
+    assert!(ledger
+        .classify_pair(entry.clone(), result.clone(), ObservationHealth::healthy())
+        .is_ok());
+    assert!(ledger
+        .classify_pair(entry, result, ObservationHealth::healthy())
+        .is_err());
 }
 
 #[test]
@@ -144,7 +169,11 @@ fn b3_non_monotonic_exit_is_ambiguous() {
     let ctx = context(3, 8080);
     let entry = attempt(&ctx, 90, 101);
     let evidence = EvidenceLedger::default()
-        .classify_pair(entry.clone(), exit(&entry, 90, 0), ObservationHealth::healthy())
+        .classify_pair(
+            entry.clone(),
+            exit(&entry, 90, 0),
+            ObservationHealth::healthy(),
+        )
         .unwrap();
     assert!(matches!(evidence.state, EvidenceState::Ambiguous { .. }));
 }
@@ -160,7 +189,10 @@ fn b3_incomplete_sockaddr_is_rejected() {
 fn b3_empty_unix_sockaddr_is_rejected() {
     let ctx = ConnectContext {
         socket_fd: 3,
-        destination: ConnectDestination::Unix { path_bytes: vec![], abstract_namespace: false },
+        destination: ConnectDestination::Unix {
+            path_bytes: vec![],
+            abstract_namespace: false,
+        },
         sockaddr_len: 2,
         sockaddr_complete: true,
     };
@@ -185,7 +217,10 @@ fn b3_observer_loss_remains_lost() {
 #[test]
 fn b3_unexpected_positive_return_is_ambiguous() {
     let record = classify(&context(3, 8080), 110, 1);
-    assert!(matches!(record.authority, ConnectAuthority::Ambiguous { .. }));
+    assert!(matches!(
+        record.authority,
+        ConnectAuthority::Ambiguous { .. }
+    ));
 }
 
 #[test]
@@ -200,7 +235,10 @@ fn b3_file_proposition_cannot_be_laundered_into_connect() {
 fn b3_same_evidence_is_deterministic() {
     let first = classify(&context(3, 8080), 130, 0);
     let second = classify(&context(3, 8080), 130, 0);
-    assert_eq!(serde_json::to_vec(&first).unwrap(), serde_json::to_vec(&second).unwrap());
+    assert_eq!(
+        serde_json::to_vec(&first).unwrap(),
+        serde_json::to_vec(&second).unwrap()
+    );
 }
 
 #[test]
@@ -208,14 +246,20 @@ fn b3_fd_reuse_requires_new_pairing_identity() {
     let ctx = context(3, 8080);
     let first = attempt(&ctx, 140, 101);
     let second = attempt(&ctx, 142, 101);
-    assert_ne!(first.pairing_identity().unwrap(), second.pairing_identity().unwrap());
+    assert_ne!(
+        first.pairing_identity().unwrap(),
+        second.pairing_identity().unwrap()
+    );
 }
 
 #[test]
 fn b3_same_fd_different_destination_changes_identity() {
     let first = context(3, 8080);
     let second = context(3, 8081);
-    assert_ne!(first.target_identity().unwrap(), second.target_identity().unwrap());
+    assert_ne!(
+        first.target_identity().unwrap(),
+        second.target_identity().unwrap()
+    );
     assert_ne!(first.digest().unwrap(), second.digest().unwrap());
 }
 
