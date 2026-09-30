@@ -151,17 +151,14 @@ def bind_verification_evidence(
         raise ContractError("invalid_observer_authority")
     if observer_completeness not in _ALLOWED_COMPLETENESS:
         raise ContractError("invalid_observer_completeness")
-
-    effective_verdict = verdict
     if observer_completeness != "complete" and verdict == "PASS":
-        effective_verdict = "ERROR"
+        raise ContractError("noncomplete_pass_forbidden")
 
     record: dict[str, object] = {
         "schema": EVIDENCE_SCHEMA,
         "package_digest": package.package_digest,
         "package_eligible": package.record["package_eligible"],
-        "verdict": effective_verdict,
-        "source_verdict": verdict,
+        "verdict": verdict,
         "evidence_digest": evidence_digest,
         "observer_authority": observer_authority,
         "observer_completeness": observer_completeness,
