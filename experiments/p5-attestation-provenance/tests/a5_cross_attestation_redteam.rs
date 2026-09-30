@@ -1,13 +1,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use execsurface_p5_attestation_provenance::{
-    build_bundle, recompute_outer_digests_unchecked, verify_bundle, verify_bundle_for_context,
-    AuthorityState, CapabilityState, CompletenessClass, CompletenessState, ObserverHealth,
-    ProvenanceReference, ResourceDescriptor, Verdict, VerificationBundle, VerificationInput,
-    SLSA_PROVENANCE_TYPE, SVR_PASS_PROPERTY,
+    build_bundle, recompute_outer_digests_unchecked, verify_bundle, AuthorityState,
+    CapabilityState, CompletenessClass, CompletenessState, ObserverHealth, ProvenanceReference,
+    ResourceDescriptor, Verdict, VerificationBundle, VerificationInput, SLSA_PROVENANCE_TYPE,
+    SVR_PASS_PROPERTY,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+
+#[path = "../../p5-cross-attestation-redteam/src/lib.rs"]
+mod graph_verifier;
+
+use graph_verifier::{manifest_for_bundle, verify_graph, ExpectedVerificationContext};
 
 const SCAI_BINDING_PREFIX: &str = "EXECSURFACE_SCAI_SHA256_";
 
@@ -127,6 +132,31 @@ fn lost_input() -> VerificationInput {
     input
 }
 
+fn expected_context(input: &VerificationInput) -> ExpectedVerificationContext {
+    ExpectedVerificationContext {
+        subject: input.subject.clone(),
+        source_identity: input.source_identity.clone(),
+        artifact_identity: input.artifact_identity.clone(),
+        workflow_identity: input.workflow_identity.clone(),
+        command_identity: input.command_identity.clone(),
+        host_identity: input.host_identity.clone(),
+        baseline_digest: input.baseline_digest.clone(),
+        current_surface_digest: input.current_surface_digest.clone(),
+        evidence_digest: input.evidence_digest.clone(),
+        observer_profile: input.observer_profile.clone(),
+        capability_state: input.capability_state.clone(),
+        observer_health: input.observer_health,
+        policy: input.policy.clone(),
+        authority: input.authority,
+        completeness: input.completeness.clone(),
+        verdict: input.verdict,
+        verifier: input.verifier.clone(),
+        verifier_id: input.verifier_id.clone(),
+        created_at: input.created_at.clone(),
+        provenance: input.slsa_provenance.clone(),
+    }
+}
+
 fn refresh_scai_binding(bundle: &mut VerificationBundle) {
     recompute_outer_digests_unchecked(bundle);
     let scai_hex = bundle
@@ -151,6 +181,18 @@ fn assert_rejected(bundle: &VerificationBundle, label: &str) {
     assert!(
         verify_bundle(bundle).is_err(),
         "{label}: adversarial graph unexpectedly verified"
+    );
+}
+
+fn assert_graph_rejected(
+    bundle: &VerificationBundle,
+    expected: &ExpectedVerificationContext,
+    label: &str,
+) {
+    let manifest = manifest_for_bundle(bundle).expect("attacked graph has a typed manifest");
+    assert!(
+        verify_graph(bundle, expected, &manifest).is_err(),
+        "{label}: adversarial graph unexpectedly matched trusted expected context"
     );
 }
 
@@ -215,22 +257,26 @@ fn a5_04_slsa_provenance_replay_from_other_subject_fails_closed() {
 
 #[test]
 fn a5_05_baseline_substitution_cannot_survive_full_attacker_rehash() {
-    let mut attacked = build_bundle(&complete_input()).expect("base");
+    let input = complete_input();
+    let expected = expected_context(&input);
+    let mut attacked = build_bundle(&input).expect("base");
     attacked.scai.predicate.attributes[0]
         .conditions
         .baseline_digest = labeled('4');
     refresh_scai_binding(&mut attacked);
-    assert_rejected(&attacked, "baseline substitution");
+    assert_graph_rejected(&attacked, &expected, "baseline substitution");
 }
 
 #[test]
 fn a5_06_current_surface_substitution_cannot_survive_full_attacker_rehash() {
-    let mut attacked = build_bundle(&complete_input()).expect("base");
+    let input = complete_input();
+    let expected = expected_context(&input);
+    let mut attacked = build_bundle(&input).expect("base");
     attacked.scai.predicate.attributes[0]
         .conditions
         .current_surface_digest = labeled('5');
     refresh_scai_binding(&mut attacked);
-    assert_rejected(&attacked, "current-surface substitution");
+    assert_graph_rejected(&attacked, &expected, "current-surface substitution");
 }
 
 #[test]
@@ -274,12 +320,7 @@ fn a5_09_loss_or_incompleteness_cannot_be_masked_by_pass_summary() {
 #[test]
 fn a5_10_workflow_and_source_substitution_fail_expected_context_binding() {
     let input = complete_input();
-    let expected_workflow = input
-        .workflow_identity
-        .clone()
-        .expect("fixture has workflow identity");
-    let expected_command = input.command_identity.clone();
-    let expected_host = input.host_identity.clone();
+    let expected = expected_context(&input);
 
     let mut workflow_attack = build_bundle(&input).expect("base");
     workflow_attack.scai.predicate.attributes[0]
@@ -290,16 +331,7 @@ fn a5_10_workflow_and_source_substitution_fail_expected_context_binding() {
         "https://github.com/AETHERXGLOBAL/execsurface/actions/workflows/other",
     ));
     refresh_scai_binding(&mut workflow_attack);
-    assert!(
-        verify_bundle_for_context(
-            &workflow_attack,
-            &expected_workflow,
-            &expected_command,
-            &expected_host,
-        )
-        .is_err(),
-        "workflow substitution unexpectedly matched expected context"
-    );
+    assert_graph_rejected(&workflow_attack, &expected, "workflow substitution");
 
     let mut source_attack = build_bundle(&input).expect("base");
     source_attack.scai.predicate.attributes[0]
@@ -310,21 +342,14 @@ fn a5_10_workflow_and_source_substitution_fail_expected_context_binding() {
         "https://github.com/AETHERXGLOBAL/execsurface/tree/other-source",
     ));
     refresh_scai_binding(&mut source_attack);
-    assert!(
-        verify_bundle_for_context(
-            &source_attack,
-            &expected_workflow,
-            &expected_command,
-            &expected_host,
-        )
-        .is_err(),
-        "source substitution unexpectedly matched expected execution context"
-    );
+    assert_graph_rejected(&source_attack, &expected, "source substitution");
 }
 
 #[test]
 fn a5_11_duplicate_or_reordered_semantic_items_cannot_create_new_accepted_identity() {
-    let base = build_bundle(&complete_input()).expect("base");
+    let input = complete_input();
+    let expected = expected_context(&input);
+    let base = build_bundle(&input).expect("base");
 
     let mut duplicate = base.clone();
     duplicate.svr.predicate.properties.push(
@@ -337,16 +362,23 @@ fn a5_11_duplicate_or_reordered_semantic_items_cannot_create_new_accepted_identi
             .clone(),
     );
     recompute_outer_digests_unchecked(&mut duplicate);
-    assert_rejected(&duplicate, "duplicate SVR semantic property");
+    assert_graph_rejected(&duplicate, &expected, "duplicate SVR semantic property");
 
     let mut reordered = base.clone();
     reordered.svr.predicate.properties.reverse();
     recompute_outer_digests_unchecked(&mut reordered);
+    assert_graph_rejected(&reordered, &expected, "noncanonical SVR property ordering");
+
+    reordered.svr.predicate.properties.sort();
+    recompute_outer_digests_unchecked(&mut reordered);
     assert_eq!(
         reordered.bundle_digest, base.bundle_digest,
-        "order-insensitive SVR properties must have one canonical graph identity"
+        "canonical reconstruction must recover one semantic graph identity"
     );
-    verify_bundle(&reordered).expect("canonical order-insensitive reconstruction must verify");
+    let canonical_manifest =
+        manifest_for_bundle(&reordered).expect("canonical reconstruction has manifest");
+    verify_graph(&reordered, &expected, &canonical_manifest)
+        .expect("canonical reconstruction must verify");
 }
 
 #[test]
