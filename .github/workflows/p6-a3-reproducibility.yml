@@ -1,0 +1,240 @@
+name: P6 A3 reproducibility and operational context
+
+on:
+  push:
+    branches:
+      - development/post-alpha4-behavioral-integrity
+    paths:
+      - '.github/workflows/p6-a3-reproducibility.yml'
+      - 'experiments/p6-competitive-falsification/a3-trigger-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  WORKLOAD: experiments/p6-competitive-falsification/workload.sh
+  WORKLOAD_BLOB: c5986f1acd8bc79a3945e613acc128d5c8a9d168
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  ALPHA4_TAG: v0.1.0-alpha.4
+  HARDEN_RUNNER_ACTION: e14015d583714f6e62063499dc959a02595150a1
+  CICD_SENSOR_ACTION: 6511eb44c91d71b2b93d71193b1bf2cb18352f66
+
+jobs:
+  freeze:
+    name: verify A3 frozen identities
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Verify workload, public boundary, and record workflow blob
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object "$WORKLOAD")" = "$WORKLOAD_BLOB"
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          grep -q 'PREREGISTERED — NO A3 RESULT YET' docs/development/P6_A3_REPRODUCIBILITY_PRIVACY_FRICTION_PROTOCOL.md
+          {
+            echo "source_sha=$(git rev-parse HEAD)"
+            echo "workload_blob=$WORKLOAD_BLOB"
+            echo "workflow_blob=$(git hash-object .github/workflows/p6-a3-reproducibility.yml)"
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "kernel=$(uname -r)"
+            echo "harden_runner=$HARDEN_RUNNER_ACTION"
+            echo "cicd_sensor=$CICD_SENSOR_ACTION"
+            echo "tetragon=NOT_TESTABLE_YET"
+          } | tee a3-freeze.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: p6-a3-freeze-${{ github.run_id }}
+          path: a3-freeze.txt
+          retention-days: 30
+
+  execsurface:
+    name: ES A3 repetition
+    needs: freeze
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Verify workload blob
+        run: test "$(git hash-object "$WORKLOAD")" = "$WORKLOAD_BLOB"
+      - name: Install exact public alpha.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=x86_64-unknown-linux-gnu
+          asset="execsurface-${ALPHA4_TAG}-${target}.tar.gz"
+          base="https://github.com/AETHERXGLOBAL/execsurface/releases/download/${ALPHA4_TAG}"
+          mkdir -p "$RUNNER_TEMP/p6-a3-es"
+          curl -fsSL -o "$RUNNER_TEMP/p6-a3-es/$asset" "$base/$asset"
+          curl -fsSL -o "$RUNNER_TEMP/p6-a3-es/$asset.sha256" "$base/$asset.sha256"
+          (cd "$RUNNER_TEMP/p6-a3-es" && sha256sum -c "$asset.sha256")
+          tar -xzf "$RUNNER_TEMP/p6-a3-es/$asset" -C "$RUNNER_TEMP/p6-a3-es"
+          bin="$RUNNER_TEMP/p6-a3-es/execsurface-${ALPHA4_TAG}-${target}/execsurface"
+          test "$("$bin" --version)" = "execsurface ${ALPHA4_TAG#v}"
+          echo "P6_ES_BIN=$bin" >> "$GITHUB_ENV"
+      - name: Learn independent S0 baseline once
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p p6-a3-es-evidence
+          rm -f execsurface.lock.json
+          "$P6_ES_BIN" learn -- /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S0_CONTROL \
+            >p6-a3-es-evidence/learn.stdout.log 2>p6-a3-es-evidence/learn.stderr.log
+          test -s execsurface.lock.json
+          cp execsurface.lock.json p6-a3-es-evidence/baseline.json
+          python3 - <<'PY' > p6-a3-es-evidence/baseline-identity.txt
+          import json
+          d=json.load(open('execsurface.lock.json'))
+          print('baseline_digest='+d['baseline_digest'])
+          print('effects='+str(len(d['payload']['canonical_surface']['effects'])))
+          PY
+      - name: Execute frozen S0-S3 and classify native exits
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > p6-a3-es-evidence/status.tsv
+          : > p6-a3-es-evidence/false-pass.txt
+          : > p6-a3-es-evidence/unexpected-exit.txt
+          for s in S0_CONTROL S1_CHILD_PROCESS_EXPANSION S2_NETWORK_DESTINATION_EXPANSION S3_FILE_WRITE_EXPANSION; do
+            set +e
+            "$P6_ES_BIN" check --baseline execsurface.lock.json \
+              --json-output "p6-a3-es-evidence/${s}.json" \
+              --markdown-output "p6-a3-es-evidence/${s}.md" \
+              -- /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" "$s" \
+              >"p6-a3-es-evidence/${s}.stdout.log" 2>"p6-a3-es-evidence/${s}.stderr.log"
+            rc=$?
+            set -e
+            printf '%s\t%s\n' "$s" "$rc" | tee -a p6-a3-es-evidence/status.tsv
+            case "$rc" in 0|2|10|20) ;; *) echo "$s=$rc" >> p6-a3-es-evidence/unexpected-exit.txt ;; esac
+            if [ "$s" != S0_CONTROL ] && [ "$rc" -eq 0 ]; then
+              echo "$s" >> p6-a3-es-evidence/false-pass.txt
+            fi
+          done
+          if test -f /tmp/execsurface-p6/s2-resolved-ips.txt; then
+            cp /tmp/execsurface-p6/s2-resolved-ips.txt p6-a3-es-evidence/
+          fi
+          test ! -s p6-a3-es-evidence/false-pass.txt
+          test ! -s p6-a3-es-evidence/unexpected-exit.txt
+      - name: Record ES operational context and seal
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p p6-a3-es-evidence
+          {
+            echo "system=ExecSurface"
+            echo "source=$ALPHA4_SOURCE"
+            echo "release=$ALPHA4_TAG"
+            echo "integration=download_exact_release_then_local_cli"
+            echo "explicit_sudo_in_lane=false"
+            echo "configured_execsurface_external_telemetry_endpoint=none"
+            echo "evidence_storage=local_files_then_github_actions_artifact"
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "kernel=$(uname -r)"
+          } > p6-a3-es-evidence/operational-context.txt
+          find p6-a3-es-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > p6-a3-es-evidence/SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: p6-a3-es-${{ github.run_id }}
+          path: p6-a3-es-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+  harden-runner:
+    name: HR A3 repetition
+    needs: freeze
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Start pinned Harden-Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Verify workload blob
+        run: test "$(git hash-object "$WORKLOAD")" = "$WORKLOAD_BLOB"
+      - name: HR S0
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S0_CONTROL
+      - name: HR S1
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S1_CHILD_PROCESS_EXPANSION
+      - name: HR S2
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S2_NETWORK_DESTINATION_EXPANSION
+      - name: HR S3
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S3_FILE_WRITE_EXPANSION
+      - name: Record HR operational context visible to workflow
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p p6-a3-hr-evidence
+          {
+            echo "system=Harden-Runner"
+            echo "action=$HARDEN_RUNNER_ACTION"
+            echo "configuration_egress_policy=audit"
+            echo "configuration_disable_file_monitoring=false_default"
+            echo "configuration_disable_telemetry=false_default"
+            echo "native_monitor_detail=job_log_and_security_insights_context"
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "kernel=$(uname -r)"
+          } > p6-a3-hr-evidence/operational-context.txt
+          if test -f /tmp/execsurface-p6/s2-resolved-ips.txt; then cp /tmp/execsurface-p6/s2-resolved-ips.txt p6-a3-hr-evidence/; fi
+          find p6-a3-hr-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > p6-a3-hr-evidence/SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: p6-a3-hr-${{ github.run_id }}
+          path: p6-a3-hr-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+  cicd-sensor:
+    name: CS A3 repetition
+    needs: freeze
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Start pinned cicd-sensor
+        uses: cicd-sensor/cicd-sensor-action@6511eb44c91d71b2b93d71193b1bf2cb18352f66
+        with:
+          enable-html-report: 'false'
+          enable-attestation-artifact: 'true'
+          enable-debug: 'true'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Verify workload blob
+        run: test "$(git hash-object "$WORKLOAD")" = "$WORKLOAD_BLOB"
+      - name: CS S0
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S0_CONTROL
+      - name: CS S1
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S1_CHILD_PROCESS_EXPANSION
+      - name: CS S2
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S2_NETWORK_DESTINATION_EXPANSION
+      - name: CS S3
+        run: /bin/bash "$GITHUB_WORKSPACE/$WORKLOAD" S3_FILE_WRITE_EXPANSION
+      - name: Record CS operational context visible before post action
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p p6-a3-cs-evidence
+          {
+            echo "system=cicd-sensor"
+            echo "action=$CICD_SENSOR_ACTION"
+            echo "bundled_sensor=v0.0.45"
+            echo "attestation_artifact_enabled=true"
+            echo "debug_artifact_enabled=true"
+            echo "html_report_enabled=false"
+            echo "runner_os=$RUNNER_OS"
+            echo "runner_arch=$RUNNER_ARCH"
+            echo "kernel=$(uname -r)"
+          } > p6-a3-cs-evidence/operational-context.txt
+          if test -f /tmp/execsurface-p6/s2-resolved-ips.txt; then cp /tmp/execsurface-p6/s2-resolved-ips.txt p6-a3-cs-evidence/; fi
+          find p6-a3-cs-evidence -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > p6-a3-cs-evidence/SHA256SUMS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: p6-a3-cs-workload-${{ github.run_id }}
+          path: p6-a3-cs-evidence
+          if-no-files-found: error
+          retention-days: 30
