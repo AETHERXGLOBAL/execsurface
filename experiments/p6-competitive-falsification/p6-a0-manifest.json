@@ -56,7 +56,9 @@
     "tetragon": {
       "repository": "cilium/tetragon",
       "source_commit": "666efe6f91e3605ad58683ad226d759d9cf970ca",
-      "execution_pin_strategy": "build_or_install_from_exact_source_commit_until_container_digest_is_frozen",
+      "execution_pin_strategy": "exact_source_build_or_frozen_container_digest_only",
+      "live_lane_authorized": false,
+      "live_lane_blocker": "freeze an exact-source build workflow or immutable image digest before execution",
       "role": "primary_runtime",
       "propositions": {
         "CP1_PROCESS_EXEC": "A0_YES",
@@ -88,8 +90,23 @@
       }
     }
   },
+  "a0_evidence": {
+    "source_sha": "f2174f08134d62ed3e19879b8ff54ff7e1a07aea",
+    "run_id": 36769654116,
+    "conclusion": "success",
+    "artifact_id": 11122743690,
+    "artifact_name": "p6-a0-36769654116-1",
+    "artifact_digest": "sha256:23fb182b3bc1fc269883059c2ccdd700a414033aeae5fb26264866fcf01f08f5",
+    "artifact_size": 10287,
+    "runner": {
+      "image": "ubuntu-24.04",
+      "arch": "X64",
+      "kernel": "6.17.0-1022-azure",
+      "docker": "28.0.4"
+    }
+  },
   "scenario_ids": ["S0_CONTROL", "S1_CHILD_PROCESS_EXPANSION", "S2_NETWORK_DESTINATION_EXPANSION", "S3_FILE_WRITE_EXPANSION", "S4_EVIDENCE_IDENTITY_SUBSTITUTION", "S5_OBSERVER_DEGRADATION_LOSS"],
   "aggregate_score_forbidden": true,
-  "live_benchmark_authorized": false,
-  "a0_state": "SOURCE_PIN_GATE_PENDING"
+  "live_benchmark_authorized": true,
+  "a0_state": "P6_A0_OVERLAP_MATRIX_FROZEN"
 }
