@@ -323,6 +323,14 @@ fn validate_input(input: &VerificationInput) -> Result<(), ModelError> {
     let subject_digest = descriptor_digest(&input.subject)?;
     let _ = descriptor_digest(&input.policy)?;
     let _ = descriptor_digest(&input.verifier)?;
+    let verifier_uri = input
+        .verifier
+        .uri
+        .as_deref()
+        .ok_or_else(|| ModelError::new("verifier_uri_missing"))?;
+    if verifier_uri != input.verifier_id {
+        return Err(ModelError::new("verifier_identity_mismatch"));
+    }
 
     for digest in [
         &input.baseline_digest,
@@ -576,6 +584,18 @@ pub fn verify_bundle(bundle: &VerificationBundle) -> Result<(), ModelError> {
     }
     if bundle.scai.predicate.producer != attribute.conditions.verifier_identity {
         return Err(ModelError::new("scai_producer_verifier_identity_mismatch"));
+    }
+    let scai_verifier_uri = bundle
+        .scai
+        .predicate
+        .producer
+        .uri
+        .as_deref()
+        .ok_or_else(|| ModelError::new("scai_producer_uri_missing"))?;
+    if scai_verifier_uri != bundle.svr.predicate.verifier.id {
+        return Err(ModelError::new(
+            "cross_attestation_verifier_identity_mismatch",
+        ));
     }
 
     if bundle.svr.predicate.verifier.policies.len() != 1 {
