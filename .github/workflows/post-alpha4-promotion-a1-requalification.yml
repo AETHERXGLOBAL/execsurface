@@ -1,0 +1,238 @@
+name: Post-alpha4 promotion A1 repaired candidate requalification
+
+on:
+  push:
+    branches: [integration/post-alpha4-promotion-candidate]
+    paths:
+      - docs/development/POST_ALPHA4_PROMOTION_A1_REQUALIFICATION_PROTOCOL.md
+      - crates/execsurface-model/src/semantics_v3.rs
+      - crates/execsurface-model/tests/semantics_v3_promotion.rs
+      - crates/execsurface-model/tests/semantics_v3_rework.rs
+      - experiments/p4-backend-authority/**
+      - .github/workflows/post-alpha4-promotion-a1-requalification.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: post-alpha4-a1-requalification-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  REPAIRED_SOURCE: 0200f09557906118dd0e96f8a5a73aa4f5c4a9cc
+  BROKEN_SOURCE: 5079a990b924d8ccd7ac6414f8a9a2571b54e240
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+
+jobs:
+  identity:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Verify candidate ancestry and immutable public anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'integration/post-alpha4-promotion-candidate'
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$REPAIRED_SOURCE" HEAD
+          git merge-base --is-ancestor "$BROKEN_SOURCE" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+      - name: Verify schema-domain and protocol boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/lib.rs
+          grep -F 'pub const CANONICAL_SURFACE_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/canonical.rs
+          grep -F 'pub const LOCK_SCHEMA_VERSION: u32 = 2;' crates/execsurface-baseline/src/lib.rs
+          grep -F 'pub const DIFF_SCHEMA_VERSION: u32 = 2;' crates/execsurface-diff/src/lib.rs
+          grep -F 'pub const POLICY_SCHEMA_VERSION: u32 = 2;' crates/execsurface-policy/src/lib.rs
+          grep -F 'pub const VERDICT_SCHEMA_VERSION: u32 = 2;' crates/execsurface-policy/src/lib.rs
+          grep -F 'pub const SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION: u32 = 3;' crates/execsurface-model/src/semantics_v3.rs
+          protocol='docs/development/POST_ALPHA4_PROMOTION_A1_REQUALIFICATION_PROTOCOL.md'
+          grep -F 'Every listed gate must PASS' "$protocol"
+          grep -F 'no partial-pass promotion' "$protocol"
+          grep -F 'P8 closure' "$protocol"
+
+  semantics:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Formatting and Clippy
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-model --all-targets -- -D warnings
+      - name: Re-run repaired D01-D06
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+      - name: Re-run original A1 corpus
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+      - name: Reprove adjacent v2 model baseline diff policy
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model -p execsurface-baseline -p execsurface-diff -p execsurface-policy --all-targets
+
+  p3-falsifier:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Replay P3 variance-poisoning falsifier
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-v4-falsifier/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-v4-falsifier/Cargo.toml --all-targets -- --nocapture
+
+  p4-authority:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Replay P4 cross-proposition and backend-name falsification
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b_cross_proposition_falsification -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --lib a0_backend_name_never_upgrades_weak_evidence -- --nocapture
+      - name: Replay P4 live success-authority propositions
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b1_ptrace_open_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b2_ptrace_rename_delete_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b3_ptrace_connect_live -- --nocapture
+
+  p5-attestation:
+    runs-on: ubuntu-24.04
+    env:
+      P5_A3_FIXTURE: ${{ github.workspace }}/p5-a3-upstream.json
+      UPSTREAM_REPOSITORY: https://github.com/slsa-framework/slsa-verifier.git
+      UPSTREAM_COMMIT: 30d0be3bbab553fc51557377baba2f7572dfc212
+      UPSTREAM_PATH: verifiers/internal/gcb/testdata/v1.0-gcloud-container-github-single.json
+      UPSTREAM_BLOB_SHA: 7102e40887a758e01184ac79ca10cb34b7281627
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Fetch and verify frozen SLSA v1 fixture
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          git -C "$tmp" init -q
+          git -C "$tmp" remote add origin "$UPSTREAM_REPOSITORY"
+          git -C "$tmp" fetch -q --depth=1 origin "$UPSTREAM_COMMIT"
+          test "$(git -C "$tmp" rev-parse FETCH_HEAD)" = "$UPSTREAM_COMMIT"
+          test "$(git -C "$tmp" rev-parse "FETCH_HEAD:$UPSTREAM_PATH")" = "$UPSTREAM_BLOB_SHA"
+          git -C "$tmp" show "FETCH_HEAD:$UPSTREAM_PATH" > "$P5_A3_FIXTURE"
+          grep -q 'https://slsa.dev/provenance/v1' "$P5_A3_FIXTURE"
+      - name: Replay P5 A5 red-team
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test a5_graph_redteam -- --nocapture
+      - name: Replay P5 A3 provenance binding
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml --test a3_slsa_provenance_binding -- --nocapture
+      - name: Replay P5 A2 A1 A0 composition
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_scai_svr_binding -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_verifier_identity_addendum -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a1_runtime_trace_mapping -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a0_standards_composition -- --nocapture
+
+  m11-fail-closed:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Replay M11 shared-FD ambiguity regression
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
+
+  m12-adversarial:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    env:
+      M12_PATH_RUNS: '300'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Compile bounded adversarial fixtures
+        run: |
+          set -euo pipefail
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/path_toctou_target.c -o "$RUNNER_TEMP/m12-path-toctou"
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/fd_share_race_target.c -o "$RUNNER_TEMP/m12-fd-share-race"
+      - name: Replay M12 adversarial suite
+        env:
+          M12_PATH_TOCTOU_BIN: ${{ runner.temp }}/m12-path-toctou
+          M12_FD_SHARE_BIN: ${{ runner.temp }}/m12-fd-share-race
+          M12_RESULT_DIR: ${{ runner.temp }}/m12-adversarial-results
+        run: |
+          set -euo pipefail
+          mkdir -p "$M12_RESULT_DIR"
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m12_adversarial -- --test-threads=1 --nocapture
+          test -s "$M12_RESULT_DIR/path-toctou.json"
+          test -s "$M12_RESULT_DIR/shared-fd.json"
+      - name: Replay ptrace Linux regression
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test ptrace_linux
+
+  closeout:
+    needs: [identity, semantics, p3-falsifier, p4-authority, p5-attestation, m11-fail-closed, m12-adversarial]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Record bounded candidate requalification
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'integration/post-alpha4-promotion-candidate'
+          git merge-base --is-ancestor "$REPAIRED_SOURCE" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          mkdir -p evidence
+          {
+            echo 'decision=POST_ALPHA4_PROMOTION_A1_SEMANTICS_V3_REQUALIFIED_BOUNDED_CANDIDATE'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "repaired_source=${REPAIRED_SOURCE}"
+            echo "historical_broken_source=${BROKEN_SOURCE}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo "stable_v0_1_sha=$(git rev-parse 'v0.1^{commit}')"
+            echo 'semantics_repair_reproved=true'
+            echo 'p3_reproved=true'
+            echo 'p4_reproved=true'
+            echo 'p5_reproved=true'
+            echo 'm11_reproved=true'
+            echo 'm12_ubuntu_22_04_reproved=true'
+            echo 'm12_ubuntu_24_04_reproved=true'
+            echo 'public_promotion_authorized=false'
+            echo 'main_merge_authorized=false'
+            echo 'p8_closure=false'
+          } | tee evidence/post-alpha4-promotion-a1-requalification.txt
+      - name: Upload candidate requalification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-promotion-a1-requalification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/post-alpha4-promotion-a1-requalification.txt
+          if-no-files-found: error
