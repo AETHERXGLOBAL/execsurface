@@ -118,7 +118,6 @@ fn s01_backend_profile_name_cannot_rescue_proposition_mismatch() {
         AuthorityState::Direct,
         lexical_guarantees(),
     );
-    substituted.backend_profile_mut_for_test();
     substituted.proof.backend_profile.name = "trusted-perfect-kernel-authority".to_owned();
     substituted.proof.backend_profile.semantic_profile_version = u32::MAX;
     assert!(!substituted.admissible_for(&requirement));
@@ -250,10 +249,7 @@ fn s09_unknown_ambiguity_cannot_silently_grant_authority() {
 
 #[test]
 fn s10_stronger_guarantees_cannot_rescue_mismatched_proposition() {
-    let requirement = requirement_for(proposition(
-        "/usr/bin/cat",
-        "$WORKSPACE/input.txt",
-    ));
+    let requirement = requirement_for(proposition("/usr/bin/cat", "$WORKSPACE/input.txt"));
     let candidate = record(
         "P4.FILE.OPEN_OBJECT",
         proposition("/usr/bin/python3", "$WORKSPACE/other.txt"),
