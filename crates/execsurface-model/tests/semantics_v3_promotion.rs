@@ -55,11 +55,18 @@ fn base_record() -> ProofCarryingObservation {
     record
 }
 
+fn requirement_with(
+    guarantees: EvidenceGuarantees,
+    required_complete: BTreeSet<CompletenessDimension>,
+) -> ProofRequirement {
+    ProofRequirement::for_proposition(pathname_proposition(), guarantees, required_complete)
+}
+
 fn weak_requirement_with(required: CompletenessDimension) -> ProofRequirement {
-    ProofRequirement {
-        guarantees: weak_path_guarantees(),
-        required_complete: BTreeSet::from([required]),
-    }
+    requirement_with(
+        weak_path_guarantees(),
+        BTreeSet::from([required]),
+    )
 }
 
 #[test]
@@ -83,13 +90,13 @@ fn a1_01_v2_shaped_payload_is_not_a_v3_proof_record() {
 fn a1_02_schema_version_two_cannot_satisfy_v3_requirement() {
     let mut record = base_record();
     record.schema_version = 2;
-    let requirement = ProofRequirement {
-        guarantees: weak_path_guarantees(),
-        required_complete: BTreeSet::from([
+    let requirement = requirement_with(
+        weak_path_guarantees(),
+        BTreeSet::from([
             CompletenessDimension::SessionScope,
             CompletenessDimension::Lifecycle,
         ]),
-    };
+    );
     assert!(!record.satisfies(&requirement));
     assert_eq!(SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION, 3);
 }
@@ -144,13 +151,13 @@ fn a1_06_unsupported_required_completeness_is_non_admissible() {
 fn a1_07_backend_name_cannot_upgrade_weak_authority() {
     let mut record = base_record();
     record.backend_profile.name = "kernel-super-authoritative-trusted-backend".to_owned();
-    let requirement = ProofRequirement {
-        guarantees: EvidenceGuarantees {
+    let requirement = requirement_with(
+        EvidenceGuarantees {
             identity_bases: BTreeSet::from([IdentityBasis::KernelObjectGrounded]),
             ..EvidenceGuarantees::default()
         },
-        required_complete: BTreeSet::new(),
-    };
+        BTreeSet::new(),
+    );
     assert!(!record.satisfies(&requirement));
 }
 
