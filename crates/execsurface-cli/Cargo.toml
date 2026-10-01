@@ -15,11 +15,11 @@ name = "execsurface"
 path = "src/main.rs"
 
 [dependencies]
-execsurface-baseline = { path = "../execsurface-baseline", version = "=0.1.0-alpha.4" }
-execsurface-diff = { path = "../execsurface-diff", version = "=0.1.0-alpha.4" }
-execsurface-model = { path = "../execsurface-model", version = "=0.1.0-alpha.4" }
-execsurface-normalize = { path = "../execsurface-normalize", version = "=0.1.0-alpha.4" }
-execsurface-observe = { path = "../execsurface-observe", version = "=0.1.0-alpha.4" }
-execsurface-policy = { path = "../execsurface-policy", version = "=0.1.0-alpha.4" }
-execsurface-report = { path = "../execsurface-report", version = "=0.1.0-alpha.4" }
+execsurface-baseline = { path = "../execsurface-baseline", version = "=0.1.0-alpha.5" }
+execsurface-diff = { path = "../execsurface-diff", version = "=0.1.0-alpha.5" }
+execsurface-model = { path = "../execsurface-model", version = "=0.1.0-alpha.5" }
+execsurface-normalize = { path = "../execsurface-normalize", version = "=0.1.0-alpha.5" }
+execsurface-observe = { path = "../execsurface-observe", version = "=0.1.0-alpha.5" }
+execsurface-policy = { path = "../execsurface-policy", version = "=0.1.0-alpha.5" }
+execsurface-report = { path = "../execsurface-report", version = "=0.1.0-alpha.5" }
 serde_json.workspace = true

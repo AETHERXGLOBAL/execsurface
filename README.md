@@ -16,7 +16,7 @@ ExecSurface learns an accepted **runtime execution surface**, runs the same comm
 
 It is intended for CI pipelines, dependencies, developer tools and AI-assisted workflows where source review alone does not show every runtime effect.
 
-> **Public Alpha:** Linux x86_64 only. Release candidate version: **0.1.0-alpha.4**.
+> **Public Alpha:** Linux x86_64 only. Release candidate version: **0.1.0-alpha.5**.
 >
 > **Self-service:** no signup, API key, meeting, or AETHER X approval is required.
 
@@ -29,7 +29,7 @@ Choose the path that matches your environment.
 Download the published release, verify its checksum, and install it in your user path:
 
 ```bash
-VERSION=v0.1.0-alpha.4
+VERSION=v0.1.0-alpha.5
 TARGET=x86_64-unknown-linux-gnu
 ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
 
@@ -145,7 +145,7 @@ The public alpha distribution surfaces are:
 - `cargo install execsurface --locked` for Rust users after registry publication;
 - GitHub Action `AETHERXGLOBAL/execsurface@v0.1` after stable-channel promotion.
 
-For maximum Action pinning after release, use `AETHERXGLOBAL/execsurface@v0.1.0-alpha.4`.
+For maximum Action pinning after release, use `AETHERXGLOBAL/execsurface@v0.1.0-alpha.5`.
 
 Optional GitHub build provenance verification:
 
