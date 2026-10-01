@@ -79,8 +79,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -R -F 'P8_EXTERNAL_EVIDENCE_INSUFFICIENT' docs/development docs/reviews 2>/dev/null | head -n 1
-          grep -R -Ei 'arm64.*(not|no |unsupported|negative)|not.*arm64' docs/development docs/reviews 2>/dev/null | head -n 1
+          grep -F 'P8_EXTERNAL_EVIDENCE_INSUFFICIENT' docs/development/P8_A5_EXTERNAL_VALIDATION_CLOSEOUT_PROTOCOL.md
+          grep -F '**P7_A0_ARM64_NOT_PORTABLE**' docs/development/P7_CLOSEOUT_DECISION.md
+          grep -F 'This decision does not promote any new public platform or CI support.' docs/development/P7_CLOSEOUT_DECISION.md
 
   semantics-p4-live:
     runs-on: ubuntu-24.04
