@@ -1,0 +1,167 @@
+name: Post-alpha4 candidate A8 A2 proposition authority
+
+on:
+  push:
+    branches: [release/post-alpha4-candidate-assembly]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  A8_A1_ACCEPTED_SOURCE: 1c65327e99aa62a3b42549764bebe6b5b29516e7
+  A8_A2_PROTOCOL_SOURCE: 7250002f3f7cb83f3f9ca930e8acedb524d57580
+
+jobs:
+  provenance-and-scope:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify clean lineage and immutable public tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$ALPHA4_SOURCE" HEAD
+          git merge-base --is-ancestor "$A8_A1_ACCEPTED_SOURCE" HEAD
+          git merge-base --is-ancestor "$A8_A2_PROTOCOL_SOURCE" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+      - name: Verify exact A8 A2 implementation delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff --name-only "$A8_A2_PROTOCOL_SOURCE"..HEAD | sort)
+          printf '%s\n' "${changed[@]}" > changed-files.txt
+          cat > expected-files.txt <<'EOF'
+          .github/workflows/post-alpha4-candidate-a8-a2-authority.yml
+          crates/execsurface-model/src/authority_v3.rs
+          crates/execsurface-model/src/lib.rs
+          crates/execsurface-model/tests/authority_v3_candidate.rs
+          docs/development/POST_ALPHA4_CANDIDATE_ASSEMBLY_MANIFEST.md
+          EOF
+          sed -i 's/^          //' expected-files.txt
+          sort -o expected-files.txt expected-files.txt
+          diff -u expected-files.txt changed-files.txt
+          ! grep -E '^experiments/p4-|^\.github/workflows/p4-' changed-files.txt
+      - name: Verify accepted A1 semantic slice unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code "$A8_A1_ACCEPTED_SOURCE" HEAD -- \
+            crates/execsurface-model/src/semantics_v3.rs \
+            crates/execsurface-model/tests/semantics_v3_promotion.rs \
+            crates/execsurface-model/tests/semantics_v3_rework.rs
+      - name: Verify feature and v2 default boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --no-deps --format-version 1 > metadata.json
+          jq -e '.packages[] | select(.name == "execsurface-model") | .features.default == [] and .features["semantics-v3"] == []' metadata.json >/dev/null
+          grep -F 'pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/lib.rs
+          grep -A1 -F '#[cfg(feature = "semantics-v3")]' crates/execsurface-model/src/lib.rs | grep -F 'pub mod authority_v3;'
+
+  static-and-default-regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Rustfmt
+        run: cargo +$RUST_TOOLCHAIN fmt --all -- --check
+      - name: Clippy default
+        run: cargo +$RUST_TOOLCHAIN clippy --locked --workspace --all-targets -- -D warnings
+      - name: Default alpha.4-compatible regression
+        run: cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets
+
+  authority-falsification:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Clippy Semantics v3 plus authority
+        run: cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-model --all-targets --features semantics-v3 -- -D warnings
+      - name: Run frozen A8 A2 authority corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test authority_v3_candidate -- --nocapture 2>&1 | tee a8-a2.log
+          grep -q 'test result: ok. 16 passed; 0 failed' a8-a2.log
+      - name: Reprove D01-D06 unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test semantics_v3_rework -- --nocapture 2>&1 | tee d01-d06.log
+          grep -q 'test result: ok. 6 passed; 0 failed' d01-d06.log
+      - name: Reprove original A1 corpus unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test semantics_v3_promotion -- --nocapture 2>&1 | tee a1.log
+          grep -q 'test result: ok. 9 passed; 0 failed' a1.log
+      - name: Full feature-enabled model regression
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3
+      - name: Upload adversarial logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-a2-authority-falsification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            a8-a2.log
+            d01-d06.log
+            a1.log
+          if-no-files-found: warn
+          retention-days: 90
+
+  closeout:
+    needs: [provenance-and-scope, static-and-default-regression, authority-falsification]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Emit bounded A8 A2 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            echo 'decision=POST_ALPHA4_PROMOTION_A8_A2_AUTHORITY_ELIGIBLE_BOUNDED_CLEAN_CANDIDATE'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "a8_a1_accepted_source=${A8_A1_ACCEPTED_SOURCE}"
+            echo "a8_a2_protocol_source=${A8_A2_PROTOCOL_SOURCE}"
+            echo 'authority_corpus=16/16'
+            echo 'd01_d06=6/6'
+            echo 'a1_corpus=9/9'
+            echo 'backend_name_authority=false'
+            echo 'duplicated_text_proposition_id=false'
+            echo 'default_v2_unchanged=true'
+            echo 'backend_equivalence_claim=false'
+            echo 'main_merge_authorized=false'
+            echo 'public_release_authorized=false'
+            echo 'p8_closure=false'
+          } | tee evidence/a8-a2-authority.txt
+      - name: Upload closeout evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-a2-authority-closeout-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/a8-a2-authority.txt
+          if-no-files-found: error
+          retention-days: 90

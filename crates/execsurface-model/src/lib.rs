@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "semantics-v3")]
+pub mod authority_v3;
 pub mod canonical;
 #[cfg(feature = "semantics-v3")]
 pub mod semantics_v3;

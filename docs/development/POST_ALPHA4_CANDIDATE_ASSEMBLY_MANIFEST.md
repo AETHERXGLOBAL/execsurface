@@ -5,85 +5,70 @@ Branch: `release/post-alpha4-candidate-assembly`
 Immutable base: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
 Promotion evidence closeout: `cef8c5b8acb3f3c9e0671c497ad04837709bb024`
 A8 protocol source: `5fc3bf3ad9c8074045eae45d57faa2e92340d855`
-Status: **A8-A0 CLEAN BASE VERIFIED — A8-A1 ADMITTED FILES FROZEN**
+Status: **A8-A1 CLOSED PASS — A8-A2 IMPLEMENTED / GATE PENDING**
 
-## Clean-base rule
+## Clean-base invariant
 
-This branch was created directly from immutable public alpha.4. The post-alpha.4 promotion/research branch is evidence-only and MUST NOT enter this branch through merge, fast-forward, cherry-pick of broad history, or subtree import.
+This branch descends directly from immutable public alpha.4. Promotion/research history is evidence only and is never merged wholesale into the candidate.
 
-## A8-A1 admitted product/test files
+Public anchors remain immutable during A8:
+- `v0.1.0-alpha.4` -> `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
+- stable `v0.1` -> same source.
 
-Only the following paths may differ from alpha.4 during the A8-A1 Semantics-v3 tranche:
+## A8-A1 — Semantics v3
 
-1. `crates/execsurface-model/Cargo.toml`
-   - add a default-off `semantics-v3` feature only;
-   - default feature set remains empty;
-   - add `serde_json` only as a dev-dependency for the frozen Semantics-v3 test corpus.
+Accepted source: `1c65327e99aa62a3b42549764bebe6b5b29516e7`
+Accepted workflow run: `36870460513` — SUCCESS.
+Decision: `POST_ALPHA4_PROMOTION_A8_A1_SEMANTICS_V3_ELIGIBLE_BOUNDED_CLEAN_CANDIDATE`.
 
-2. `Cargo.lock`
-   - update only the local `execsurface-model` dependency entry required by the admitted `serde_json` dev-dependency;
-   - no third-party version, checksum, or runtime dependency change is admitted.
+Established:
+- clean alpha.4 ancestry and tag anchors;
+- default-off `semantics-v3` feature;
+- public raw schema remains v2;
+- exact D01-D06 = 6/6 PASS;
+- original A1 corpus = 9/9 PASS;
+- feature-enabled model PASS;
+- default alpha.4-compatible workspace regression PASS;
+- rustfmt and Clippy `-D warnings` PASS.
 
-3. `crates/execsurface-model/src/lib.rs`
-   - expose `semantics_v3` only behind `#[cfg(feature = "semantics-v3")]`;
-   - preserve `RAW_OBSERVATION_SCHEMA_VERSION = 2` and all alpha.4 v2 types/defaults unchanged.
+Retained pre-scientific negative evidence:
+- `36867146485`: pinned Rust minimal profile omitted rustfmt/clippy; scientific corpus did not execute.
+- `36869713875`: rustfmt-only differences plus stale lockfile dev-dependency entry; scientific corpus did not execute.
+- corrections were harness/format/lockfile-only and changed no assertion, threshold, proof rule, semantic admission rule, default behavior, or public tag.
 
-4. `crates/execsurface-model/src/semantics_v3.rs`
-   - bounded repaired Semantics-v3 proof model from the accepted A1/A7 evidence lineage;
-   - unavailable in default build.
+After closure, the A1 workflow was converted to a slice-stability integration regression gate. It keeps the accepted A1 semantic/test files byte-identical while rerunning D01-D06, A1 and default-v2 regressions on every later tranche.
 
-5. `crates/execsurface-model/tests/semantics_v3_rework.rs`
-   - exact D01-D06 destructive repair corpus, feature-gated by workflow invocation.
+## A8-A2 — Proposition authority
 
-6. `crates/execsurface-model/tests/semantics_v3_promotion.rs`
-   - exact A1 nine-test compatibility/authority corpus, feature-gated by workflow invocation.
+Preregistered protocol source: `7250002f3f7cb83f3f9ca930e8acedb524d57580`.
+Research evidence sources: P4 closeout `320c865d3e81071a8214ad726dca7a587b0fc479`; promotion A2 `d02151e8f2d1f6b0a6558d52da6f48e74763e0a5`.
 
-7. `.github/workflows/post-alpha4-candidate-a8-a1-semantics-v3.yml`
-   - clean-branch provenance, file-scope, default-off, v2 regression and v3 adversarial reproof gate.
+Admitted implementation delta:
+- `crates/execsurface-model/src/authority_v3.rs`;
+- feature-gated export in `crates/execsurface-model/src/lib.rs`;
+- `crates/execsurface-model/tests/authority_v3_candidate.rs`;
+- `.github/workflows/post-alpha4-candidate-a8-a2-authority.yml`;
+- this cumulative manifest.
 
-8. `docs/development/POST_ALPHA4_CANDIDATE_ASSEMBLY_MANIFEST.md`
-   - this frozen manifest and retained execution ledger.
+Product hardening decision: do not carry the P4 research prototype's duplicated textual `proposition_id`. Typed `ProofCarryingObservation.proposition` is the sole proposition identity, reducing mismatch/laundering surface without broadening authority.
 
-## Explicit non-admissions in A8-A1
+A8-A2 remains pending until its exact 16-attack corpus, A1 regressions, default-v2 regression, rustfmt, Clippy, ancestry/scope and immutable-tag gates all PASS in one accepted workflow run.
 
-A8-A1 does not admit changes to:
-- CLI behavior;
-- GitHub Action behavior;
-- baseline schema or baseline files;
-- canonical v2 semantics;
-- diff/policy/verdict defaults;
-- observers or ptrace runtime;
+## Explicit non-admissions through A8-A2
+
+Not admitted:
+- CLI/GitHub Action default behavior changes;
+- baseline schema migration;
+- ptrace/Tetragon/backend equivalence;
+- observer/runtime adapter changes;
 - variance handling;
-- attestation/provenance runtime integration;
-- GitLab/self-hosted support;
-- arm64 support;
-- public release metadata, tags, `main`, or `@v0.1`.
+- attestation runtime binding;
+- arm64 support claim;
+- BPF-LSM default backend;
+- generic learning/frequency authorization;
+- release/tag/main movement;
+- P8 external-validation claim.
 
-## Rollback / safe-disable
+## Release boundary
 
-The `semantics-v3` feature is default-off. Building without it must produce the alpha.4 v2 model behavior and public API surface except for the inert Cargo feature declaration itself. Removing/disabling the feature requires no baseline migration and mutates no user data.
-
-## A8-A1 acceptance
-
-A8-A1 passes only if one workflow execution proves:
-- this branch descends directly from alpha.4 without promotion-branch merge ancestry;
-- only the eight admitted paths differ from alpha.4;
-- default features are empty and Semantics v3 is not compiled/exposed by default;
-- alpha.4 v2 model/baseline/diff/policy regressions pass without `semantics-v3`;
-- feature-enabled D01-D06 = 6/6 PASS;
-- feature-enabled A1 = 9/9 PASS;
-- model tests and Clippy/rustfmt pass both relevant modes;
-- public `v0.1.0-alpha.4` and stable `v0.1` still resolve to the immutable source;
-- no release, tag movement, `main` merge, or P8 closure occurs.
-
-No partial pass is allowed.
-
-## Retained A8-A1 execution evidence
-
-Negative/pre-scientific evidence is retained and does not count as a pass:
-
-- run `36867146485` at `f2f28250294a7fe6d020312e72f1bc3aa40b34b0`: clean provenance/scope PASS; static jobs failed because the pinned Rust `minimal` profile did not install `rustfmt`/`clippy`; scientific corpora did not execute.
-- run `36869713875` at `455bf66e54085bc95da3dceaeb05c08821c348a1`: component installation PASS; `rustfmt` found formatting-only differences in `semantics_v3_promotion.rs`; opt-in Clippy stopped because `Cargo.lock` had not yet recorded the admitted `serde_json` dev-dependency; scientific corpora did not execute.
-- correction commit `b7919dd4b1cee5e132d10e3d4ce558a8ed049114`: formatting alignment + one-line lockfile dependency admission + scope-manifest update only. No scientific test name, assertion, threshold, proof rule, acceptance rule, semantic implementation, default behavior, or public tag was weakened or changed to obtain a future pass.
-
-A later successful run must still execute the complete frozen corpora and all default regressions before A8-A1 can close.
+A8 internal success does not authorize public alpha.5 while P8 remains externally blocked. Internal evidence cannot be relabeled as external validation.
