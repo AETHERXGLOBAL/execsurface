@@ -16,6 +16,8 @@ env:
   RUST_TOOLCHAIN: 1.90.0
   ALPHA4_SHA: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
   ALPHA4_TAG: v0.1.0-alpha.4
+  CANONICAL_SOURCE_ROOT: /usr/src/execsurface
+  SOURCE_DATE_EPOCH: '0'
 
 jobs:
   reproduce:
@@ -48,6 +50,8 @@ jobs:
           test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SHA"
           grep -F 'PREREGISTERED — NO PUBLIC RELEASE AUTHORIZED' docs/development/POST_ALPHA4_CANDIDATE_A8_A7_REPRODUCIBLE_ARTIFACT_PROTOCOL.md
           grep -F 'POST_ALPHA4_CANDIDATE_A8_A7_REPRODUCIBLE_ARTIFACT_PASS_BOUNDED_INTERNAL' docs/development/POST_ALPHA4_CANDIDATE_A8_A7_REPRODUCIBLE_ARTIFACT_PROTOCOL.md
+          grep -F 'FROZEN BYTE-IDENTITY CRITERION UNCHANGED' docs/development/POST_ALPHA4_CANDIDATE_A8_A7_REPRODUCIBILITY_REMEDIATION.md
+          grep -F '36889499922' docs/development/POST_ALPHA4_CANDIDATE_A8_A7_REPRODUCIBILITY_REMEDIATION.md
           git rev-parse HEAD | tee candidate-sha.txt
           git rev-parse HEAD^{tree} | tee candidate-tree.txt
           sha256sum Cargo.lock | tee cargo-lock-root.sha256
@@ -67,18 +71,26 @@ jobs:
           test "$(sha256sum "$root/a/Cargo.lock" | awk '{print $1}')" = "$(sha256sum "$root/b/Cargo.lock" | awk '{print $1}')"
           test "$(sha256sum "$root/a/Cargo.lock" | awk '{print $1}')" = "$(sha256sum Cargo.lock | awk '{print $1}')"
 
-      - name: Build exact release binary independently twice
+      - name: Build exact release binary independently twice with deterministic path remapping
         shell: bash
         run: |
           set -euo pipefail
           root="$RUNNER_TEMP/a8-a7"
           (
             cd "$root/a"
-            CARGO_INCREMENTAL=0 cargo +$RUST_TOOLCHAIN build --locked --release -p execsurface
+            export CARGO_INCREMENTAL=0
+            export SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"
+            export RUSTFLAGS="--remap-path-prefix=$root/a=$CANONICAL_SOURCE_ROOT"
+            printf 'snapshot=a\nsource=%s\ncanonical=%s\nRUSTFLAGS=%s\nSOURCE_DATE_EPOCH=%s\n' "$root/a" "$CANONICAL_SOURCE_ROOT" "$RUSTFLAGS" "$SOURCE_DATE_EPOCH" > "$GITHUB_WORKSPACE/build-recipe-a.txt"
+            cargo +$RUST_TOOLCHAIN build --locked --release -p execsurface
           )
           (
             cd "$root/b"
-            CARGO_INCREMENTAL=0 cargo +$RUST_TOOLCHAIN build --locked --release -p execsurface
+            export CARGO_INCREMENTAL=0
+            export SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"
+            export RUSTFLAGS="--remap-path-prefix=$root/b=$CANONICAL_SOURCE_ROOT"
+            printf 'snapshot=b\nsource=%s\ncanonical=%s\nRUSTFLAGS=%s\nSOURCE_DATE_EPOCH=%s\n' "$root/b" "$CANONICAL_SOURCE_ROOT" "$RUSTFLAGS" "$SOURCE_DATE_EPOCH" > "$GITHUB_WORKSPACE/build-recipe-b.txt"
+            cargo +$RUST_TOOLCHAIN build --locked --release -p execsurface
           )
           bin_a="$root/a/target/release/execsurface"
           bin_b="$root/b/target/release/execsurface"
@@ -103,11 +115,11 @@ jobs:
           root="$RUNNER_TEMP/a8-a7"
           (
             cd "$root/a"
-            cargo +$RUST_TOOLCHAIN package --locked -p execsurface --allow-dirty
+            SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" cargo +$RUST_TOOLCHAIN package --locked -p execsurface --allow-dirty
           )
           (
             cd "$root/b"
-            cargo +$RUST_TOOLCHAIN package --locked -p execsurface --allow-dirty
+            SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" cargo +$RUST_TOOLCHAIN package --locked -p execsurface --allow-dirty
           )
           crate_a="$(find "$root/a/target/package" -maxdepth 1 -type f -name 'execsurface-*.crate' | sort | head -n1)"
           crate_b="$(find "$root/b/target/package" -maxdepth 1 -type f -name 'execsurface-*.crate' | sort | head -n1)"
@@ -131,6 +143,8 @@ jobs:
               echo "candidate_sha=$GITHUB_SHA"
               echo "candidate_tree=$(cat candidate-tree.txt)"
               echo "rust_toolchain=$RUST_TOOLCHAIN"
+              echo "canonical_source_root=$CANONICAL_SOURCE_ROOT"
+              echo "source_date_epoch=$SOURCE_DATE_EPOCH"
               echo "cargo_lock_sha256=$lock_hash"
               echo "binary_sha256=$bin_hash"
               echo 'public_release_authorized=false'
@@ -156,6 +170,10 @@ jobs:
             echo "candidate_sha=$GITHUB_SHA"
             echo "candidate_tree=$(cat candidate-tree.txt)"
             echo "rust_toolchain=$RUST_TOOLCHAIN"
+            echo "canonical_source_root=$CANONICAL_SOURCE_ROOT"
+            echo "source_date_epoch=$SOURCE_DATE_EPOCH"
+            echo 'path_remapping=true'
+            echo 'retained_initial_failure_run=36889499922'
             echo "cargo_lock_sha256=$(sha256sum Cargo.lock | awk '{print $1}')"
             echo "binary_sha256=$(sha256sum "$root/a/target/release/execsurface" | awk '{print $1}')"
             crate_a="$(find "$root/a/target/package" -maxdepth 1 -type f -name 'execsurface-*.crate' | sort | head -n1)"
@@ -172,7 +190,7 @@ jobs:
             echo 'p8_closure=false'
           } | tee evidence/a8-a7-reproducible-artifact.txt
           cp "$root/bundle-a.tar.gz" evidence/execsurface-a8-a7-candidate-bundle.tar.gz
-          cp binary-sha256.txt package-sha256.txt bundle-sha256.txt source-archives.sha256 rustc-version.txt cargo-version.txt evidence/
+          cp binary-sha256.txt package-sha256.txt bundle-sha256.txt source-archives.sha256 rustc-version.txt cargo-version.txt build-recipe-a.txt build-recipe-b.txt evidence/
 
       - name: Upload reproducibility evidence
         uses: actions/upload-artifact@v4
