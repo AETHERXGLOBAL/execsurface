@@ -1,0 +1,1 @@
+Alpha.5 clean-candidate execution is now active. This marker exists only to force fresh candidate-scoped CI evidence after the gate constitution was frozen. Historical promotion PASS results remain references, not substitutes for candidate-scoped reproof.
