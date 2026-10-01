@@ -6,6 +6,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL = (ROOT / "docs/development/POST_ALPHA4_PROMOTION_A7_INTEGRATED_DESTRUCTIVE_PROTOCOL.md").read_text()
 INVENTORY = (ROOT / "docs/development/POST_ALPHA4_PROMOTION_INVENTORY.md").read_text()
+A1_REQUAL = (ROOT / "docs/development/POST_ALPHA4_PROMOTION_A1_REQUALIFICATION_PROTOCOL.md").read_text()
 P6 = (ROOT / "docs/development/P6_CLOSEOUT_DECISION.md").read_text()
 P7 = (ROOT / "docs/development/P7_CLOSEOUT_DECISION.md").read_text()
 SEM = (ROOT / "crates/execsurface-model/src/semantics_v3.rs").read_text()
@@ -71,7 +72,9 @@ class A7IntegratedFalsifier(unittest.TestCase):
         self.assertIn("does NOT establish:\n- Linux arm64 support", P7)
 
     def test_a7_14_historical_material_failures_remain_retained(self):
-        for marker in ["36845569114", "36755962689", "36770551463", "36774237512"]:
+        self.assertIn("historical broken candidate: `5079a990b924d8ccd7ac6414f8a9a2571b54e240`", A1_REQUAL)
+        self.assertIn("Historical counterevidence remains retained", A1_REQUAL)
+        for marker in ["36755962689", "36770551463", "36774237512"]:
             corpus = INVENTORY + P6 + P7 + PROTOCOL
             self.assertIn(marker, corpus)
 
