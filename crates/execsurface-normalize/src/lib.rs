@@ -2,6 +2,9 @@
 //!
 //! No baseline, diff or policy semantics live in this crate.
 
+#[cfg(feature = "gcc-ephemeral-v4")]
+pub mod gcc_ephemeral_v4;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
