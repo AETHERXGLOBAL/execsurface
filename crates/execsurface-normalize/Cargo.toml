@@ -8,6 +8,10 @@ rust-version.workspace = true
 description = "Deterministic canonicalization for AETHER X ExecSurface"
 readme.workspace = true
 
+[features]
+default = []
+gcc-ephemeral-v4 = []
+
 [dependencies]
 execsurface-model = { path = "../execsurface-model", version = "=0.1.0-alpha.4" }
 libc.workspace = true

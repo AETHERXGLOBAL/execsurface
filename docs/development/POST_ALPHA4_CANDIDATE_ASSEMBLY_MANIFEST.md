@@ -3,63 +3,39 @@
 Date: 2026-10-01
 Branch: `release/post-alpha4-candidate-assembly`
 Immutable base: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
-Promotion evidence closeout: `cef8c5b8acb3f3c9e0671c497ad04837709bb024`
-A8 protocol source: `5fc3bf3ad9c8074045eae45d57faa2e92340d855`
-Status: **A8-A1 CLOSED PASS — A8-A2 CLOSED PASS — A8-A3 NEXT**
+Status: **A8-A1 CLOSED PASS — A8-A2 CLOSED PASS — A8-A3 IMPLEMENTATION STAGED**
 
-## Clean-base invariant
+## Closed clean-candidate tranches
 
-This branch descends directly from immutable public alpha.4. Promotion/research history is evidence only and is never merged wholesale into the candidate.
+### A8-A1 — Semantics v3
+Accepted source `1c65327e99aa62a3b42549764bebe6b5b29516e7`; run `36870460513` SUCCESS; decision `POST_ALPHA4_PROMOTION_A8_A1_SEMANTICS_V3_ELIGIBLE_BOUNDED_CLEAN_CANDIDATE`.
+D01-D06 6/6, A1 9/9, full feature model, default workspace, rustfmt and Clippy passed. Pre-scientific failures `36867146485` and `36869713875` retained.
 
-Public anchors remain immutable during A8:
-- `v0.1.0-alpha.4` -> `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
-- stable `v0.1` -> same source.
+### A8-A2 — Proposition authority
+Accepted source `4166ff64b8110e27b47954c1f0875cce81ebf898`; run `36872228726` SUCCESS; decision `POST_ALPHA4_PROMOTION_A8_A2_AUTHORITY_ELIGIBLE_BOUNDED_CLEAN_CANDIDATE`.
+Authority falsifier 16/16, D01-D06, A1, full feature model, default workspace, rustfmt and Clippy passed. Failed run `36871810571` retained; correction `112966e78730aea4e00296d34f2a46510fdb0b47` formatting-only.
+No duplicated textual proposition identity; backend names cannot manufacture authority.
 
-## A8-A1 — Semantics v3
+A1 and A2 are now slice-stability regression guards on every later tranche.
 
-Accepted source: `1c65327e99aa62a3b42549764bebe6b5b29516e7`
-Accepted workflow run: `36870460513` — SUCCESS.
-Decision: `POST_ALPHA4_PROMOTION_A8_A1_SEMANTICS_V3_ELIGIBLE_BOUNDED_CLEAN_CANDIDATE`.
+## A8-A3 — bounded GCC ephemeral variance
 
-Established: clean ancestry/tag anchors; default-off Semantics v3; public raw schema v2; D01-D06 6/6; A1 9/9; feature model/default workspace/rustfmt/Clippy PASS.
+Protocol source: `c30e4d886ef44dc11f85436240dc0fcd47e248ce`.
+Evidence source: P3 promotion source `96ef1e2f6f316460cc88af4f89403455a910b2b4`, run `36861859874`.
 
-Retained A8-A1 pre-scientific failures:
-- `36867146485`: missing pinned rustfmt/clippy components; scientific corpus did not execute.
-- `36869713875`: formatting-only + lockfile dev-dependency entry; scientific corpus did not execute.
-No assertion, threshold, proof rule, semantic admission rule, default behavior, or public tag was weakened.
+Staged product delta:
+- default-off `gcc-ephemeral-v4` feature in `execsurface-normalize`;
+- bounded derived projection module `gcc_ephemeral_v4.rs`;
+- exact 12-test adversarial candidate corpus;
+- feature-gated module export to be applied by a SHA-guarded transient patch harness before the A3 gate;
+- no public/default normalization behavior or version changes.
 
-The A1 workflow is a slice-stability integration regression gate on later tranches.
+Frozen rule: only `/usr/bin/gcc` family `gcc`, execution-chain tail match, exact `$TMP/cc[0-9A-Za-z]{6}.s` grammar, create+write Open plus Delete, no conflict/rename. Frequency never authorizes; raw evidence is retained unchanged; output is a derived deterministic view.
 
-## A8-A2 — Proposition authority
+A8-A3 is not closed until A1/A2 regressions, the exact 12-test corpus, default normalize/workspace regression, rustfmt, Clippy, feature/default-boundary and tag-anchor gates all pass in one accepted run.
 
-Preregistered protocol source: `7250002f3f7cb83f3f9ca930e8acedb524d57580`.
-Implementation source: `34c7060a58270f9bd8ed538640fcf696876e741c`.
-Formatting-only correction source: `112966e78730aea4e00296d34f2a46510fdb0b47`.
-Accepted source: `4166ff64b8110e27b47954c1f0875cce81ebf898`.
-Accepted workflow run: `36872228726` — SUCCESS.
-Decision: `POST_ALPHA4_PROMOTION_A8_A2_AUTHORITY_ELIGIBLE_BOUNDED_CLEAN_CANDIDATE`.
-Research evidence: P4 closeout `320c865d3e81071a8214ad726dca7a587b0fc479`; promotion A2 `d02151e8f2d1f6b0a6558d52da6f48e74763e0a5`.
-
-Established:
-- exact authority attack corpus 16/16 PASS;
-- D01-D06 6/6 PASS and A1 9/9 PASS;
-- full feature-enabled model PASS;
-- rustfmt and Clippy default/v3 PASS;
-- default alpha.4-compatible regression PASS;
-- backend names cannot manufacture authority;
-- unsupported/ambiguous/lost remain fail-closed;
-- no duplicated textual proposition identity exists in the product contract.
-
-Retained negative A8-A2 execution:
-- `36871810571`: scientific authority job PASS, but separate static job failed rustfmt before default regression; overall gate did not pass and closeout was skipped.
-- correction `112966e78730aea4e00296d34f2a46510fdb0b47` was formatting-only; no test/assertion/authority rule/threshold changed.
-
-The A2 workflow is now an authority-slice integration regression gate on later tranches.
-
-## Explicit non-admissions through A8-A2
-
-Not admitted: CLI/Action default changes; baseline migration; ptrace/Tetragon/backend equivalence; observer adapters; variance; attestation binding; arm64 claim; BPF-LSM default; generic learning/frequency authorization; release/tag/main movement; P8 claims.
+## Explicit non-admissions through A8-A3
+No learned/general variance, frequency authorization, broad temp/cache suppression, CLI/Action default changes, baseline migration, backend equivalence, observer changes, attestation binding, arm64 claim, BPF-LSM default, release/tag/main movement, or P8 claim.
 
 ## Release boundary
-
-A8 internal success does not authorize public alpha.5 while P8 remains externally blocked. Internal evidence cannot be relabeled as external validation.
+A8 internal success cannot authorize public alpha.5 while P8 external evidence remains insufficient.
