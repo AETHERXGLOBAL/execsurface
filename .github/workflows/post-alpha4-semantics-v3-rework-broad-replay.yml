@@ -1,0 +1,159 @@
+name: Post-alpha4 Semantics v3 broad destructive replay
+
+on:
+  push:
+    branches: [integration/post-alpha4-semantics-v3-rework]
+    paths:
+      - .github/workflows/post-alpha4-semantics-v3-rework-broad-replay.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: post-alpha4-v3-rework-broad-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  repaired-semantics-replay:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Re-run repaired destructive corpus
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+      - name: Replay prior A1 corpus
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+      - name: Reprove model library
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --lib
+
+  p3-falsifier-replay:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Replay P3 V4 poisoning and false-PASS falsifier
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-v4-falsifier/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-v4-falsifier/Cargo.toml --all-targets -- --nocapture
+
+  p4-authority-replay:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Replay P4 proposition authority and backend-name anti-inflation
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b_cross_proposition_falsification -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --lib a0_backend_name_never_upgrades_weak_evidence -- --nocapture
+      - name: Replay P4 live success-authority propositions
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b1_ptrace_open_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b2_ptrace_rename_delete_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b3_ptrace_connect_live -- --nocapture
+
+  p5-attestation-replay:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Replay P5 A5 cross-attestation red-team
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test a5_graph_redteam -- --nocapture
+      - name: Replay P5 A3 provenance binding
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml --test a3_slsa_provenance_binding -- --nocapture
+      - name: Replay P5 A2 A1 A0 composition
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_scai_svr_binding -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_verifier_identity_addendum -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a1_runtime_trace_mapping -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a0_standards_composition -- --nocapture
+
+  m11-fail-closed-replay:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Replay M11 shared-FD ambiguity fail-closed
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
+
+  m12-adversarial-replay:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      M12_PATH_RUNS: '300'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Compile PATH-TOCTOU and shared-FD fixtures
+        run: |
+          set -euo pipefail
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/path_toctou_target.c -o "$RUNNER_TEMP/m12-path-toctou"
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/fd_share_race_target.c -o "$RUNNER_TEMP/m12-fd-share-race"
+      - name: Replay M12 adversarial suite
+        env:
+          M12_PATH_TOCTOU_BIN: ${{ runner.temp }}/m12-path-toctou
+          M12_FD_SHARE_BIN: ${{ runner.temp }}/m12-fd-share-race
+          M12_RESULT_DIR: ${{ runner.temp }}/m12-adversarial-results
+        run: |
+          set -euo pipefail
+          mkdir -p "$M12_RESULT_DIR"
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m12_adversarial -- --test-threads=1 --nocapture
+          test -s "$M12_RESULT_DIR/path-toctou.json"
+          test -s "$M12_RESULT_DIR/shared-fd.json"
+      - name: Replay ptrace Linux regression
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test ptrace_linux
+
+  immutable-public-boundary:
+    runs-on: ubuntu-24.04
+    env:
+      ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+      BROKEN_CANDIDATE: 5079a990b924d8ccd7ac6414f8a9a2571b54e240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Verify immutable release and rework ancestry
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          git merge-base --is-ancestor "$BROKEN_CANDIDATE" HEAD
+          test -f docs/development/POST_ALPHA4_SEMANTICS_V3_REWORK_PROTOCOL.md
+          grep -q 'NO PUBLIC PROMOTION' docs/development/POST_ALPHA4_SEMANTICS_V3_REWORK_PROTOCOL.md
