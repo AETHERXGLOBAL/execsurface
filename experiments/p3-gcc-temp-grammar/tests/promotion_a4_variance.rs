@@ -5,7 +5,9 @@ use execsurface_model::canonical::{
     OpenIntent, PathClass, PathResolution,
 };
 use execsurface_model::FileOperation;
-use execsurface_p3_gcc_temp_grammar::{apply_candidate, eligible_gcc_temp_paths, GCC_TEMP_CANONICAL};
+use execsurface_p3_gcc_temp_grammar::{
+    apply_candidate, eligible_gcc_temp_paths, GCC_TEMP_CANONICAL,
+};
 
 const GCC: &str = "/usr/bin/gcc";
 
@@ -50,7 +52,12 @@ fn read_intent() -> OpenIntent {
     }
 }
 
-fn file(actor_path: &str, op: FileOperation, target: CanonicalPath, intent: Option<OpenIntent>) -> CanonicalEffect {
+fn file(
+    actor_path: &str,
+    op: FileOperation,
+    target: CanonicalPath,
+    intent: Option<OpenIntent>,
+) -> CanonicalEffect {
     let actor = exe(actor_path);
     CanonicalEffect::FilePathAccess {
         actor: Some(actor.clone()),
@@ -64,7 +71,12 @@ fn file(actor_path: &str, op: FileOperation, target: CanonicalPath, intent: Opti
 fn gcc_pair(name: &str) -> Vec<CanonicalEffect> {
     let target = path(name, PathClass::Temp);
     vec![
-        file(GCC, FileOperation::Open, target.clone(), Some(create_intent())),
+        file(
+            GCC,
+            FileOperation::Open,
+            target.clone(),
+            Some(create_intent()),
+        ),
         file(GCC, FileOperation::Delete, target, None),
     ]
 }
@@ -88,10 +100,16 @@ fn eligible(surface: &CanonicalSurface) -> BTreeSet<String> {
 fn a4_01_bounded_benign_pair_reduces_false_review() {
     let left = surface(gcc_pair("$TMP/ccABC123.s"));
     let right = surface(gcc_pair("$TMP/ccXYZ789.s"));
-    assert_ne!(left, right, "raw identity churn must remain visible before projection");
+    assert_ne!(
+        left, right,
+        "raw identity churn must remain visible before projection"
+    );
     let left_projected = apply_candidate(&left);
     let right_projected = apply_candidate(&right);
-    assert_eq!(left_projected, right_projected, "bounded ephemeral churn should collapse in the derived view");
+    assert_eq!(
+        left_projected, right_projected,
+        "bounded ephemeral churn should collapse in the derived view"
+    );
     assert!(left_projected.effects.iter().all(|effect| match effect {
         CanonicalEffect::FilePathAccess { target, .. } => target.value == GCC_TEMP_CANONICAL,
         _ => false,
@@ -115,11 +133,24 @@ fn a4_02_meaningful_non_ephemeral_drift_survives_projection() {
 #[test]
 fn a4_03_wrong_actor_never_projects() {
     let input = surface(vec![
-        file("/usr/bin/clang", FileOperation::Open, path("$TMP/ccABC123.s", PathClass::Temp), Some(create_intent())),
-        file("/usr/bin/clang", FileOperation::Delete, path("$TMP/ccABC123.s", PathClass::Temp), None),
+        file(
+            "/usr/bin/clang",
+            FileOperation::Open,
+            path("$TMP/ccABC123.s", PathClass::Temp),
+            Some(create_intent()),
+        ),
+        file(
+            "/usr/bin/clang",
+            FileOperation::Delete,
+            path("$TMP/ccABC123.s", PathClass::Temp),
+            None,
+        ),
     ]);
     assert!(eligible(&input).is_empty());
-    assert_ne!(apply_candidate(&input).effects[0], apply_candidate(&surface(gcc_pair("$TMP/ccABC123.s"))).effects[0]);
+    assert_ne!(
+        apply_candidate(&input).effects[0],
+        apply_candidate(&surface(gcc_pair("$TMP/ccABC123.s"))).effects[0]
+    );
 }
 
 #[test]
@@ -177,7 +208,12 @@ fn a4_07_wrong_root_and_grammar_near_misses_remain_distinct() {
     ];
     for target in cases {
         let input = surface(vec![
-            file(GCC, FileOperation::Open, target.clone(), Some(create_intent())),
+            file(
+                GCC,
+                FileOperation::Open,
+                target.clone(),
+                Some(create_intent()),
+            ),
             file(GCC, FileOperation::Delete, target, None),
         ]);
         assert!(eligible(&input).is_empty());
@@ -196,7 +232,10 @@ fn a4_08_repetition_frequency_never_authorizes_ineligible_identity() {
         ));
     }
     let input = surface(effects);
-    assert!(eligible(&input).is_empty(), "frequency cannot manufacture the missing delete role");
+    assert!(
+        eligible(&input).is_empty(),
+        "frequency cannot manufacture the missing delete role"
+    );
 }
 
 #[test]
@@ -225,7 +264,10 @@ fn a4_10_raw_evidence_is_retained_unchanged() {
     let snapshot = raw.clone();
     let projected = apply_candidate(&raw);
     assert_eq!(raw, snapshot, "projection must not mutate raw evidence");
-    assert_ne!(raw, projected, "derived projection must remain a distinct artifact/view");
+    assert_ne!(
+        raw, projected,
+        "derived projection must remain a distinct artifact/view"
+    );
 }
 
 #[test]
@@ -233,7 +275,10 @@ fn a4_11_projection_is_deterministic_under_effect_order_variation() {
     let forward = gcc_pair("$TMP/ccABC123.s");
     let mut reverse = forward.clone();
     reverse.reverse();
-    assert_eq!(apply_candidate(&surface(forward)), apply_candidate(&surface(reverse)));
+    assert_eq!(
+        apply_candidate(&surface(forward)),
+        apply_candidate(&surface(reverse))
+    );
 }
 
 #[test]
@@ -241,13 +286,18 @@ fn a4_12_unrelated_existing_normalization_remains_distinct() {
     let input = surface(vec![file(
         GCC,
         FileOperation::Open,
-        path("$TMP/go-build<ephemeral>/b001/vet.cfg", PathClass::Temp),
+        path(
+            "$TMP/go-build<ephemeral>/b001/vet.cfg",
+            PathClass::Temp,
+        ),
         Some(create_intent()),
     )]);
     assert!(eligible(&input).is_empty());
     let projected = apply_candidate(&input);
     assert!(projected.effects.iter().any(|effect| match effect {
-        CanonicalEffect::FilePathAccess { target, .. } => target.value == "$TMP/go-build<ephemeral>/b001/vet.cfg",
+        CanonicalEffect::FilePathAccess { target, .. } => {
+            target.value == "$TMP/go-build<ephemeral>/b001/vet.cfg"
+        }
         _ => false,
     }));
 }
