@@ -1,0 +1,181 @@
+name: Alpha5 candidate A2 P4 authority reproof
+
+on:
+  push:
+    branches:
+      - integration/post-alpha4-promotion-candidate
+    paths:
+      - .github/workflows/alpha5-candidate-a2-p4-authority.yml
+      - experiments/p4-backend-authority/**
+      - experiments/p4-external-trace-import/**
+      - crates/execsurface-model/src/semantics_v3.rs
+      - crates/execsurface-model/tests/semantics_v3_promotion.rs
+      - crates/execsurface-model/tests/semantics_v3_rework.rs
+      - crates/execsurface-observe/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha5-candidate-a2-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  ALPHA5_A1_FLOOR: 067d2e6f6ff1191ccab9bc3ed9ff0a8fe12d4ee6
+
+jobs:
+  identity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Verify alpha5 ancestry and immutable public boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'integration/post-alpha4-promotion-candidate'
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$ALPHA5_A1_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+      - name: Verify frozen schema domains
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/lib.rs
+          grep -F 'pub const SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION: u32 = 3;' crates/execsurface-model/src/semantics_v3.rs
+
+  p4-matrix-static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Static gates
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p4-backend-authority/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --all-targets -- -D warnings
+      - name: Reprove authority matrices and attempt contract
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test a2_authority_gap_matrix -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test authority_gap_matrix -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test attempt_authority_contract -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --lib -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b0_success_evidence -- --nocapture
+      - name: Execute S01-S10 authority sensitivity corpus
+        run: cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test promotion_a2_authority_sensitivity -- --nocapture
+
+  p4-cross-live:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Lock P4 experiment
+        run: cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+      - name: Cross-proposition and bounded proposition attacks
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b_cross_proposition_falsification -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b1_open_object -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b2_rename_delete -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b3_connect_destination -- --nocapture
+      - name: Live ptrace success-authority attacks
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b1_ptrace_open_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b2_ptrace_rename_delete_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b3_ptrace_connect_live -- --nocapture
+
+  p4-external-import:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      TETRAGON_SOURCE: 666efe6f91e3605ad58683ad226d759d9cf970ca
+      TETRAGON_EVENTS_BLOB: d6bd56769241da983f7e0042a54d5b3a81f40817
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Verify pinned Tetragon schema identity
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          git -C "$tmp" init -q
+          git -C "$tmp" remote add origin https://github.com/cilium/tetragon.git
+          git -C "$tmp" fetch -q --depth=1 origin "$TETRAGON_SOURCE"
+          test "$(git -C "$tmp" rev-parse FETCH_HEAD)" = "$TETRAGON_SOURCE"
+          test "$(git -C "$tmp" rev-parse "FETCH_HEAD:api/v1/tetragon/events.proto")" = "$TETRAGON_EVENTS_BLOB"
+      - name: External-import static and adversarial gates
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-external-trace-import/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p4-external-trace-import/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p4-external-trace-import/Cargo.toml --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-external-trace-import/Cargo.toml --test tetragon_import -- --nocapture
+
+  semantics-m11:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Reprove Semantics v3 and M11 fail-closed
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
+
+  closeout:
+    needs: [identity, p4-matrix-static, p4-cross-live, p4-external-import, semantics-m11]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Record candidate-scoped A2 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$ALPHA5_A1_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          mkdir -p evidence
+          {
+            echo 'decision_candidate=ALPHA5_A2_P4_AUTHORITY_REPROOF_PASS'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "alpha5_a1_floor=${ALPHA5_A1_FLOOR}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo 'authority_is_proposition_scoped=true'
+            echo 'backend_name_authority=false'
+            echo 'global_backend_score=false'
+            echo 'backend_equivalence_established=false'
+            echo 'tetragon_import_is_schema_level_only=true'
+            echo 'release_authorized=false'
+            echo 'p8_external_validation_unchanged=true'
+          } | tee evidence/alpha5-a2-p4-authority.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a2-p4-authority-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/alpha5-a2-p4-authority.txt
+          if-no-files-found: error
