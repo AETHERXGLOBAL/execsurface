@@ -1,0 +1,245 @@
+name: Post-alpha4 promotion A3 P5 attestation authority
+
+on:
+  push:
+    branches: [integration/post-alpha4-promotion-candidate]
+    paths:
+      - docs/development/POST_ALPHA4_PROMOTION_A3_P5_ATTESTATION_PROTOCOL.md
+      - experiments/p5-attestation-provenance/**
+      - experiments/p5-cross-attestation-redteam/**
+      - experiments/p5-slsa-provenance-binding/**
+      - experiments/p5-signed-attestation/**
+      - crates/execsurface-model/src/semantics_v3.rs
+      - crates/execsurface-model/tests/semantics_v3_promotion.rs
+      - crates/execsurface-model/tests/semantics_v3_rework.rs
+      - .github/workflows/post-alpha4-promotion-a3-p5-attestation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: post-alpha4-a3-p5-attestation-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  A2_CANDIDATE_FLOOR: d02151e8f2d1f6b0a6558d52da6f48e74763e0a5
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  P5_A5_NEGATIVE_SOURCE: a7753bee6cc9f145adc7823dd82837fa40cfca01
+  P5_A5_NEGATIVE_RUN: '36755962689'
+  P5_A3_UPSTREAM_REPOSITORY: https://github.com/slsa-framework/slsa-verifier.git
+  P5_A3_UPSTREAM_COMMIT: 30d0be3bbab553fc51557377baba2f7572dfc212
+  P5_A3_UPSTREAM_PATH: verifiers/internal/gcb/testdata/v1.0-gcloud-container-github-single.json
+  P5_A3_UPSTREAM_BLOB_SHA: 7102e40887a758e01184ac79ca10cb34b7281627
+  P5_A4_ACCEPTED_SOURCE: 862f0830511fe1421de20717187645d6e0a9a52e
+  A4_SUBJECT_PATH: experiments/p5-signed-attestation/subject.txt
+  A4_SIGNER_WORKFLOW: AETHERXGLOBAL/execsurface/.github/workflows/p5-a4-signed-attestation.yml
+  A4_SOURCE_REF: refs/heads/development/post-alpha4-behavioral-integrity
+  A4_PREDICATE_TYPE: https://slsa.dev/provenance/v1
+
+jobs:
+  identity:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify ancestry, protocol and immutable public boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'integration/post-alpha4-promotion-candidate'
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$A2_CANDIDATE_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          protocol='docs/development/POST_ALPHA4_PROMOTION_A3_P5_ATTESTATION_PROTOCOL.md'
+          grep -F 'PREREGISTERED — P5 PROMOTION ELIGIBILITY ONLY / NO PUBLIC INTEGRATION AUTHORIZED' "$protocol"
+          grep -F 'Exactly **12 A3 promotion attacks/invariants** are frozen before execution' "$protocol"
+          grep -F 'Cryptographic validity, signature validity, provenance presence, standards conformance, signer identity, workflow identity, or verifier metadata MUST NOT raise semantic authority.' "$protocol"
+          grep -F 'No composite score and no partial-pass promotion.' "$protocol"
+          if git diff --name-only "$A2_CANDIDATE_FLOOR"..HEAD | grep -q '^crates/' ; then
+            echo 'A3 preregistration unexpectedly changed product crates' >&2
+            exit 1
+          fi
+      - name: Verify retained P5 negative evidence still exists as failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$P5_A5_NEGATIVE_RUN" > negative-run.json
+          jq -e --arg sha "$P5_A5_NEGATIVE_SOURCE" '.status == "completed" and .conclusion == "failure" and .head_sha == $sha' negative-run.json >/dev/null
+
+  a3-attestation-falsification:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Static gates for P5 attestation experiments
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p5-attestation-provenance/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --all-targets -- -D warnings
+      - name: Execute frozen A3 12-attack authority corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test promotion_a3_attestation_authority -- --nocapture 2>&1 | tee a3-attestation.log
+          grep -q 'test result: ok. 12 passed; 0 failed' a3-attestation.log
+      - name: Replay retained P5 A5 cross-attestation red-team
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test a5_graph_redteam -- --nocapture 2>&1 | tee p5-a5.log
+          grep -q 'test result: ok. 12 passed; 0 failed' p5-a5.log
+      - name: Upload A3 attack logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-a3-attacks-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            a3-attestation.log
+            p5-a5.log
+          if-no-files-found: warn
+
+  p5-standards-reproof:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Restore and verify pinned SLSA fixture
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          git -C "$tmp" init -q
+          git -C "$tmp" remote add origin "$P5_A3_UPSTREAM_REPOSITORY"
+          git -C "$tmp" fetch -q --depth=1 origin "$P5_A3_UPSTREAM_COMMIT"
+          test "$(git -C "$tmp" rev-parse FETCH_HEAD)" = "$P5_A3_UPSTREAM_COMMIT"
+          test "$(git -C "$tmp" rev-parse "FETCH_HEAD:$P5_A3_UPSTREAM_PATH")" = "$P5_A3_UPSTREAM_BLOB_SHA"
+          git -C "$tmp" show "FETCH_HEAD:$P5_A3_UPSTREAM_PATH" > p5-a3-upstream.json
+          grep -F 'https://slsa.dev/provenance/v1' p5-a3-upstream.json
+      - name: Reprove P5 A3 SLSA binding
+        env:
+          P5_A3_FIXTURE: ${{ github.workspace }}/p5-a3-upstream.json
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml --test a3_slsa_provenance_binding -- --nocapture 2>&1 | tee p5-a3.log
+          grep -q 'test result: ok. 12 passed; 0 failed' p5-a3.log
+      - name: Reprove P5 A2 A1 A0 standards composition
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_scai_svr_binding -- --nocapture 2>&1 | tee p5-a2.log
+          grep -q 'test result: ok. 14 passed; 0 failed' p5-a2.log
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_verifier_identity_addendum -- --nocapture 2>&1 | tee p5-a2-verifier.log
+          grep -q 'test result: ok. 4 passed; 0 failed' p5-a2-verifier.log
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a1_runtime_trace_mapping -- --nocapture 2>&1 | tee p5-a1.log
+          grep -q 'test result: ok. 12 passed; 0 failed' p5-a1.log
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a0_standards_composition -- --nocapture 2>&1 | tee p5-a0.log
+          grep -q 'test result: ok. 18 passed; 0 failed' p5-a0.log
+
+  sigstore-reverify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reverify accepted GitHub Sigstore attestation independently
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "$A4_SUBJECT_PATH" \
+            --repo AETHERXGLOBAL/execsurface \
+            --signer-workflow "$A4_SIGNER_WORKFLOW" \
+            --source-digest "$P5_A4_ACCEPTED_SOURCE" \
+            --source-ref "$A4_SOURCE_REF" \
+            --predicate-type "$A4_PREDICATE_TYPE" \
+            --format json > sigstore-reverify.json
+          jq -e --arg sha "$P5_A4_ACCEPTED_SOURCE" 'length > 0 and any(.[]; .verificationResult.signature.certificate.githubWorkflowSHA == $sha and ((.verificationResult.verifiedTimestamps // []) | length > 0))' sigstore-reverify.json >/dev/null
+      - name: Upload Sigstore reverification record
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-a3-sigstore-${{ github.run_id }}-${{ github.run_attempt }}
+          path: sigstore-reverify.json
+          if-no-files-found: error
+
+  semantic-authority-reproof:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Reprove repaired Semantics v3
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+      - name: Reprove P4 authority sensitivity and cross-proposition rejection
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test promotion_a2_authority_sensitivity -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b_cross_proposition_falsification -- --nocapture
+      - name: Reprove M11 shared-FD fail-closed
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
+
+  closeout:
+    needs: [identity, a3-attestation-falsification, p5-standards-reproof, sigstore-reverify, semantic-authority-reproof]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Record bounded A3 candidate eligibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'integration/post-alpha4-promotion-candidate'
+          git merge-base --is-ancestor "$A2_CANDIDATE_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          mkdir -p evidence
+          {
+            echo 'decision=POST_ALPHA4_PROMOTION_A3_P5_ATTESTATION_ELIGIBLE_BOUNDED_CANDIDATE'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "a2_candidate_floor=${A2_CANDIDATE_FLOOR}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo 'cryptographic_validity_implies_semantic_authority=false'
+            echo 'provenance_presence_implies_semantic_authority=false'
+            echo 'verifier_metadata_implies_semantic_authority=false'
+            echo 'existing_standards_composition_retained=true'
+            echo 'custom_predicate_required=false'
+            echo 'public_promotion_authorized=false'
+            echo 'main_merge_authorized=false'
+            echo 'p8_closure=false'
+          } | tee evidence/post-alpha4-promotion-a3-p5-attestation.txt
+      - name: Upload A3 closeout evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-promotion-a3-p5-attestation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/post-alpha4-promotion-a3-p5-attestation.txt
+          if-no-files-found: error
+          retention-days: 90
