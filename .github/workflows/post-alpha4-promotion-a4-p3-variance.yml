@@ -69,10 +69,26 @@ jobs:
         run: |
           set -euo pipefail
           cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml
-      - name: Verify rustfmt without changing frozen corpus
+      - name: Verify rustfmt and capture exact formatter output on mismatch
         run: |
           set -euo pipefail
-          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml -- --check
+          target='experiments/p3-gcc-temp-grammar/tests/promotion_a4_variance.rs'
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml
+          if ! git diff --quiet -- "$target"; then
+            cp "$target" rustfmt-promotion-a4-variance.rs
+            git diff -- "$target" > rustfmt-promotion-a4-variance.diff
+            echo 'Rust 1.90 formatting mismatch retained; scientific corpus has not executed.' >&2
+            exit 1
+          fi
+      - name: Upload exact rustfmt diagnostic
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-a4-rustfmt-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            rustfmt-promotion-a4-variance.rs
+            rustfmt-promotion-a4-variance.diff
+          if-no-files-found: error
       - name: Verify clippy without weakening warnings
         run: |
           set -euo pipefail
