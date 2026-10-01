@@ -1,0 +1,228 @@
+name: M11.8 Performance Release Evidence
+
+on:
+  push:
+    branches:
+      - research/m11-authority-aware-integration
+    paths:
+      - 'crates/execsurface-bench/**'
+      - 'crates/execsurface-observe/**'
+      - 'crates/execsurface-hybrid-authority/**'
+      - 'docs/milestones/M11_8_*.md'
+      - '.github/workflows/m11-8-performance-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paired-portable:
+    name: Paired portable path / main vs M11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout M11 research branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: research
+          fetch-depth: 1
+
+      - name: Checkout frozen public main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: main
+          fetch-depth: 1
+
+      - name: Environment evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          uname -a | tee evidence/uname.txt
+          rustc --version --verbose | tee evidence/rustc.txt
+          cargo --version | tee evidence/cargo.txt
+          lscpu | sed -n '1,30p' | tee evidence/lscpu.txt
+          git -C main rev-parse HEAD | tee evidence/main-sha.txt
+          git -C research rev-parse HEAD | tee evidence/research-sha.txt
+
+      - name: Build frozen benchmark binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN_TARGET="$RUNNER_TEMP/m11-8-main-target"
+          RESEARCH_TARGET="$RUNNER_TEMP/m11-8-research-target"
+
+          (cd main && CARGO_TARGET_DIR="$MAIN_TARGET" cargo build --locked --release -p execsurface-bench --bin execsurface-bench)
+          (cd main && CARGO_TARGET_DIR="$MAIN_TARGET" cargo build --locked --release -p execsurface-observe --bin execsurface-fixture)
+          (cd research && CARGO_TARGET_DIR="$RESEARCH_TARGET" cargo build --locked --release -p execsurface-bench --bin execsurface-bench)
+          (cd research && CARGO_TARGET_DIR="$RESEARCH_TARGET" cargo build --locked --release -p execsurface-observe --bin execsurface-fixture)
+
+          echo "MAIN_TARGET=$MAIN_TARGET" >> "$GITHUB_ENV"
+          echo "RESEARCH_TARGET=$RESEARCH_TARGET" >> "$GITHUB_ENV"
+
+      - name: Run frozen paired workloads
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_case() {
+            local name="$1"; shift
+            local out="evidence/${name}.json"
+            local err="evidence/${name}.stderr.txt"
+            local rc_file="evidence/${name}.rc.txt"
+            set +e
+            "$@" >"$out" 2>"$err"
+            local rc=$?
+            set -e
+            echo "$rc" > "$rc_file"
+          }
+
+          run_case main-true "$MAIN_TARGET/release/execsurface-bench" --repetitions 30 -- /bin/true
+          run_case research-true "$RESEARCH_TARGET/release/execsurface-bench" --repetitions 30 -- /bin/true
+
+          run_case main-spawn "$MAIN_TARGET/release/execsurface-bench" --repetitions 20 -- "$MAIN_TARGET/release/execsurface-fixture" spawn
+          run_case research-spawn "$RESEARCH_TARGET/release/execsurface-bench" --repetitions 20 -- "$RESEARCH_TARGET/release/execsurface-fixture" spawn
+
+          mkdir -p "$RUNNER_TEMP/m11-8-main-burst" "$RUNNER_TEMP/m11-8-research-burst"
+          run_case main-burst-128 "$MAIN_TARGET/release/execsurface-bench" --repetitions 10 -- "$MAIN_TARGET/release/execsurface-fixture" burst "$RUNNER_TEMP/m11-8-main-burst" 128
+          run_case research-burst-128 "$RESEARCH_TARGET/release/execsurface-bench" --repetitions 10 -- "$RESEARCH_TARGET/release/execsurface-fixture" burst "$RUNNER_TEMP/m11-8-research-burst" 128
+
+      - name: Frozen evaluator
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path('evidence')
+          cases = {
+              'true': ('main-true', 'research-true', False),
+              'spawn': ('main-spawn', 'research-spawn', True),
+              'burst-128': ('main-burst-128', 'research-burst-128', True),
+          }
+
+          result = {
+              'schema_version': 1,
+              'scope': 'paired-shared-github-runner-engineering-evidence-not-performance-guarantee',
+              'threshold': {
+                  'ratio_gt': 1.25,
+                  'absolute_increase_us_gte': 1000,
+                  'blocking_material_signals_required': 2,
+              },
+              'workloads': {},
+          }
+
+          material_count = 0
+          nontrivial_incomplete = False
+          for label, (main_name, research_name, nontrivial) in cases.items():
+              main_rc = int((root / f'{main_name}.rc.txt').read_text().strip())
+              research_rc = int((root / f'{research_name}.rc.txt').read_text().strip())
+              entry = {'main_rc': main_rc, 'research_rc': research_rc, 'nontrivial': nontrivial}
+
+              if main_rc == 0 and research_rc == 0:
+                  main = json.loads((root / f'{main_name}.json').read_text())
+                  research = json.loads((root / f'{research_name}.json').read_text())
+                  main_us = int(main['observed']['median_us'])
+                  research_us = int(research['observed']['median_us'])
+                  ratio = (research_us / main_us) if main_us else None
+                  absolute = research_us - main_us
+                  material = bool(
+                      nontrivial
+                      and ratio is not None
+                      and ratio > 1.25
+                      and absolute >= 1000
+                  )
+                  if material:
+                      material_count += 1
+                  entry.update({
+                      'main': main,
+                      'research': research,
+                      'research_over_main_observed_median_ratio': ratio,
+                      'research_minus_main_observed_median_us': absolute,
+                      'material_regression_signal': material,
+                  })
+              else:
+                  entry['material_regression_signal'] = False
+                  if nontrivial:
+                      nontrivial_incomplete = True
+
+              result['workloads'][label] = entry
+
+          if nontrivial_incomplete:
+              classification = 'PORTABLE_BENCH_INCOMPLETE'
+          elif material_count >= 2:
+              classification = 'PORTABLE_MATERIAL_REGRESSION'
+          else:
+              classification = 'PORTABLE_NO_GATE_BLOCKING_REGRESSION'
+
+          result['material_regression_signal_count'] = material_count
+          result['classification'] = classification
+          (root / 'portable-comparison.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result, indent=2))
+          PY
+
+      - name: Validate portable evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m json.tool evidence/portable-comparison.json >/dev/null
+          test -s evidence/main-sha.txt
+          test -s evidence/research-sha.txt
+
+      - name: Upload portable performance evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m11-8-portable-performance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
+
+  hybrid-adapter:
+    name: Explicit hybrid authority adapter / bounded benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout M11 research branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Environment evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          uname -a | tee evidence/uname.txt
+          rustc --version --verbose | tee evidence/rustc.txt
+          cargo --version | tee evidence/cargo.txt
+          git rev-parse HEAD | tee evidence/research-sha.txt
+
+      - name: Run frozen adapter-only benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked --release -p execsurface-hybrid-authority --example m11_8_adapter_bench \
+            | tee evidence/hybrid-adapter.json
+          python3 -m json.tool evidence/hybrid-adapter.json >/dev/null
+
+      - name: Assert scope cannot authorize hybrid default
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('evidence/hybrid-adapter.json')
+          data = json.loads(p.read_text())
+          assert data['scope'] == 'authority-adapter-only-not-end-to-end-hybrid-observation'
+          assert data['product_default_authority'] is False
+          assert data['end_to_end_hybrid_latency_measured'] is False
+          PY
+
+      - name: Upload hybrid adapter evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m11-8-hybrid-adapter-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30

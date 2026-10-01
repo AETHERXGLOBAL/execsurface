@@ -61,6 +61,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "execsurface-authority"
+version = "0.1.0-alpha.3"
+
+[[package]]
 name = "execsurface-baseline"
 version = "0.1.0-alpha.4"
 dependencies = [
@@ -90,6 +94,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "execsurface-hybrid-authority"
+version = "0.1.0-alpha.3"
+dependencies = [
+ "execsurface-authority",
+]
+
+[[package]]
 name = "execsurface-model"
 version = "0.1.0-alpha.4"
 dependencies = [
@@ -110,6 +121,7 @@ dependencies = [
 name = "execsurface-observe"
 version = "0.1.0-alpha.4"
 dependencies = [
+ "execsurface-authority",
  "execsurface-model",
  "libc",
  "serde",

@@ -1,0 +1,79 @@
+name: M10 PATH-TOCTOU adversarial gate
+
+on:
+  push:
+    branches:
+      - research/m10-hybrid-observer
+    paths:
+      - "crates/execsurface-observe/tests/m10_path_toctou.rs"
+      - "experiments/m10/path-toctou/**"
+      - "docs/milestones/M10_1_PATH_TOCTOU_PROTOCOL.md"
+      - ".github/workflows/m10-path-toctou.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  path-toctou:
+    name: PATH-TOCTOU-001 / unchanged ptrace observer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Environment evidence
+        run: |
+          set -euxo pipefail
+          uname -a
+          rustc --version --verbose
+          cargo --version
+          cc --version | head -n 1
+          cat /proc/sys/kernel/yama/ptrace_scope || true
+
+      - name: Build adversarial target
+        run: |
+          set -euxo pipefail
+          cc -std=c11 -O2 -pthread \
+            experiments/m10/path-toctou/path_toctou_target.c \
+            -o /tmp/m10-path-toctou-target
+          file /tmp/m10-path-toctou-target
+
+      - name: Execute frozen M10.1 gate
+        env:
+          M10_TARGET_BIN: /tmp/m10-path-toctou-target
+          M10_RUNS: "500"
+          M10_RESULT_PATH: ${{ github.workspace }}/m10-path-toctou-result.json
+        run: |
+          set -euxo pipefail
+          cargo test --locked -p execsurface-observe \
+            --test m10_path_toctou \
+            m10_path_toctou_gate \
+            -- --ignored --exact --nocapture
+          cat m10-path-toctou-result.json
+
+      - name: Publish bounded summary
+        if: always()
+        run: |
+          if test -f m10-path-toctou-result.json; then
+            {
+              echo '## M10 PATH-TOCTOU-001'
+              echo
+              echo '```json'
+              jq '{classification, requested_runs, eligible_runs, incomplete_runs, warning_runs, observer_errors, fixture_errors, path_intent_vs_kernel_truth_mismatch_count, fd_read_vs_kernel_truth_mismatch_count, distributions}' m10-path-toctou-result.json
+              echo '```'
+              echo
+              echo 'A mismatch kills only universal ptrace pathname authority for the tested proposition. It does not authorize a product/backend change.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload M10.1 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m10-path-toctou-evidence
+          path: m10-path-toctou-result.json
+          if-no-files-found: error
+          retention-days: 30

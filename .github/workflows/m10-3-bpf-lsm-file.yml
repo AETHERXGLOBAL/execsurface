@@ -1,0 +1,149 @@
+name: M10.3 BPF-LSM file evidence
+
+on:
+  push:
+    branches:
+      - research/m10-hybrid-observer-m103
+    paths:
+      - 'experiments/m10-bpf-lsm/**'
+      - 'docs/milestones/M10_3_BPF_LSM_FILE_PROTOCOL.md'
+      - '.github/workflows/m10-3-bpf-lsm-file.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  m10-3:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Host and LSM inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p m10-3-artifacts
+          uname -a | tee m10-3-artifacts/uname.txt
+          id | tee m10-3-artifacts/id.txt
+          cat /proc/sys/kernel/unprivileged_bpf_disabled 2>/dev/null | tee m10-3-artifacts/unprivileged_bpf_disabled.txt || true
+          if [[ -r /sys/kernel/security/lsm ]]; then
+            cat /sys/kernel/security/lsm | tee m10-3-artifacts/lsm.txt
+          else
+            echo '<unreadable>' | tee m10-3-artifacts/lsm.txt
+          fi
+          if [[ -r /sys/kernel/btf/vmlinux ]]; then
+            echo 'kernel_btf_readable=true' | tee m10-3-artifacts/btf.txt
+          else
+            echo 'kernel_btf_readable=false' | tee m10-3-artifacts/btf.txt
+          fi
+
+      - name: Gate BPF-LSM availability
+        id: lsm_gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          LSM_LIST="$(cat /sys/kernel/security/lsm 2>/dev/null || true)"
+          if [[ ",$LSM_LIST," != *,bpf,* ]]; then
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('/sys/kernel/security/lsm')
+          lsm = p.read_text().strip() if p.exists() and p.is_file() else '<unavailable>'
+          Path('m10-3-artifacts/result.json').write_text(json.dumps({
+              'protocol': 'M10_3_BPF_LSM_FILE_001',
+              'classification': 'M10_3_ENVIRONMENT_BLOCKED',
+              'reason': 'bpf_lsm_not_present_or_securityfs_lsm_unreadable',
+              'active_lsms': lsm,
+          }, indent=2) + '\n')
+          PY
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install declared native build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libelf-dev zlib1g-dev pkg-config build-essential
+          clang --version
+          pkg-config --modversion libelf
+
+      - name: Install pinned Rust toolchains
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.87.0 --profile minimal
+          rustup toolchain install 1.82.0 --profile minimal --component rustfmt
+          rustfmt +1.82.0 --version
+
+      - name: Resolve isolated lock and build
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f experiments/m10-bpf-lsm/Cargo.lock
+          CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback \
+            cargo +1.87.0 generate-lockfile --manifest-path experiments/m10-bpf-lsm/Cargo.toml
+          cc -O2 -Wall -Wextra \
+            experiments/m10-bpf-lsm/fixtures/file_open_identity.c \
+            -o /tmp/m10-file-open-identity
+
+          set +e
+          cargo +1.82.0 build --locked --manifest-path experiments/m10-bpf-lsm/Cargo.toml \
+            > >(tee m10-3-artifacts/build.stdout.txt) \
+            2> >(tee m10-3-artifacts/build.stderr.txt >&2)
+          rc=$?
+          set -e
+
+          python3 - "$rc" <<'PY'
+          import json, sys
+          from pathlib import Path
+          rc = int(sys.argv[1])
+          Path('m10-3-artifacts/build.json').write_text(json.dumps({
+              'build_exit_code': rc,
+              'build_validated': rc == 0,
+          }, indent=2) + '\n')
+          PY
+
+          if [[ "$rc" -eq 0 ]]; then
+            echo 'valid=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'valid=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run audit-only BPF-LSM proposition
+        if: steps.lsm_gate.outputs.available == 'true' && steps.build.outputs.valid == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'M10.3 controlled object\n' > /tmp/m10-bpf-lsm-target
+          sudo -E experiments/m10-bpf-lsm/target/debug/execsurface-m10-bpf-lsm \
+            --report m10-3-artifacts/collector.json \
+            -- /tmp/m10-file-open-identity /tmp/m10-bpf-lsm-target
+          python3 experiments/m10-bpf-lsm/evaluate.py \
+            m10-3-artifacts/collector.json \
+            m10-3-artifacts/result.json
+
+      - name: Display frozen evidence state
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f m10-3-artifacts/result.json
+          cat m10-3-artifacts/result.json
+          test -f m10-3-artifacts/build.json
+          cat m10-3-artifacts/build.json
+
+      - name: Upload M10.3 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m10-3-bpf-lsm-file-evidence
+          path: m10-3-artifacts/
+          if-no-files-found: error

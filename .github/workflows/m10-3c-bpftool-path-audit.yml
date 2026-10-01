@@ -1,0 +1,29 @@
+name: M10.3C bpftool path audit
+
+on:
+  push:
+    branches: [research/m10-hybrid-observer-m103c]
+    paths:
+      - '.github/workflows/m10-3c-bpftool-path-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Resolve packaged bpftool
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends linux-tools-generic
+          dpkg-query -W 'linux-tools-*' | tee /tmp/linux-tools-packages.txt
+          dpkg -L "$(dpkg-query -W -f='${Package}\n' 'linux-tools-6.8.0-*' 2>/dev/null | grep -Ev 'generic|common' | sort -V | tail -n1)" | tee /tmp/linux-tools-files.txt
+          find /usr/lib -type f -name bpftool -print | tee /tmp/bpftool-paths.txt
+          BPFTOOL="$(find /usr/lib -type f -name bpftool -perm -111 -print | sort -V | tail -n1)"
+          test -n "$BPFTOOL"
+          "$BPFTOOL" version
+          printf 'resolved_bpftool=%s\n' "$BPFTOOL"

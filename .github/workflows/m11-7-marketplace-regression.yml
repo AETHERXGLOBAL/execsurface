@@ -1,0 +1,200 @@
+name: M11.7 Marketplace Compatibility
+
+on:
+  push:
+    branches:
+      - research/m11-authority-aware-integration
+    paths:
+      - 'action.yml'
+      - 'action/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/execsurface-authority/**'
+      - 'crates/execsurface-hybrid-authority/**'
+      - 'crates/execsurface-observe/**'
+      - 'crates/execsurface-baseline/**'
+      - 'crates/execsurface-cli/**'
+      - 'docs/milestones/M11_7_*.md'
+      - '.github/workflows/m11-7-marketplace-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research-default-and-surface:
+    name: Research default / frozen public surface
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fetch frozen public main
+        shell: bash
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+
+      - name: Assert Marketplace surface unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code origin/main -- \
+            action.yml \
+            action/install.sh \
+            action/run.sh \
+            action/release-tag.txt
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "v0.1.0-alpha.3"
+
+      - name: Build M11 research CLI
+        run: cargo build --locked -p execsurface
+
+      - name: Prove portable default requires no hybrid privilege
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$GITHUB_WORKSPACE/target/debug/execsurface"
+          test -x "$bin"
+          "$bin" --version
+          "$bin" doctor
+
+          work="$RUNNER_TEMP/m11-7-research-default"
+          mkdir -p "$work"
+          cd "$work"
+
+          "$bin" learn -- /bin/bash -lc true
+          "$bin" check -- /bin/bash -lc true
+
+          set +e
+          output="$("$bin" check -- /bin/bash -lc 'true; /bin/echo controlled-drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 10
+          grep -F "ExecSurface: REVIEW" <<<"$output"
+
+      - name: Frozen baseline v2 compatibility
+        run: cargo test --locked -p execsurface-baseline digest_serialization_vector_is_frozen
+
+      - name: Explicit hybrid remains non-default
+        run: |
+          cargo test --locked -p execsurface-hybrid-authority
+          cargo test --locked -p execsurface-hybrid-authority --test m11_redteam
+
+  published-release:
+    name: Published release / no-Rust consumer path
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout release pointer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install checksum-verified public release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < action/release-tag.txt)"
+          target="x86_64-unknown-linux-gnu"
+          asset="execsurface-${version}-${target}.tar.gz"
+          install_dir="$RUNNER_TEMP/execsurface-m11-7-release"
+          mkdir -p "$install_dir"
+          cd "$install_dir"
+
+          curl --fail --location --silent --show-error \
+            --output "$asset" \
+            "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${version}/${asset}"
+          curl --fail --location --silent --show-error \
+            --output "$asset.sha256" \
+            "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${version}/${asset}.sha256"
+          sha256sum -c "$asset.sha256"
+          tar -xzf "$asset"
+
+          binary="$install_dir/execsurface-${version}-${target}/execsurface"
+          test -x "$binary"
+          test "$("$binary" --version)" = "execsurface ${version#v}"
+          echo "EXECSURFACE_PUBLIC_BIN=$binary" >> "$GITHUB_ENV"
+
+      - name: Public binary PASS and controlled REVIEW
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/m11-7-public-release"
+          mkdir -p "$work"
+          cd "$work"
+
+          "$EXECSURFACE_PUBLIC_BIN" doctor
+          "$EXECSURFACE_PUBLIC_BIN" learn -- /bin/bash -lc true
+          "$EXECSURFACE_PUBLIC_BIN" check -- /bin/bash -lc true
+
+          set +e
+          output="$("$EXECSURFACE_PUBLIC_BIN" check -- /bin/bash -lc 'true; /bin/echo controlled-drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 10
+          grep -F "ExecSurface: REVIEW" <<<"$output"
+
+  stable-marketplace-action:
+    name: Stable Marketplace Action / v0.1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout consumer workspace
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Prepare baseline with current public release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < action/release-tag.txt)"
+          target="x86_64-unknown-linux-gnu"
+          asset="execsurface-${version}-${target}.tar.gz"
+          install_dir="$RUNNER_TEMP/execsurface-m11-7-action-baseline"
+          mkdir -p "$install_dir"
+          cd "$install_dir"
+
+          curl --fail --location --silent --show-error \
+            --output "$asset" \
+            "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${version}/${asset}"
+          curl --fail --location --silent --show-error \
+            --output "$asset.sha256" \
+            "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${version}/${asset}.sha256"
+          sha256sum -c "$asset.sha256"
+          tar -xzf "$asset"
+
+          binary="$install_dir/execsurface-${version}-${target}/execsurface"
+          cd "$GITHUB_WORKSPACE"
+          "$binary" learn --output m11-7-public-action.lock.json -- /bin/bash -lc true
+
+      - name: Stable Action PASS
+        id: pass
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "true"
+          baseline: m11-7-public-action.lock.json
+          upload-artifact: "false"
+
+      - name: Assert PASS output
+        shell: bash
+        env:
+          VERDICT: ${{ steps.pass.outputs.verdict }}
+          EXIT_CODE: ${{ steps.pass.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = "pass"
+          test "$EXIT_CODE" = "0"
+
+      - name: Stable Action controlled REVIEW
+        id: review
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "true; /bin/echo controlled-drift >/dev/null"
+          baseline: m11-7-public-action.lock.json
+          upload-artifact: "false"
+
+      - name: Assert REVIEW output
+        shell: bash
+        env:
+          VERDICT: ${{ steps.review.outputs.verdict }}
+          EXIT_CODE: ${{ steps.review.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = "review"
+          test "$EXIT_CODE" = "10"

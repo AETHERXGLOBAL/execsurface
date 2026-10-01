@@ -1,0 +1,276 @@
+name: M10.3B boot-controlled BPF-LSM environment
+
+on:
+  push:
+    branches:
+      - research/m10-hybrid-observer-m103b
+    paths:
+      - 'docs/milestones/M10_3B_BOOT_CONTROLLED_BPF_LSM_PROTOCOL.md'
+      - '.github/workflows/m10-3b-boot-controlled-bpf-lsm.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  boot-controlled-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install frozen environment dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p m10-3b-artifacts
+          uname -a | tee m10-3b-artifacts/host-uname.txt
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 busybox-static cpio
+          qemu-system-x86_64 --version | tee m10-3b-artifacts/qemu-version.txt
+          dpkg-query -W -f='${Package} ${Version}\n' busybox-static qemu-system-x86 \
+            | tee m10-3b-artifacts/packages.txt
+
+      - name: Acquire and validate guest kernel
+        id: kernel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          KERNEL_PKG="$(apt-cache show linux-image-generic \
+            | sed -n 's/^Depends: \(linux-image-[^, ]*-generic\).*/\1/p' \
+            | head -n1)"
+          if [[ -z "$KERNEL_PKG" ]]; then
+            echo 'Unable to resolve Ubuntu generic kernel image package' >&2
+            exit 1
+          fi
+
+          KERNEL_DIR="$RUNNER_TEMP/m10-3b-kernel"
+          EXTRACT_DIR="$RUNNER_TEMP/m10-3b-kernel-extract"
+          BUILDINFO_DIR="$RUNNER_TEMP/m10-3b-buildinfo"
+          BUILDINFO_EXTRACT="$RUNNER_TEMP/m10-3b-buildinfo-extract"
+          rm -rf "$KERNEL_DIR" "$EXTRACT_DIR" "$BUILDINFO_DIR" "$BUILDINFO_EXTRACT"
+          mkdir -p "$KERNEL_DIR" "$EXTRACT_DIR" "$BUILDINFO_DIR" "$BUILDINFO_EXTRACT"
+
+          (
+            cd "$KERNEL_DIR"
+            apt-get download "$KERNEL_PKG"
+          )
+          DEB="$(find "$KERNEL_DIR" -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$DEB"
+          dpkg-deb -x "$DEB" "$EXTRACT_DIR"
+
+          SOURCE_KERNEL="$(find "$EXTRACT_DIR/boot" -maxdepth 1 -type f -name 'vmlinuz-*-generic' | sort -V | tail -n1)"
+          if [[ -z "$SOURCE_KERNEL" ]]; then
+            echo 'Downloaded kernel package did not contain expected vmlinuz file' >&2
+            exit 1
+          fi
+          VERSION="${SOURCE_KERNEL##*/vmlinuz-}"
+          BUILDINFO_PKG="linux-buildinfo-${VERSION}"
+
+          (
+            cd "$BUILDINFO_DIR"
+            apt-get download "$BUILDINFO_PKG"
+          )
+          BUILDINFO_DEB="$(find "$BUILDINFO_DIR" -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$BUILDINFO_DEB"
+          dpkg-deb -x "$BUILDINFO_DEB" "$BUILDINFO_EXTRACT"
+          CONFIG="$(find "$BUILDINFO_EXTRACT" -type f \( -name 'config' -o -name "config-${VERSION}" \) -print -quit)"
+          if [[ -z "$CONFIG" ]]; then
+            echo 'Matching buildinfo package did not contain expected kernel config' >&2
+            find "$BUILDINFO_EXTRACT" -maxdepth 6 -type f -print >&2 || true
+            exit 1
+          fi
+
+          GUEST_KERNEL="$GITHUB_WORKSPACE/m10-3b-artifacts/vmlinuz-${VERSION}"
+          cp "$SOURCE_KERNEL" "$GUEST_KERNEL"
+          chmod 0644 "$GUEST_KERNEL"
+
+          printf '%s\n' "$KERNEL_PKG" | tee m10-3b-artifacts/guest-kernel-package.txt
+          dpkg-deb -f "$DEB" Package Version Architecture \
+            | tee m10-3b-artifacts/guest-kernel-package-metadata.txt
+          sha256sum "$DEB" | tee m10-3b-artifacts/guest-kernel-package.sha256
+          printf '%s\n' "$BUILDINFO_PKG" | tee m10-3b-artifacts/guest-buildinfo-package.txt
+          dpkg-deb -f "$BUILDINFO_DEB" Package Version Architecture \
+            | tee m10-3b-artifacts/guest-buildinfo-package-metadata.txt
+          sha256sum "$BUILDINFO_DEB" | tee m10-3b-artifacts/guest-buildinfo-package.sha256
+          printf '%s\n' "$SOURCE_KERNEL" | tee m10-3b-artifacts/guest-kernel-source-path.txt
+          printf '%s\n' "$CONFIG" | tee m10-3b-artifacts/guest-kernel-config-source-path.txt
+          printf '%s\n' "$GUEST_KERNEL" | tee m10-3b-artifacts/guest-kernel-path.txt
+          printf '%s\n' "$VERSION" | tee m10-3b-artifacts/guest-kernel-version.txt
+          cp "$CONFIG" m10-3b-artifacts/guest-kernel-config.txt
+          sha256sum "$GUEST_KERNEL" | tee m10-3b-artifacts/guest-kernel.sha256
+
+          python3 - "$CONFIG" <<'PY'
+          import json, sys
+          from pathlib import Path
+          cfg = Path(sys.argv[1]).read_text().splitlines()
+          values = {}
+          for line in cfg:
+              if line.startswith('CONFIG_') and '=' in line:
+                  k, v = line.split('=', 1)
+                  values[k] = v
+          required = ['CONFIG_BPF', 'CONFIG_BPF_SYSCALL', 'CONFIG_BPF_LSM']
+          present = {k: values.get(k, '<unset>') for k in required}
+          capable = all(present[k] == 'y' for k in required)
+          Path('m10-3b-artifacts/kernel-config-gate.json').write_text(json.dumps({
+              'required_config': present,
+              'kernel_config_capable': capable,
+          }, indent=2) + '\n')
+          PY
+
+          if python3 - <<'PY'
+          import json
+          r=json.load(open('m10-3b-artifacts/kernel-config-gate.json'))
+          raise SystemExit(0 if r['kernel_config_capable'] else 1)
+          PY
+          then
+            echo 'config_capable=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'config_capable=false' >> "$GITHUB_OUTPUT"
+          fi
+          echo "kernel=$GUEST_KERNEL" >> "$GITHUB_OUTPUT"
+
+      - name: Build minimal boot probe initramfs
+        if: steps.kernel.outputs.config_capable == 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT="$RUNNER_TEMP/m10-3b-root"
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT"/{bin,dev,proc,sys,sys/kernel/security,tmp}
+          cp /bin/busybox "$ROOT/bin/busybox"
+          for app in sh mount cat grep echo poweroff reboot sleep sync; do
+            ln -s busybox "$ROOT/bin/$app"
+          done
+
+          cat > "$ROOT/init" <<'EOF'
+          #!/bin/sh
+          set -eu
+          export PATH=/bin
+          mount -t proc proc /proc
+          mount -t sysfs sysfs /sys
+          mkdir -p /sys/kernel/security
+          mount -t securityfs securityfs /sys/kernel/security || true
+
+          echo 'M10_3B_PROBE_BEGIN'
+          CMDLINE="$(cat /proc/cmdline 2>/dev/null || true)"
+          echo "M10_3B_CMDLINE=$CMDLINE"
+          if [ -r /sys/kernel/security/lsm ]; then
+            LSM_LIST="$(cat /sys/kernel/security/lsm)"
+            echo "M10_3B_LSM_LIST=$LSM_LIST"
+          else
+            echo 'M10_3B_LSM_LIST=<unreadable>'
+          fi
+          if [ -r /sys/kernel/btf/vmlinux ]; then
+            echo 'M10_3B_BTF_READABLE=true'
+          else
+            echo 'M10_3B_BTF_READABLE=false'
+          fi
+          echo 'M10_3B_PROBE_COMPLETE'
+          sync
+          reboot -f
+          EOF
+          chmod 0755 "$ROOT/init"
+
+          (
+            cd "$ROOT"
+            find . -print0 | cpio --null -ov --format=newc 2> "$GITHUB_WORKSPACE/m10-3b-artifacts/cpio.stderr.txt" \
+              | gzip -9 > "$GITHUB_WORKSPACE/m10-3b-artifacts/initramfs.cpio.gz"
+          )
+          sha256sum m10-3b-artifacts/initramfs.cpio.gz | tee m10-3b-artifacts/initramfs.sha256
+
+      - name: Boot isolated guest with BPF LSM selected
+        id: boot
+        if: steps.kernel.outputs.config_capable == 'true'
+        shell: bash
+        run: |
+          set -uo pipefail
+          KERNEL="${{ steps.kernel.outputs.kernel }}"
+          INITRD="$GITHUB_WORKSPACE/m10-3b-artifacts/initramfs.cpio.gz"
+          LOG="$GITHUB_WORKSPACE/m10-3b-artifacts/guest-serial.log"
+          CMDLINE='console=ttyS0 panic=-1 lsm=bpf'
+
+          printf '%s\n' "qemu-system-x86_64 -machine accel=tcg -cpu max -m 512M -nographic -no-reboot -kernel $KERNEL -initrd $INITRD -append '$CMDLINE'" \
+            > m10-3b-artifacts/qemu-command.txt
+
+          set +e
+          timeout 180s qemu-system-x86_64 \
+            -machine accel=tcg \
+            -cpu max \
+            -m 512M \
+            -nographic \
+            -no-reboot \
+            -kernel "$KERNEL" \
+            -initrd "$INITRD" \
+            -append "$CMDLINE" \
+            > "$LOG" 2>&1
+          RC=$?
+          set -e
+          echo "$RC" > m10-3b-artifacts/qemu-exit-code.txt
+          cat "$LOG"
+
+          if grep -q '^M10_3B_PROBE_COMPLETE' "$LOG"; then
+            echo 'completed=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'completed=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Classify frozen environment result
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, re
+          from pathlib import Path
+          artifacts = Path('m10-3b-artifacts')
+          cfg_path = artifacts / 'kernel-config-gate.json'
+          cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {
+              'kernel_config_capable': False,
+              'required_config': {},
+          }
+          log = (artifacts / 'guest-serial.log').read_text(errors='replace') if (artifacts / 'guest-serial.log').exists() else ''
+          complete = 'M10_3B_PROBE_COMPLETE' in log
+          m = re.search(r'^M10_3B_LSM_LIST=(.*)$', log, flags=re.M)
+          lsm = m.group(1).strip() if m else '<missing>'
+          active = [x.strip() for x in lsm.split(',') if x.strip()] if not lsm.startswith('<') else []
+          bpf_active = 'bpf' in active
+          btf = bool(re.search(r'^M10_3B_BTF_READABLE=true$', log, flags=re.M))
+
+          if not cfg.get('kernel_config_capable'):
+              classification = 'M10_3B_KERNEL_CONFIG_BLOCKED'
+          elif not complete:
+              classification = 'M10_3B_BOOT_BLOCKED'
+          elif lsm == '<missing>' or lsm == '<unreadable>':
+              classification = 'M10_3B_EVIDENCE_INCOMPLETE'
+          elif not bpf_active:
+              classification = 'M10_3B_LSM_ACTIVATION_BLOCKED'
+          else:
+              classification = 'M10_3B_BOOT_CONTROLLED_CAPABLE'
+
+          result = {
+              'protocol': 'M10_3B_BOOT_CONTROLLED_BPF_LSM_ENVIRONMENT',
+              'classification': classification,
+              'kernel_config_capable': bool(cfg.get('kernel_config_capable')),
+              'required_config': cfg.get('required_config', {}),
+              'probe_complete': complete,
+              'active_lsms': lsm,
+              'bpf_lsm_active': bpf_active,
+              'guest_btf_readable': btf,
+              'semantic_authority_granted': False,
+              'product_integration_authorized': False,
+          }
+          (artifacts / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result, indent=2))
+          PY
+
+      - name: Upload M10.3B evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m10-3b-boot-controlled-bpf-lsm-evidence
+          path: m10-3b-artifacts/
+          if-no-files-found: error
