@@ -1,0 +1,93 @@
+name: Post-alpha4 Semantics v3 destructive rework gate
+
+on:
+  push:
+    branches:
+      - integration/post-alpha4-semantics-v3-rework
+    paths:
+      - docs/development/POST_ALPHA4_SEMANTICS_V3_REWORK_PROTOCOL.md
+      - crates/execsurface-model/src/semantics_v3.rs
+      - crates/execsurface-model/tests/semantics_v3_promotion.rs
+      - crates/execsurface-model/tests/semantics_v3_rework.rs
+      - .github/workflows/post-alpha4-semantics-v3-rework.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  destructive-rework:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout rework candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify immutable public boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          PUBLIC_SHA='48e0b9a0707553349e75e97a9dfa096d13f9ab5d'
+          BROKEN_CANDIDATE='5079a990b924d8ccd7ac6414f8a9a2571b54e240'
+          test "${GITHUB_REF_NAME}" = 'integration/post-alpha4-semantics-v3-rework'
+          git fetch --force --tags origin
+          test "$(git rev-list -n 1 v0.1.0-alpha.4)" = "${PUBLIC_SHA}"
+          test "$(git rev-list -n 1 v0.1)" = "${PUBLIC_SHA}"
+          git merge-base --is-ancestor "${BROKEN_CANDIDATE}" HEAD
+          grep -F 'pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/lib.rs
+          grep -F 'pub const CANONICAL_SURFACE_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/canonical.rs
+          grep -F 'pub const SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION: u32 = 3;' crates/execsurface-model/src/semantics_v3.rs
+
+      - name: Verify frozen repair protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          protocol='docs/development/POST_ALPHA4_SEMANTICS_V3_REWORK_PROTOCOL.md'
+          grep -F 'A semantic proof requirement must carry the exact proposition/subject' "${protocol}"
+          grep -F 'an empty/default `ProofRequirement` is never sufficient semantic proof' "${protocol}" || grep -F 'An empty/default `ProofRequirement` is never sufficient semantic proof' "${protocol}"
+          grep -F 'object_identity_conflict' "${protocol}"
+          grep -F 'no public promotion' <(tr '[:upper:]' '[:lower:]' < "${protocol}")
+
+      - name: Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Model Clippy
+        run: cargo clippy --locked -p execsurface-model --all-targets -- -D warnings
+
+      - name: Execute destructive D01-D06 rework corpus
+        run: cargo test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+
+      - name: Reprove original A1 corpus
+        run: cargo test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+
+      - name: Reprove model baseline diff policy regressions
+        run: cargo test --locked -p execsurface-model -p execsurface-baseline -p execsurface-diff -p execsurface-policy --all-targets
+
+      - name: Produce rework evidence report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            echo "rework_sha=${GITHUB_SHA}"
+            echo 'broken_candidate=5079a990b924d8ccd7ac6414f8a9a2571b54e240'
+            echo 'destructive_review_result=POST_ALPHA4_DESTRUCTIVE_REVIEW_MATERIAL_GAP_FOUND'
+            echo 'd01_proposition_binding_required=true'
+            echo 'd02_ambiguity_invalidation_required=true'
+            echo 'd03_default_requirement_fail_closed=true'
+            echo 'public_alpha4_sha=48e0b9a0707553349e75e97a9dfa096d13f9ab5d'
+            echo "alpha4_tag_sha=$(git rev-list -n 1 v0.1.0-alpha.4)"
+            echo "stable_v0_1_tag_sha=$(git rev-list -n 1 v0.1)"
+            echo 'public_promotion_authorized=false'
+            echo 'p8_external_evidence=false'
+          } | tee evidence/post-alpha4-semantics-v3-rework.txt
+
+      - name: Upload rework evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-semantics-v3-rework-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/post-alpha4-semantics-v3-rework.txt
+          if-no-files-found: error
