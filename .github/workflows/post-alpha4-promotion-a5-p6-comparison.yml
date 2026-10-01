@@ -1,0 +1,158 @@
+name: Post-alpha4 promotion A5 P6 comparison tooling
+
+on:
+  push:
+    branches: [integration/post-alpha4-promotion-candidate]
+    paths:
+      - docs/development/POST_ALPHA4_PROMOTION_A5_P6_COMPARISON_PROTOCOL.md
+      - docs/development/P6_*.md
+      - experiments/p6-competitive-falsification/**
+      - scripts/post_alpha4_a5_p6_falsifier.py
+      - .github/workflows/post-alpha4-promotion-a5-p6-comparison.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: post-alpha4-a5-p6-comparison-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  A4_CANDIDATE_FLOOR: 3bb0749f08046cbe26de0d9117defc6c93466fa8
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  WORKLOAD_BLOB: c5986f1acd8bc79a3945e613acc128d5c8a9d168
+
+jobs:
+  identity-and-scope:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify ancestry, frozen protocol and immutable public boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'integration/post-alpha4-promotion-candidate'
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$A4_CANDIDATE_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          protocol='docs/development/POST_ALPHA4_PROMOTION_A5_P6_COMPARISON_PROTOCOL.md'
+          grep -F 'PREREGISTERED — P6 VALIDATION/COMPARISON TOOLING ONLY / NO RUNTIME OR PUBLIC PROMOTION AUTHORIZED' "$protocol"
+          grep -F 'Exactly 12 frozen A5 attacks/invariants' "$protocol"
+          grep -F 'No composite score and no partial-pass promotion.' "$protocol"
+          test "$(grep -c '^    def test_a5_[0-9][0-9]_' scripts/post_alpha4_a5_p6_falsifier.py)" -eq 12
+          if git diff --name-only "$A4_CANDIDATE_FLOOR"..HEAD | grep -qE '^crates/(execsurface-cli|execsurface-diff|execsurface-normalize|execsurface-observe|execsurface-policy)/' ; then
+            echo 'A5 comparison-tooling gate must not modify public product crates' >&2
+            exit 1
+          fi
+
+  frozen-comparison-falsifier:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch immutable tags
+        run: git fetch --force --tags origin
+      - name: Execute exact frozen A5 12-test corpus
+        run: |
+          set -euo pipefail
+          python3 scripts/post_alpha4_a5_p6_falsifier.py 2>&1 | tee a5-p6-falsifier.log
+          grep -q 'Ran 12 tests' a5-p6-falsifier.log
+          grep -q '^OK$' a5-p6-falsifier.log
+      - name: Upload A5 falsifier log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-a5-p6-falsifier-${{ github.run_id }}-${{ github.run_attempt }}
+          path: a5-p6-falsifier.log
+          if-no-files-found: warn
+
+  p6-evidence-reproof:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reprove frozen P6 evidence identities and negative boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object experiments/p6-competitive-falsification/workload.sh)" = "$WORKLOAD_BLOB"
+          grep -F 'P6_FACTUAL_COMPARISON_COMPLETE_BOUNDED' docs/development/P6_CLOSEOUT_DECISION.md
+          grep -F '36770551463' docs/development/P6_CLOSEOUT_DECISION.md
+          grep -F 'ERROR/INCOMPLETE' docs/development/P6_CLOSEOUT_DECISION.md
+          grep -F 'NOT_TESTABLE_YET' docs/development/P6_CLOSEOUT_DECISION.md
+          grep -F 'The native predicate field `passed` is not normalized to ExecSurface `PASS`.' docs/development/P6_CLOSEOUT_DECISION.md
+          grep -F 'Decision: `NO_VALID_PERFORMANCE_COMPARISON`' docs/development/P6_CLOSEOUT_DECISION.md
+          grep -F 'P6 does not establish:' docs/development/P6_CLOSEOUT_DECISION.md
+          python3 -m json.tool experiments/p6-competitive-falsification/p6-a0-manifest.json >/dev/null
+          python3 -m json.tool experiments/p6-competitive-falsification/p6-a1-observation-matrix.json >/dev/null
+          python3 -m json.tool experiments/p6-competitive-falsification/p6-a2-adversarial-matrix.json >/dev/null
+
+  prior-critical-reproof:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install 1.90.0 --profile minimal
+      - name: Reprove repaired Semantics v3 admission boundary
+        run: |
+          set -euo pipefail
+          cargo +1.90.0 test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+          cargo +1.90.0 test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+      - name: Replay bounded P3 poisoning falsifier
+        run: |
+          set -euo pipefail
+          cargo +1.90.0 generate-lockfile --manifest-path experiments/p3-v4-falsifier/Cargo.toml
+          cargo +1.90.0 test --locked --manifest-path experiments/p3-v4-falsifier/Cargo.toml --all-targets -- --nocapture
+
+  closeout:
+    needs: [identity-and-scope, frozen-comparison-falsifier, p6-evidence-reproof, prior-critical-reproof]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Record bounded A5 eligibility evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$A4_CANDIDATE_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          mkdir -p evidence
+          {
+            echo 'decision=POST_ALPHA4_PROMOTION_A5_P6_COMPARISON_TOOLING_ELIGIBLE_BOUNDED_CANDIDATE'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "a4_candidate_floor=${A4_CANDIDATE_FLOOR}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo 'scope=validation_and_comparison_tooling_only'
+            echo 'semantic_authority_from_comparison=false'
+            echo 'external_validation_from_internal_comparison=false'
+            echo 'winner_score_authorized=false'
+            echo 'performance_ranking_authorized=false'
+            echo 'negative_evidence_retained=true'
+            echo 'public_promotion_authorized=false'
+            echo 'main_merge_authorized=false'
+            echo 'p8_closure=false'
+          } | tee evidence/post-alpha4-promotion-a5-p6-comparison.txt
+      - name: Upload A5 closeout evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-promotion-a5-p6-comparison-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/post-alpha4-promotion-a5-p6-comparison.txt
+          if-no-files-found: error
+          retention-days: 90
