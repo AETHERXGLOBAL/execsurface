@@ -1,0 +1,120 @@
+name: Alpha5 candidate A1 Semantics v3 reproof
+
+on:
+  push:
+    branches:
+      - integration/post-alpha4-promotion-candidate
+    paths:
+      - .github/workflows/alpha5-candidate-a1-semantics-reproof.yml
+      - docs/release/ALPHA5_EXECUTION_NOTE.md
+      - crates/execsurface-model/**
+      - crates/execsurface-baseline/**
+      - crates/execsurface-diff/**
+      - crates/execsurface-policy/**
+      - crates/execsurface-observe/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha5-candidate-a1-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  ALPHA5_EXECUTION_FLOOR: 55846bf9510409dce2c646c251999bf799484952
+
+jobs:
+  a1-semantics-reproof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout alpha5 candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify immutable anchors and alpha5 ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'integration/post-alpha4-promotion-candidate'
+          git fetch --force --tags origin
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          git merge-base --is-ancestor "$ALPHA5_EXECUTION_FLOOR" HEAD
+
+      - name: Verify frozen v2 and explicit v3 domains
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/lib.rs
+          grep -F 'pub const CANONICAL_SURFACE_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/canonical.rs
+          grep -F 'pub const LOCK_SCHEMA_VERSION: u32 = 2;' crates/execsurface-baseline/src/lib.rs
+          grep -F 'pub const DIGEST_FORMAT_VERSION: u32 = 2;' crates/execsurface-baseline/src/lib.rs
+          grep -F 'pub const DIFF_SCHEMA_VERSION: u32 = 2;' crates/execsurface-diff/src/lib.rs
+          grep -F 'pub const POLICY_SCHEMA_VERSION: u32 = 2;' crates/execsurface-policy/src/lib.rs
+          grep -F 'pub const VERDICT_SCHEMA_VERSION: u32 = 2;' crates/execsurface-policy/src/lib.rs
+          grep -F 'pub const SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION: u32 = 3;' crates/execsurface-model/src/semantics_v3.rs
+
+      - name: Install pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Formatting and clippy are fatal
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-model --all-targets -- -D warnings
+
+      - name: Reprove repaired Semantics v3 adversarial corpora
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+
+      - name: Reprove v2-adjacent model baseline diff and policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model -p execsurface-baseline -p execsurface-diff -p execsurface-policy --all-targets
+
+      - name: Reprove M11 shared-FD fail-closed behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
+
+      - name: Record candidate-scoped A1 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            echo 'decision_candidate=ALPHA5_A1_SEMANTICS_V3_REPROOF_PASS'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "alpha5_execution_floor=${ALPHA5_EXECUTION_FLOOR}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo "stable_v0_1_sha=$(git rev-parse 'v0.1^{commit}')"
+            echo 'v2_schema_frozen=true'
+            echo 'v3_schema_explicit=true'
+            echo 'silent_v2_to_v3_projection=false'
+            echo 'incomplete_evidence_fail_closed=true'
+            echo 'release_authorized=false'
+            echo 'p8_external_validation_unchanged=true'
+          } | tee evidence/alpha5-a1-semantics-reproof.txt
+
+      - name: Upload candidate-scoped A1 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a1-semantics-reproof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/alpha5-a1-semantics-reproof.txt
+          if-no-files-found: error
