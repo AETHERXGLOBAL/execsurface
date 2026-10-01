@@ -57,6 +57,7 @@ fn qualifying_execve_maps_to_direct_incomplete_only() {
 fn imported_event_cannot_satisfy_complete_session_requirement() {
     let record = evidence(&valid_event());
     let requirement = ProofRequirement {
+        expected_proposition: Some(record.adapter.proof.proposition.clone()),
         guarantees: record.adapter.proof.guarantees.clone(),
         required_complete: BTreeSet::from([CompletenessDimension::SessionScope]),
     };
