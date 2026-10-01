@@ -39,6 +39,7 @@ jobs:
           printf '%s\n' "${changed[@]}" | tee changed-files.txt
           cat > expected-files.txt <<'EOF'
           .github/workflows/post-alpha4-candidate-a8-a1-semantics-v3.yml
+          Cargo.lock
           crates/execsurface-model/Cargo.toml
           crates/execsurface-model/src/lib.rs
           crates/execsurface-model/src/semantics_v3.rs
