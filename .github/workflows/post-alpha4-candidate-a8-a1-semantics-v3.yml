@@ -1,0 +1,156 @@
+name: Post-alpha4 candidate A8 A1 Semantics v3
+
+on:
+  push:
+    branches: [release/post-alpha4-candidate-assembly]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  PROMOTION_EVIDENCE_SOURCE: cef8c5b8acb3f3c9e0671c497ad04837709bb024
+
+jobs:
+  clean-provenance-and-scope:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify clean alpha.4 ancestry and immutable tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'release/post-alpha4-candidate-assembly'
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$ALPHA4_SOURCE" HEAD
+          test "$(git merge-base "$ALPHA4_SOURCE" HEAD)" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+      - name: Verify exact A8 A1 admitted-file manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff --name-only "$ALPHA4_SOURCE"..HEAD | sort)
+          printf '%s\n' "${changed[@]}" | tee changed-files.txt
+          cat > expected-files.txt <<'EOF'
+          .github/workflows/post-alpha4-candidate-a8-a1-semantics-v3.yml
+          crates/execsurface-model/Cargo.toml
+          crates/execsurface-model/src/lib.rs
+          crates/execsurface-model/src/semantics_v3.rs
+          crates/execsurface-model/tests/semantics_v3_promotion.rs
+          crates/execsurface-model/tests/semantics_v3_rework.rs
+          docs/development/POST_ALPHA4_CANDIDATE_ASSEMBLY_MANIFEST.md
+          EOF
+          sed -i 's/^          //' expected-files.txt
+          sort -o expected-files.txt expected-files.txt
+          diff -u expected-files.txt changed-files.txt
+      - name: Prove default-off feature contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --no-deps --format-version 1 > metadata.json
+          jq -e '.packages[] | select(.name == "execsurface-model") | .features.default == [] and .features["semantics-v3"] == []' metadata.json >/dev/null
+          grep -A1 -F '#[cfg(feature = "semantics-v3")]' crates/execsurface-model/src/lib.rs | grep -F 'pub mod semantics_v3;'
+          grep -F 'pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/lib.rs
+
+  default-v2-regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Rustfmt
+        run: cargo +$RUST_TOOLCHAIN fmt --all -- --check
+      - name: Clippy default mode
+        run: cargo +$RUST_TOOLCHAIN clippy --locked --workspace --all-targets -- -D warnings
+      - name: Full alpha.4-compatible default regression
+        run: cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets
+      - name: Explicitly reprove v2 model baseline diff policy
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-baseline
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-diff
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-policy
+
+  opt-in-v3-falsification:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Clippy opt-in Semantics v3
+        run: cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-model --all-targets --features semantics-v3 -- -D warnings
+      - name: Reprove exact D01-D06 repair corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test semantics_v3_rework -- --nocapture 2>&1 | tee d01-d06.log
+          grep -q 'test result: ok. 6 passed; 0 failed' d01-d06.log
+      - name: Reprove exact A1 nine-test corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test semantics_v3_promotion -- --nocapture 2>&1 | tee a1.log
+          grep -q 'test result: ok. 9 passed; 0 failed' a1.log
+      - name: Reprove complete feature-enabled model corpus
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3
+      - name: Upload falsification logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-a1-semantics-v3-falsification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            d01-d06.log
+            a1.log
+          if-no-files-found: warn
+          retention-days: 90
+
+  closeout:
+    needs: [clean-provenance-and-scope, default-v2-regression, opt-in-v3-falsification]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Emit bounded A8 A1 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            echo 'decision=POST_ALPHA4_PROMOTION_A8_A1_SEMANTICS_V3_ELIGIBLE_BOUNDED_CLEAN_CANDIDATE'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "alpha4_base=${ALPHA4_SOURCE}"
+            echo "promotion_evidence_source=${PROMOTION_EVIDENCE_SOURCE}"
+            echo 'clean_branch=true'
+            echo 'semantics_v3_default_enabled=false'
+            echo 'public_v2_default_unchanged=true'
+            echo 'cli_default_changed=false'
+            echo 'baseline_format_changed=false'
+            echo 'd01_d06=6/6'
+            echo 'a1_corpus=9/9'
+            echo 'main_merge_authorized=false'
+            echo 'public_release_authorized=false'
+            echo 'stable_tag_movement_authorized=false'
+            echo 'p8_closure=false'
+          } | tee evidence/a8-a1-clean-semantics-v3.txt
+      - name: Upload closeout evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-a1-clean-semantics-v3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/a8-a1-clean-semantics-v3.txt
+          if-no-files-found: error
+          retention-days: 90
