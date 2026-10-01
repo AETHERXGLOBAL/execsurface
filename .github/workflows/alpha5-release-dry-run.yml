@@ -1,0 +1,334 @@
+name: Alpha5 frozen candidate release dry-run
+
+on:
+  push:
+    branches:
+      - integration/post-alpha4-promotion-candidate
+    paths:
+      - .github/workflows/alpha5-release-dry-run.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: alpha5-release-dry-run
+  cancel-in-progress: false
+
+env:
+  FROZEN_SHA: 5067200452c174da6bc8d9d7ecf6957ee379f0a2
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  CURRENT_VERSION: 0.1.0-alpha.4
+  CURRENT_TAG: v0.1.0-alpha.4
+  NEXT_VERSION: 0.1.0-alpha.5
+  NEXT_TAG: v0.1.0-alpha.5
+  TARGET_TRIPLE: x86_64-unknown-linux-gnu
+  RUST_TOOLCHAIN: 1.90.0
+  A6_RUN: '36899958419'
+  A6_ARTIFACT: '11181645256'
+  A6_DIGEST: 'sha256:16f08ae9faa2d15d539fcf32d7fd6848c7199acf9ed522e93a4faf18e2fc04b7'
+  REDTEAM_RUN: '36900214264'
+  REDTEAM_ARTIFACT: '11181895481'
+  REDTEAM_DIGEST: 'sha256:87eff6e53f77fe514d8785a98960471092c074eeaef842fcb44ac8de9224bb85'
+
+jobs:
+  staged-release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Checkout workflow driver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: driver
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout exact frozen candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.FROZEN_SHA }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify immutable public boundary and accepted evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$FROZEN_SHA"
+          git -C driver fetch --force --tags origin
+          test "$(git -C driver rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git -C driver rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(tr -d '[:space:]' < source/action/release-tag.txt)" = "$CURRENT_TAG"
+          if git -C driver show-ref --verify --quiet refs/tags/v0.1.0-alpha.5; then
+            echo 'alpha.5 public tag already exists before release authorization' >&2
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$A6_RUN" > a6-run.json
+          jq -e --arg sha "$FROZEN_SHA" '.status == "completed" and .conclusion == "success" and .head_sha == $sha' a6-run.json >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$A6_ARTIFACT" > a6-artifact.json
+          jq -e --arg d "$A6_DIGEST" '.expired == false and .digest == $d' a6-artifact.json >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REDTEAM_RUN" > redteam-run.json
+          jq -e '.status == "completed" and .conclusion == "success"' redteam-run.json >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$REDTEAM_ARTIFACT" > redteam-artifact.json
+          jq -e --arg d "$REDTEAM_DIGEST" '.expired == false and .digest == $d' redteam-artifact.json >/dev/null
+
+      - name: Install pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Materialize isolated alpha.5 staging tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a source stage
+          printf '%s\n' "$NEXT_TAG" > stage/action/release-tag.txt
+          cat > stage/docs/releases/v0.1.0-alpha.5.md <<'EOF'
+          # ExecSurface v0.1.0-alpha.5 — staged release candidate
+
+          This staged release candidate promotes only capabilities that survived the bounded Alpha.5 clean-candidate gates and independent frozen-source red-team. Publication remains blocked until the explicit release decision is satisfied.
+
+          ## Candidate scope
+          - repaired, proposition-bound Semantics v3 admission without silent v2 reinterpretation;
+          - proposition-scoped backend authority for bounded P4 evidence;
+          - bounded GCC ephemeral-identity variance handling without frequency/similarity authorization;
+          - attestation/provenance binding where cryptographic validity does not create semantic authority;
+          - preserved public ptrace fail-closed behavior and M11/M12 PATH-TOCTOU/shared-FD limitations;
+          - clean CLI/package/Action compatibility and reproducible x86_64 Linux release build.
+
+          ## Non-claims
+          - Linux arm64 support is not established;
+          - P8 external validation is not closed by internal testing;
+          - signatures, provenance, backend names, recurrence, or similarity do not independently authorize runtime behavior;
+          - no universal bug-free, production-safety, or all-runtime claim is made.
+
+          Frozen source: `5067200452c174da6bc8d9d7ecf6957ee379f0a2`.
+          EOF
+          python3 - <<'PY'
+          from pathlib import Path
+          old = '0.1.0-alpha.4'
+          new = '0.1.0-alpha.5'
+          root = Path('stage')
+          for manifest in root.rglob('Cargo.toml'):
+              text = manifest.read_text()
+              text = text.replace(f'version = "{old}"', f'version = "{new}"')
+              text = text.replace(f'version = "={old}"', f'version = "={new}"')
+              manifest.write_text(text)
+          lock = root / 'Cargo.lock'
+          chunks = lock.read_text().split('[[package]]')
+          out = [chunks[0]]
+          for chunk in chunks[1:]:
+              lines = chunk.splitlines()
+              name = next((line.split('=',1)[1].strip().strip('"') for line in lines if line.startswith('name = ')), None)
+              if name and name.startswith('execsurface'):
+                  lines = [(f'version = "{new}"' if line == f'version = "{old}"' else line) for line in lines]
+              out.append('\n'.join(lines))
+          lock.write_text('[[package]]'.join(out))
+          PY
+          test "$(tr -d '[:space:]' < stage/action/release-tag.txt)" = "$NEXT_TAG"
+          grep -F 'version = "0.1.0-alpha.5"' stage/Cargo.toml
+          if grep -R --include='Cargo.toml' -F '=0.1.0-alpha.4' stage/crates; then
+            echo 'stale internal alpha.4 dependency pin remains in staged manifests' >&2
+            exit 1
+          fi
+
+      - name: Audit staged package identity and topology
+        working-directory: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../evidence
+          cargo +$RUST_TOOLCHAIN metadata --locked --format-version 1 > ../evidence/cargo-metadata.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path('../evidence/cargo-metadata.json').read_text())
+          pkgs={p['name']:p for p in data['packages'] if p['name'].startswith('execsurface')}
+          publishable={'execsurface-model','execsurface-observe','execsurface-normalize','execsurface-baseline','execsurface-diff','execsurface-policy','execsurface-report','execsurface'}
+          missing=sorted(publishable-pkgs.keys())
+          assert not missing, missing
+          bad=sorted((n,pkgs[n]['version']) for n in publishable if pkgs[n]['version']!='0.1.0-alpha.5')
+          assert not bad, bad
+          edges=[]
+          bad_edges=[]
+          for n in sorted(publishable):
+              for d in pkgs[n]['dependencies']:
+                  if d['name'] in publishable:
+                      edges.append({'package':n,'dependency':d['name'],'req':d['req']})
+                      if d['req']!='=0.1.0-alpha.5': bad_edges.append((n,d['name'],d['req']))
+          assert not bad_edges, bad_edges
+          Path('../evidence/internal-topology.json').write_text(json.dumps(edges,indent=2,sort_keys=True)+'\n')
+          PY
+
+      - name: Full staged source qualification
+        working-directory: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --workspace --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets
+          cargo +$RUST_TOOLCHAIN test --locked --workspace --doc
+
+      - name: Audit package file sets
+        working-directory: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../evidence/package-file-lists
+          crates=(execsurface-model execsurface-observe execsurface-normalize execsurface-baseline execsurface-diff execsurface-policy execsurface-report execsurface)
+          for crate in "${crates[@]}"; do
+            cargo +$RUST_TOOLCHAIN package --allow-dirty --list -p "$crate" | tee "../evidence/package-file-lists/$crate.txt"
+            test -s "../evidence/package-file-lists/$crate.txt"
+            ! grep -E '(^|/)(target|\.git)(/|$)' "../evidence/package-file-lists/$crate.txt"
+          done
+
+      - name: Rehearse registry-front package
+        working-directory: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../evidence/package-archives
+          cargo +$RUST_TOOLCHAIN package --locked --allow-dirty --no-verify -p execsurface-model |& tee ../evidence/model-package.log
+          cp "target/package/execsurface-model-${NEXT_VERSION}.crate" ../evidence/package-archives/
+          sha256sum "../evidence/package-archives/execsurface-model-${NEXT_VERSION}.crate" | tee ../evidence/model-package.sha256
+          cargo +$RUST_TOOLCHAIN publish -p execsurface-model --locked --dry-run --allow-dirty |& tee ../evidence/model-publish-dry-run.log
+
+      - name: Verify downstream publication-order constraint is explicit
+        working-directory: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          cargo +$RUST_TOOLCHAIN package --locked --allow-dirty --no-verify -p execsurface-observe > ../evidence/observe-prepublication.log 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo 'downstream package unexpectedly resolved before staged model publication; inspect registry state' >&2
+            exit 1
+          fi
+          grep -F 'execsurface-model = "=0.1.0-alpha.5"' ../evidence/observe-prepublication.log
+          printf '%s\n' "$rc" > ../evidence/observe-prepublication-exit.txt
+
+      - name: Build deterministic staged release binaries twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          CARGO_TARGET_DIR="$RUNNER_TEMP/build-a" cargo +$RUST_TOOLCHAIN build --manifest-path stage/Cargo.toml --locked --release -p execsurface --bin execsurface
+          CARGO_TARGET_DIR="$RUNNER_TEMP/build-b" cargo +$RUST_TOOLCHAIN build --manifest-path stage/Cargo.toml --locked --release -p execsurface --bin execsurface
+          bin_a="$RUNNER_TEMP/build-a/release/execsurface"
+          bin_b="$RUNNER_TEMP/build-b/release/execsurface"
+          test "$("$bin_a" --version)" = 'execsurface 0.1.0-alpha.5'
+          a="$(sha256sum "$bin_a" | awk '{print $1}')"
+          b="$(sha256sum "$bin_b" | awk '{print $1}')"
+          test "$a" = "$b"
+          printf '%s\n' "$a" > evidence/release-binary.sha256
+
+      - name: Assemble exact-format staged release bundle
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          dirname="execsurface-${NEXT_TAG}-${TARGET_TRIPLE}"
+          asset="${dirname}.tar.gz"
+          mkdir -p "evidence/dist/$dirname"
+          cp "$RUNNER_TEMP/build-a/release/execsurface" "evidence/dist/$dirname/execsurface"
+          cp stage/LICENSE stage/NOTICE "evidence/dist/$dirname/"
+          {
+            echo "ExecSurface $NEXT_TAG"
+            echo "product_version=$NEXT_VERSION"
+            echo "target=$TARGET_TRIPLE"
+            echo "frozen_source_commit=$FROZEN_SHA"
+            echo "a6_run=$A6_RUN"
+            echo "independent_redteam_run=$REDTEAM_RUN"
+            echo "publication=dry-run-only"
+            echo "p8_external_validation_closed=false"
+          } > "evidence/dist/$dirname/BUILD_INFO.txt"
+          tar -C evidence/dist -czf "evidence/dist/$asset" "$dirname"
+          (cd evidence/dist && sha256sum "$asset" > "$asset.sha256" && sha256sum -c "$asset.sha256")
+          printf '%s\n' "$asset" > evidence/release-asset-name.txt
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Generate and verify staged SLSA/in-toto provenance
+        env:
+          ASSET: ${{ steps.bundle.outputs.asset }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          asset=os.environ['ASSET']
+          p=Path('evidence/dist')/asset
+          statement={
+            '_type':'https://in-toto.io/Statement/v1',
+            'subject':[{'name':asset,'digest':{'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}}],
+            'predicateType':'https://slsa.dev/provenance/v1',
+            'predicate':{
+              'buildDefinition':{
+                'buildType':'https://github.com/AETHERXGLOBAL/execsurface/alpha5-release-dry-run/v1',
+                'externalParameters':{'prospectiveVersion':os.environ['NEXT_VERSION'],'prospectiveTag':os.environ['NEXT_TAG'],'target':os.environ['TARGET_TRIPLE'],'publication':'dry-run-only'},
+                'internalParameters':{'frozenSourceCommit':os.environ['FROZEN_SHA'],'a6Run':os.environ['A6_RUN'],'independentRedteamRun':os.environ['REDTEAM_RUN']},
+                'resolvedDependencies':[{'uri':'git+https://github.com/AETHERXGLOBAL/execsurface.git','digest':{'gitCommit':os.environ['FROZEN_SHA']}}]
+              },
+              'runDetails':{'builder':{'id':f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/alpha5-release-dry-run.yml"},'metadata':{'invocationId':f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",'dryRun':True}}
+            }
+          }
+          Path('evidence/alpha5-provenance.json').write_text(json.dumps(statement,indent=2,sort_keys=True)+'\n')
+          PY
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          s=json.loads(Path('evidence/alpha5-provenance.json').read_text())
+          assert s['_type']=='https://in-toto.io/Statement/v1'
+          assert s['predicateType']=='https://slsa.dev/provenance/v1'
+          sub=s['subject'][0]
+          p=Path('evidence/dist')/sub['name']
+          assert hashlib.sha256(p.read_bytes()).hexdigest()==sub['digest']['sha256']
+          assert s['predicate']['buildDefinition']['internalParameters']['frozenSourceCommit']=='5067200452c174da6bc8d9d7ecf6957ee379f0a2'
+          assert s['predicate']['runDetails']['metadata']['dryRun'] is True
+          PY
+
+      - name: Prove dry-run did not mutate public refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C driver fetch --force --tags origin
+          test "$(git -C driver rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git -C driver rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          ! git -C driver show-ref --verify --quiet refs/tags/v0.1.0-alpha.5
+
+      - name: Record staged release decision boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo 'decision_candidate=ALPHA5_RELEASE_DRY_RUN_PASS'
+            echo "frozen_sha=${FROZEN_SHA}"
+            echo "prospective_version=${NEXT_VERSION}"
+            echo "prospective_tag=${NEXT_TAG}"
+            echo "a6_run=${A6_RUN}"
+            echo "redteam_run=${REDTEAM_RUN}"
+            echo 'deterministic_binary=true'
+            echo 'package_topology_verified=true'
+            echo 'provenance_verified=true'
+            echo 'public_refs_mutated=false'
+            echo 'release_authorized=false'
+            echo 'p8_external_validation_closed=false'
+          } | tee evidence/alpha5-release-dry-run.txt
+
+      - name: Upload staged release rehearsal
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-release-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            evidence/
+            !evidence/**/*.log
+          if-no-files-found: error
+          retention-days: 90
