@@ -1,0 +1,228 @@
+name: Post-alpha4 candidate A8 A6 integrated destructive closeout
+
+on:
+  push:
+    branches: [release/post-alpha4-candidate-assembly]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: a8-a6-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SHA: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  ALPHA4_TAG: v0.1.0-alpha.4
+
+jobs:
+  identity-and-governance:
+    name: Clean ancestry / immutable anchors / bounded claims
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Freeze lineage and public anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          test "$(git merge-base "$ALPHA4_SHA" HEAD)" = "$ALPHA4_SHA"
+          test -z "$(git rev-list --merges "$ALPHA4_SHA"..HEAD)"
+          test "$(git rev-parse "$ALPHA4_TAG^{commit}")" = "$ALPHA4_SHA"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SHA"
+          grep -Fx 'base=48e0b9a0707553349e75e97a9dfa096d13f9ab5d' .a8-assembly-start
+      - name: Freeze schema, feature, platform and release boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/lib.rs
+          grep -F 'default = []' crates/execsurface-model/Cargo.toml
+          grep -F 'semantics-v3 = []' crates/execsurface-model/Cargo.toml
+          grep -F 'Public alpha currently supports Linux x86_64 only' action/install.sh
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "$ALPHA4_TAG"
+          ! grep -Eiq 'arm64.*(supported|production|ready)|aarch64.*(supported|production|ready)' action.yml
+      - name: Freeze A6 scientific protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'PREREGISTERED — NO PUBLIC RELEASE AUTHORIZED' docs/development/POST_ALPHA4_CANDIDATE_A8_A6_INTEGRATED_DESTRUCTIVE_PROTOCOL.md
+          grep -F 'POST_ALPHA4_CANDIDATE_A8_A6_INTEGRATED_DESTRUCTIVE_PASS_BOUNDED_INTERNAL' docs/development/POST_ALPHA4_CANDIDATE_A8_A6_INTEGRATED_DESTRUCTIVE_PROTOCOL.md
+
+  cross-layer-core:
+    name: Semantics / authority / attestation / variance cross-layer replay
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Static gates
+        run: |
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --workspace --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: A1 D01-D06 exact repair corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test semantics_v3_rework -- --nocapture 2>&1 | tee a6-d01-d06.log
+          grep -q 'test result: ok. 6 passed; 0 failed' a6-d01-d06.log
+      - name: A1 original nine-test corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test semantics_v3_promotion -- --nocapture 2>&1 | tee a6-a1.log
+          grep -q 'test result: ok. 9 passed; 0 failed' a6-a1.log
+      - name: A2 authority corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test authority_v3_candidate -- --nocapture 2>&1 | tee a6-authority.log
+          grep -q 'test result: ok. 16 passed; 0 failed' a6-authority.log
+      - name: A4 attestation corpus
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test attestation_v3_candidate -- --nocapture
+      - name: A3 variance anti-poisoning corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-normalize --features gcc-ephemeral-v4 --test gcc_ephemeral_v4_candidate -- --nocapture 2>&1 | tee a6-variance.log
+          grep -q 'test result: ok. 12 passed; 0 failed' a6-variance.log
+      - name: Full default and all-feature regressions
+        run: |
+          cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets
+          cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets --all-features
+      - name: Release build
+        run: cargo +$RUST_TOOLCHAIN build --locked --workspace --release
+      - name: Retain attack logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-a6-cross-layer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            a6-d01-d06.log
+            a6-a1.log
+            a6-authority.log
+            a6-variance.log
+          if-no-files-found: warn
+          retention-days: 90
+
+  runtime-adversarial:
+    name: Runtime adversarial ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: M11 shared-FD fail-closed
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
+      - name: M12 PATH-TOCTOU and shared-FD adversarial replay
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m12_adversarial -- --nocapture
+      - name: Ptrace lifecycle regression
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test ptrace_linux -- --nocapture
+
+  product-surface:
+    name: Package / CLI / v2 rollback / controlled drift
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Frozen baseline-v2 and legacy rejection
+        run: |
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-baseline digest_serialization_vector_is_frozen
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-baseline legacy_lock_schema_is_rejected_instead_of_reinterpreted
+      - name: Package and path install candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN package --locked -p execsurface --allow-dirty
+          root="$RUNNER_TEMP/a8-a6-install"
+          cargo +$RUST_TOOLCHAIN install --locked --path crates/execsurface-cli --root "$root"
+          bin="$root/bin/execsurface"
+          test -x "$bin"
+          "$bin" --version
+          "$bin" --help >/dev/null
+          "$bin" doctor
+          work="$RUNNER_TEMP/a8-a6-cli"
+          mkdir -p "$work"
+          cd "$work"
+          "$bin" learn -- /bin/bash -lc true
+          "$bin" check -- /bin/bash -lc true
+          set +e
+          output="$("$bin" check -- /bin/bash -lc 'true; /bin/echo a8-a6-controlled-drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 10
+          grep -F 'ExecSurface: REVIEW' <<<"$output"
+      - name: CLI contract tests
+        run: |
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface --test learn_linux
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface --test check_linux
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface --test policy_linux
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface --test self_service_linux
+
+  closeout:
+    name: Bounded A8-A6 decision
+    needs: [identity-and-governance, cross-layer-core, runtime-adversarial, product-surface]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Emit bounded internal destructive-closeout evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          test "$(git merge-base "$ALPHA4_SHA" HEAD)" = "$ALPHA4_SHA"
+          test "$(git rev-parse "$ALPHA4_TAG^{commit}")" = "$ALPHA4_SHA"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SHA"
+          mkdir -p evidence
+          {
+            echo 'decision=POST_ALPHA4_CANDIDATE_A8_A6_INTEGRATED_DESTRUCTIVE_PASS_BOUNDED_INTERNAL'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "alpha4_sha=${ALPHA4_SHA}"
+            echo 'a1_semantics_reproved=true'
+            echo 'a2_authority_reproved=true'
+            echo 'a3_variance_reproved=true'
+            echo 'a4_attestation_reproved=true'
+            echo 'a5_product_surface_reproved=true'
+            echo 'm11_m12_ptrace_ubuntu_22_04=true'
+            echo 'm11_m12_ptrace_ubuntu_24_04=true'
+            echo 'negative_evidence_retained=true'
+            echo 'arm64_support=false'
+            echo 'p8_closure=false'
+            echo 'public_release_authorized=false'
+            echo 'main_merge_authorized=false'
+            echo 'stable_tag_movement_authorized=false'
+          } | tee evidence/a8-a6-integrated-destructive.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: a8-a6-integrated-destructive-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/a8-a6-integrated-destructive.txt
+          if-no-files-found: error
+          retention-days: 90
