@@ -1,63 +1,59 @@
 # ExecSurface — Current Status
 
-Date: 2026-09-28
+Date: 2026-10-01
 
-This file states the **current public product state**. Historical milestone documents and earlier roadmap entries remain evidence records and may name the release that was current when they closed.
+This file states the current public product state. Historical milestone, prerelease and engagement documents are evidence records and may describe the release that was current when they closed.
 
 ## Current public product state
 
-- Current live `main`: resolve from the GitHub branch head at read time; documentation/evaluation commits may advance it independently of the immutable release source
-- Current public release: `v0.1.0-alpha.5`
-- Immutable alpha.4 release source: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
-- Stable GitHub Action channel `AETHERXGLOBAL/execsurface@v0.1`: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
+- Public release: `v0.1.0-alpha.5`
+- Release source commit: `9e73b925d55557e33de1b0813995609aaefdc037`
+- Frozen product source used for Alpha.5 qualification: `5067200452c174da6bc8d9d7ecf6957ee379f0a2`
+- Stable GitHub Action: `AETHERXGLOBAL/execsurface@v0.1`
+- Stable `v0.1` resolves to the Alpha.5 release source commit above.
+- Immutable Action pin: `AETHERXGLOBAL/execsurface@v0.1.0-alpha.5`
+- Registry package: `execsurface = 0.1.0-alpha.5`
 - Public support scope: Linux x86_64
 - Public default/reference observer: native `ptrace`
-- Evidence/baseline contract: baseline v2 remains compatible; legacy schemas are not silently reinterpreted
-- Verdicts / exit codes: PASS `0`, ERROR `2`, REVIEW `10`, BLOCK `20`
+- Verdict / exit-code contract: PASS `0`, ERROR `2`, REVIEW `10`, BLOCK `20`
 
-The commits after the immutable alpha.4 source are currently documentation/evaluation/community-engagement changes. They do not silently move the stable Action channel or change alpha.4 runtime semantics.
+`main` may advance with documentation, evaluation or maintenance commits after the immutable release source. Consumers that require immutable review should pin `v0.1.0-alpha.5`.
 
-## Current architecture boundary
+## Distribution state
 
-ExecSurface is an observer-backed runtime evidence system with canonicalization, accepted baseline, deterministic diff and explicit drift policy evaluation.
+Alpha.5 completed the release and post-publication chain: deterministic dual build and compatibility checks; checksum and provenance generation; GitHub prerelease publication; public-artifact byte/source equivalence; clean binary consumption on Ubuntu 22.04 and Ubuntu 24.04; immutable-tag installation and Action verdict checks; stable `v0.1` promotion only after public proofs; stable-channel public Action checks; registry publication; and zero-contact registry install/smoke.
 
-It is not antivirus, EDR, malware detection, a sandbox, a general mandatory-access-control system or proof that software is safe.
+Canonical public-release workflow run: `36910725515`.
 
-Incomplete evidence cannot silently become PASS.
+## Product boundary
 
-## Alpha.4 hardening
+ExecSurface is a **runtime behavioral-integrity and verification layer for observed execution-surface drift**.
 
-Alpha.4 changes the known clone/shared-FD false-completeness class to explicit incomplete / non-PASS-eligible evidence.
+It is not antivirus, EDR, SIEM, malware detection, a sandbox, a general mandatory-access-control system or proof that software is safe.
 
-This is conservative hardening, not an exact shared-FD attribution repair. Some clone/thread concurrency may therefore be marked incomplete even when exact fd-table sharing is not proven.
+- Observed behavior is not all possible behavior.
+- Incomplete or ambiguous evidence cannot silently become PASS.
+- A baseline is not policy.
+- Backend identity alone does not create semantic authority.
+- Native ptrace remains the bounded public reference observer.
+- ARM64 support is not claimed.
+- BPF-LSM/kernel-hook work remains research/managed and non-default unless a later evidence gate explicitly changes that boundary.
 
-Ptrace pathname observations are represented as pathname access-attempt metadata, not kernel-object identity.
+## External validation state
 
-## Kernel-hook / hybrid research
+P8 independent external validation was **not closed before publication**. The owner explicitly waived P8 only as a pre-publication gate and authorized publication with post-release validation continuing.
 
-The ptrace-vs-LSM architecture review concluded `HYBRID_ARCHITECTURE_RECOMMENDED` for stronger authority-sensitive propositions.
+Current bounded state:
 
-BPF-LSM/kernel-hook work remains managed/research-only and non-default. Alpha.4 does not authorize automatic hybrid selection, new portable-path privilege requirements, public hybrid `learn/check`, or ptrace↔hybrid baseline interchangeability.
+`ALPHA5_PUBLICLY_RELEASED — P8_POST_RELEASE_EXTERNAL_VALIDATION_OPEN`
 
-## Distribution
+This does not claim independent validation, endorsement, adoption or approval by external reviewers or organizations.
 
-Current public distribution surfaces:
+Public review hub: issue `#118`.
+Evidence qualification/tracking: issue `#114`.
 
-1. checksum-verifiable GitHub Release binary for `v0.1.0-alpha.5`;
-2. crates.io package installation for Rust users;
-3. GitHub Action stable channel `AETHERXGLOBAL/execsurface@v0.1`;
-4. immutable Action pin `AETHERXGLOBAL/execsurface@v0.1.0-alpha.5`.
+## Historical evidence handling
 
-## Historical-roadmap note
+Historical failures, prerelease decisions, closed-gate workflows and negative evidence are retained. Operationally obsolete files may be moved out of active paths into `docs/archive/` or `.github/workflow-archive/`; that is repository hygiene, not evidence deletion or history rewriting.
 
-`ROADMAP.md` is cumulative milestone history. Statements inside earlier closed milestones such as M9.3 that called alpha.3 the current release describe the state **at that milestone's closure** and are not current product status.
-
-For current public facts, use this file, the README, the latest GitHub Release and `docs/releases/v0.1.0-alpha.5.md`.
-
-## OpenSSF engagement
-
-OpenSSF technical engagement is tracked in issue #94.
-
-The public OpenSSF review pack and zero-assistance rehearsal evidence were merged through PR #95. The primary community path is the OpenSSF ORBIT Working Group; Supply Chain Integrity is secondary only for a concrete provenance/attestation integration question.
-
-The OpenSSF/Linux Foundation email reply has been sent. A direct external GitHub issue attempt against `ossf/wg-orbit` was blocked by the connected GitHub integration's external-write permission (`403 Resource not accessible by integration`); that is a tooling limitation, not an ORBIT response or rejection.
+For current public facts, use this file, `README.md`, the latest GitHub Release and `docs/releases/v0.1.0-alpha.5.md`.
