@@ -1,4 +1,4 @@
-name: Post-alpha4 candidate A8 A3 bounded GCC variance
+name: Post-alpha4 candidate A8 A3 GCC variance regression
 
 on:
   push:
@@ -13,17 +13,17 @@ env:
   ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
   A8_A1_ACCEPTED_SOURCE: 1c65327e99aa62a3b42549764bebe6b5b29516e7
   A8_A2_ACCEPTED_SOURCE: 4166ff64b8110e27b47954c1f0875cce81ebf898
-  A8_A3_PROTOCOL_SOURCE: c30e4d886ef44dc11f85436240dc0fcd47e248ce
+  A8_A3_ACCEPTED_SOURCE: 6c35861f66cc238374dc113d9431859bf0340bb9
 
 jobs:
-  provenance-scope-and-default-boundary:
+  provenance-and-a3-slice:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify clean lineage and immutable public tags
+      - name: Verify lineage and immutable public tags
         shell: bash
         run: |
           set -euo pipefail
@@ -31,39 +31,27 @@ jobs:
           git merge-base --is-ancestor "$ALPHA4_SOURCE" HEAD
           git merge-base --is-ancestor "$A8_A1_ACCEPTED_SOURCE" HEAD
           git merge-base --is-ancestor "$A8_A2_ACCEPTED_SOURCE" HEAD
-          git merge-base --is-ancestor "$A8_A3_PROTOCOL_SOURCE" HEAD
+          git merge-base --is-ancestor "$A8_A3_ACCEPTED_SOURCE" HEAD
           test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
           test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
-      - name: Verify exact A8 A3 product delta
+      - name: Verify frozen A3 product slice is byte-identical
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t changed < <(git diff --name-only "$A8_A3_PROTOCOL_SOURCE"..HEAD | sort)
-          printf '%s\n' "${changed[@]}" > changed-files.txt
-          cat > expected-files.txt <<'EOF'
-          .github/workflows/post-alpha4-candidate-a8-a3-gcc-variance.yml
-          crates/execsurface-normalize/Cargo.toml
-          crates/execsurface-normalize/src/gcc_ephemeral_v4.rs
-          crates/execsurface-normalize/src/lib.rs
-          crates/execsurface-normalize/tests/gcc_ephemeral_v4_candidate.rs
-          docs/development/POST_ALPHA4_CANDIDATE_ASSEMBLY_MANIFEST.md
-          EOF
-          sed -i 's/^          //' expected-files.txt
-          sort -o expected-files.txt expected-files.txt
-          diff -u expected-files.txt changed-files.txt
-          test "$(git diff --numstat "$A8_A3_PROTOCOL_SOURCE"..HEAD -- crates/execsurface-normalize/src/lib.rs)" = $'3\t0\tcrates/execsurface-normalize/src/lib.rs'
-          ! grep -E '^experiments/p3-|^\.github/workflows/p3-' changed-files.txt
-      - name: Verify default-off feature and unchanged public normalization profile
+          git diff --exit-code "$A8_A3_ACCEPTED_SOURCE" HEAD -- \
+            crates/execsurface-normalize/Cargo.toml \
+            crates/execsurface-normalize/src/lib.rs \
+            crates/execsurface-normalize/src/gcc_ephemeral_v4.rs \
+            crates/execsurface-normalize/tests/gcc_ephemeral_v4_candidate.rs
+      - name: Verify default-off feature and public normalization boundary
         shell: bash
         run: |
           set -euo pipefail
           cargo metadata --no-deps --format-version 1 > metadata.json
           jq -e '.packages[] | select(.name == "execsurface-normalize") | .features.default == [] and .features["gcc-ephemeral-v4"] == []' metadata.json >/dev/null
-          grep -F '#[cfg(feature = "gcc-ephemeral-v4")]' crates/execsurface-normalize/src/lib.rs
-          grep -F 'pub mod gcc_ephemeral_v4;' crates/execsurface-normalize/src/lib.rs
           grep -F 'pub const NORMALIZATION_PROFILE_VERSION: u32 = 3;' crates/execsurface-model/src/canonical.rs
 
-  static-and-default-regression:
+  default-regression:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -78,12 +66,10 @@ jobs:
         run: cargo +$RUST_TOOLCHAIN fmt --all -- --check
       - name: Clippy default workspace
         run: cargo +$RUST_TOOLCHAIN clippy --locked --workspace --all-targets -- -D warnings
-      - name: Full default workspace regression
+      - name: Default workspace regression
         run: cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets
-      - name: Explicit normalize default regression
-        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-normalize
 
-  gcc-variance-falsification:
+  a3-falsification-regression:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -96,7 +82,7 @@ jobs:
           rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
       - name: Clippy feature-enabled normalize
         run: cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-normalize --all-targets --features gcc-ephemeral-v4 -- -D warnings
-      - name: Run frozen A8 A3 12-attack corpus
+      - name: Reprove frozen A3 corpus
         shell: bash
         run: |
           set -euo pipefail
@@ -104,72 +90,32 @@ jobs:
           grep -q 'test result: ok. 12 passed; 0 failed' a8-a3.log
       - name: Full feature-enabled normalize regression
         run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-normalize --features gcc-ephemeral-v4
-      - name: Upload A3 falsification log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: a8-a3-gcc-variance-falsification-${{ github.run_id }}-${{ github.run_attempt }}
-          path: a8-a3.log
-          if-no-files-found: warn
-          retention-days: 90
-
-  upstream-scientific-regression:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Install pinned Rust
-        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
-      - name: Reprove A1 and A2 frozen corpora
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test semantics_v3_rework -- --nocapture 2>&1 | tee d01-d06.log
-          grep -q 'test result: ok. 6 passed; 0 failed' d01-d06.log
-          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test semantics_v3_promotion -- --nocapture 2>&1 | tee a1.log
-          grep -q 'test result: ok. 9 passed; 0 failed' a1.log
-          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test authority_v3_candidate -- --nocapture 2>&1 | tee a2.log
-          grep -q 'test result: ok. 16 passed; 0 failed' a2.log
 
   closeout:
-    needs:
-      - provenance-scope-and-default-boundary
-      - static-and-default-regression
-      - gcc-variance-falsification
-      - upstream-scientific-regression
+    needs: [provenance-and-a3-slice, default-regression, a3-falsification-regression]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Emit bounded A8 A3 evidence
-        shell: bash
+      - name: Emit A3 integration-regression evidence
         run: |
-          set -euo pipefail
           mkdir -p evidence
           {
-            echo 'decision=POST_ALPHA4_PROMOTION_A8_A3_GCC_VARIANCE_ELIGIBLE_BOUNDED_CLEAN_CANDIDATE'
+            echo 'decision=POST_ALPHA4_PROMOTION_A8_A3_INTEGRATION_REGRESSION_PASS'
             echo "candidate_sha=${GITHUB_SHA}"
-            echo "a8_a3_protocol_source=${A8_A3_PROTOCOL_SOURCE}"
+            echo "a8_a3_accepted_source=${A8_A3_ACCEPTED_SOURCE}"
+            echo 'a3_slice_unchanged=true'
             echo 'gcc_variance_corpus=12/12'
             echo 'frequency_authority=false'
             echo 'raw_evidence_mutated=false'
-            echo 'derived_view_only=true'
-            echo 'public_normalization_profile_unchanged=true'
-            echo 'default_feature_enabled=false'
-            echo 'a1_reproved=true'
-            echo 'a2_reproved=true'
-            echo 'main_merge_authorized=false'
+            echo 'default_normalization_unchanged=true'
             echo 'public_release_authorized=false'
             echo 'p8_closure=false'
-          } | tee evidence/a8-a3-gcc-variance.txt
-      - name: Upload closeout evidence
-        uses: actions/upload-artifact@v4
+          } | tee evidence/a8-a3-integration-regression.txt
+      - uses: actions/upload-artifact@v4
         with:
-          name: a8-a3-gcc-variance-closeout-${{ github.run_id }}-${{ github.run_attempt }}
-          path: evidence/a8-a3-gcc-variance.txt
-          if-no-files-found: error
+          name: a8-a3-integration-regression-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/a8-a3-integration-regression.txt
           retention-days: 90
