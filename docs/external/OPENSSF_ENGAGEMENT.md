@@ -1,9 +1,11 @@
 # OpenSSF / Linux Foundation Technical Community Engagement
 
 Tracking: #94
-Status: `PRE-SUBMISSION — DOCUMENTATION_REPAIR / SELF-SERVICE REHEARSAL`
-Current public release: `v0.1.0-alpha.4`
-Current public source: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
+Status: `POST-RELEASE TECHNICAL ENGAGEMENT — EXTERNAL EVIDENCE OPEN`
+Current public release: `v0.1.0-alpha.5`
+Release source: `9e73b925d55557e33de1b0813995609aaefdc037`
+Stable Action: `AETHERXGLOBAL/execsurface@v0.1`
+Current baseline: `docs/external/OPENSSF_CURRENT_STATE_BASELINE.md`
 
 ## Relationship classification
 
@@ -11,117 +13,110 @@ Treat OpenSSF as:
 
 `EXTERNAL TECHNICAL COMMUNITY / OPEN-SOURCE SECURITY ECOSYSTEM`
 
-Do not describe OpenSSF / Linux Foundation as customer, validator, partner, approver or endorser unless a later explicit agreement supports that wording.
+Do not describe OpenSSF / Linux Foundation as customer, validator, partner, approver, or endorser unless a later explicit agreement supports that wording.
 
 ## Outreach history
 
-AETHER X previously asked OpenSSF for an independent technical evaluation of ExecSurface. The historical request referenced `v0.1.0-alpha.3` and explicitly asked for independent installation/reproduction, including negative and friction evidence rather than endorsement.
+AETHER X previously asked OpenSSF for independent technical evaluation of ExecSurface. The historical request referenced an earlier alpha and explicitly asked for independent installation/reproduction, including negative and friction evidence rather than endorsement.
 
 OpenSSF / Linux Foundation responded that OpenSSF projects are community-driven, recommended participating directly in OpenSSF Working Groups for technical insight, invited AETHER X to join the community, and noted that membership can be discussed separately.
 
-The alpha.3 reference is historical only. All new engagement is governed by `OPENSSF_CURRENT_STATE_BASELINE.md` and alpha.4.
+That routing is historical context only. All new technical engagement is governed by the current Alpha.5 baseline and the post-release P8 evidence program.
 
-## Engagement objective
+## Current engagement objective
 
-The goal is not a broad "please review our project" request.
+The objective is not a broad endorsement request.
 
-The goal is to put a bounded runtime-evidence model in front of engineers who can falsify it, compare it to existing ecosystem mechanisms, and identify whether it should interoperate with existing OpenSSF standards/tools rather than compete with them.
+The objective is to put ExecSurface's bounded runtime-evidence model in front of engineers who can falsify it, compare it with existing ecosystem mechanisms, identify interoperability opportunities, or conclude that part of the model is redundant/no-fit.
 
-Success requires at least one substantive result: independent reproduction, meaningful criticism, architecture improvement, standards/interoperability opportunity, documented no-fit, maintainer discussion, external contribution, or credible adoption path.
+Useful outcomes include:
 
-## Current OpenSSF Working Group matrix
+- zero-assistance reproduction or reproduction failure;
+- architecture criticism or counterexample;
+- standards/interoperability guidance;
+- external real-workload evidence;
+- implementation defect or usability friction;
+- explicit no-fit/redundancy conclusion;
+- a concrete contribution or integration path.
 
-Current OpenSSF working groups were reviewed against the current public product and research boundary.
+Praise, routing, membership, or participation alone does not qualify as validation.
 
-| Working Group / SIG | Relevance | Why | What ExecSurface can contribute | What we want reviewed |
-|---|---|---|---|---|
-| **ORBIT — Open Resources for Baselines, Interoperability and Tooling** | **HIGH / PRIMARY** | ORBIT explicitly focuses on interoperable resources for identification/presentation of security-relevant data, baselines, testing, integration and tooling. ExecSurface is primarily an evidence generator with an accepted runtime baseline/diff model. | Concrete runtime evidence schema/use case; a test case for interoperability between runtime evidence and security metadata/tooling; failure-first external evaluation methodology. | Whether runtime execution-surface evidence belongs in/interoperates with ORBIT resources; schema clarity; evidence provenance; baseline semantics; integration with Security Insights, Gemara/Minder/assessment tooling. |
-| **Supply Chain Integrity WG** | **HIGH / SECONDARY** | Focuses on end-to-end software supply-chain integrity and projects such as SLSA, GUAC and gittuf. ExecSurface is post-build/runtime evidence that may complement build provenance rather than replace it. | Runtime evidence as a possible downstream signal attached to an artifact/workflow; concrete examples of where provenance alone does not describe observed runtime effects. | Whether runtime evidence should be linked to SLSA/in-toto/GUAC-like metadata; whether this is useful or redundant; artifact/command identity and trust semantics. |
-| Security Baseline SIG (under ORBIT) | MEDIUM | OSPS Baseline defines project security controls. ExecSurface could eventually provide automation evidence for selected controls, but the current product is not itself a project-security compliance framework. | Potential machine evidence for future controls/assessment automation if a concrete mapping exists. | Whether any current OSPS control can legitimately consume runtime-drift evidence; avoid inventing a compliance mapping. |
-| Securing Software Repositories WG | LOW-MEDIUM | Focuses on package repositories/registries and tools that rely on them. ExecSurface can monitor commands that consume packages but is not registry infrastructure. | Consumer-side runtime drift case studies against package/dependency workflows. | Whether package/repository ecosystems have a concrete use case for post-install runtime evidence. |
-| AI/ML Security WG | LOW-MEDIUM / FUTURE | ExecSurface can monitor AI-assisted developer/agent workflows, but the current OpenSSF request is broader software integrity, not an AI security claim. | Bounded runtime evidence for agent/tool execution experiments. | Only if a concrete AI-agent workflow need emerges; do not lead with this path now. |
-| Best Practices for Open Source Developers | LOW-MEDIUM | Could help with developer guidance if runtime evidence proves practical, but it is not the best architecture-review venue. | Reproducible self-evaluation workflow and lessons from fail-closed evidence. | Developer usability after technical fit is established elsewhere. |
-
-Official current references:
-
-- OpenSSF Working Groups: https://openssf.org/community/openssf-working-groups/
-- ORBIT: https://github.com/ossf/wg-orbit
-- Supply Chain Integrity: https://openssf.org/groups/supply-chain-integrity/
-- OpenSSF TAC initiative inventory: https://github.com/ossf/tac
-
-## Selected path
+## Current OpenSSF path
 
 `PRIMARY_OPENSSF_PATH = ORBIT Working Group`
 
-Reason: the strongest current fit is not generic runtime security detection; it is **interoperable security-relevant evidence and baseline semantics**. ORBIT's scope gives the best chance of receiving useful criticism on whether ExecSurface's evidence model can integrate with existing OpenSSF data/tooling rather than becoming an isolated product-specific format.
+Reason: ExecSurface's strongest ecosystem fit is interoperable security-relevant evidence, baseline semantics, provenance, and tooling rather than generic runtime threat detection.
 
 `SECONDARY_OPENSSF_PATH = Supply Chain Integrity Working Group`
 
-Reason: use only after the ORBIT discussion has clarified the evidence model, or when a concrete question exists about attaching runtime evidence to artifact provenance / SLSA / GUAC-like supply-chain data.
+Use this path when there is a concrete question about linking runtime evidence to artifact provenance, in-toto/SLSA/Sigstore, GUAC-like data, or downstream supply-chain integrity.
 
-Do not split initial participation across several WGs.
+Do not split initial technical engagement across many groups without a specific question.
 
-## Why not lead with a "Security Tooling" group
+## Questions for ORBIT
 
-The current OpenSSF WG inventory does not expose a standalone Working Group named simply "Security Tooling". Tooling/interoperability work is currently represented most directly by ORBIT and its technical initiatives. Do not invent a group name from historical correspondence or informal descriptions.
+1. Is a command-scoped runtime execution-surface baseline/drift model useful as reusable security evidence, or too product-specific/noisy?
+2. Is the evidence model sufficiently explicit about observer capability, completeness, and authority?
+3. Should runtime evidence be represented as a standalone artifact, mapped into an existing security-data model, or remain product-local?
+4. Does the proposition/authority distinction adequately prevent syscall/path metadata from being treated as kernel-object proof?
+5. Which negative/incomplete states need standard representation for interoperability?
+6. Are existing ORBIT projects already solving the useful part of this problem?
+7. Is there a credible contribution path, or should ExecSurface only consume existing standards?
 
-## Technical questions to take to ORBIT
-
-1. Is a command-scoped runtime execution-surface baseline/drift model useful as security-relevant evidence, or is it too product-specific/noisy to be interoperable?
-2. Is the baseline/evidence model sufficiently explicit about observer capability, completeness and authority?
-3. Should runtime evidence be represented as a standalone artifact, a Security Insights/Gemara-compatible input, or not integrated at all?
-4. Does the current proposition/authority distinction adequately separate ptrace argument metadata from kernel-object evidence?
-5. What data model would make runtime evidence reusable without falsely turning observed behavior into a safety assertion?
-6. Are there existing ORBIT projects/tools that already solve the useful part of this problem?
-7. Which negative/incomplete states need to be standardized for interoperability?
-8. Is there a credible contribution path, or should ExecSurface remain independent and only consume existing standards?
-
-## Secondary questions for Supply Chain Integrity
-
-If/when brought to SCI:
+## Questions for Supply Chain Integrity
 
 1. Can command-scoped runtime evidence complement SLSA/in-toto provenance after an artifact is built or consumed?
-2. Is there a meaningful GUAC relationship for attaching observed runtime facts to artifact/source/workflow identities?
-3. Would that add useful integrity context or merely duplicate runtime-security telemetry?
-4. What minimum identity/provenance binding would be required before such evidence is trustworthy enough to ingest?
+2. What minimum source/artifact/workflow binding is required before runtime evidence is useful downstream?
+3. Can the current ExecSurface verification-result attestation compose cleanly with existing predicates without inventing a competing format?
+4. Would this add integrity context or simply duplicate existing runtime telemetry?
+
+## Public review target
+
+External reviewers should evaluate the published Alpha.5 release, not an obsolete candidate:
+
+- release: `v0.1.0-alpha.5`
+- immutable Action: `AETHERXGLOBAL/execsurface@v0.1.0-alpha.5`
+- stable Action: `AETHERXGLOBAL/execsurface@v0.1`
+- registry package: `execsurface = 0.1.0-alpha.5`
+- platform scope: Linux x86_64
+- public reference observer: native `ptrace`
+- public review hub: issue #118
+- P8 evidence tracking: issue #114
+
+Alpha.5 publication was owner-authorized with P8 waived only as a pre-publication condition. This is not a statement that P8 passed. Independent external validation remains open post-release.
 
 ## Community-entry rule
 
-Participation must be contribution-first and non-promotional:
+Participation must remain contribution-first and non-promotional:
 
 - introduce the technical problem and bounded experiment, not the company story;
 - ask a small number of falsifiable questions;
-- provide a public, self-service reproduction pack;
+- provide the public self-service reproduction path;
 - explicitly welcome negative/no-fit conclusions;
 - do not ask for endorsement;
-- do not call a WG discussion "validation";
-- do not provide private implementation assistance before an evaluator has attempted the public path.
+- do not call a working-group discussion "validation";
+- preserve the first independent result before any assisted follow-up.
 
 ## Membership status
 
-`MEMBERSHIP_OPTION_AVAILABLE — NOT YET EVALUATED FOR COMMITMENT`
+`MEMBERSHIP_OPTION_AVAILABLE — NOT REQUIRED FOR TECHNICAL ENGAGEMENT`
 
-OpenSSF community and Working Group participation is open to non-members, so membership is not required for the technical objective.
-
-Current public fee information shows paid Premier and General tiers, with General pricing dependent on employee count, and free Associate eligibility limited to qualifying nonprofit/academic/government/open-source-foundation organizations. No financial or legal commitment is authorized here.
-
-Membership will be evaluated only after free technical participation demonstrates a concrete benefit that cannot be obtained through normal community participation.
-
-## Communication state
-
-Do not send the historical alpha.3 request again.
-
-External reply/send gate requires:
-
-- alpha.4 evaluation docs repaired;
-- `docs/OPENSSF_TECHNICAL_REVIEW.md` complete;
-- zero-assistance public-artifact rehearsal PASS or a documented blocker;
-- claims-boundary review complete.
+OpenSSF community and Working Group participation can proceed independently of a paid membership decision. No financial or legal commitment is implied by technical participation.
 
 ## Feedback processing
 
-Every external criticism is recorded in `docs/external/OPENSSF_FEEDBACK_LEDGER.md` and processed as:
+Every substantive external criticism is recorded in `docs/external/OPENSSF_FEEDBACK_LEDGER.md` and processed as:
 
-`CLAIM -> CRITICISM -> TEST -> EVIDENCE -> DECISION`
+`CLAIM -> CRITICISM/RESULT -> QUALIFICATION -> TEST/REPRODUCTION -> EVIDENCE -> DECISION`
 
-No defensive-response shortcut.
+Do not defend the implementation by default. Reproduce, falsify, or bound the criticism.
+
+## Claim boundary
+
+OpenSSF/community participation, routing guidance, acknowledgement, working-group activity, or positive discussion must not be represented as:
+
+- OpenSSF validation;
+- Linux Foundation endorsement;
+- production-readiness certification;
+- proof of software safety;
+- independent adoption without qualifying evidence.

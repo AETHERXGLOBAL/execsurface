@@ -4,19 +4,23 @@ This directory separates **current public guidance** from **engineering evidence
 
 ## Current public product
 
-- [Current Status](STATUS.md) — authoritative public release, support and validation state.
+- [Current Status](STATUS.md) — authoritative public support, distribution and validation state.
 - [Five-Minute Start](QUICKSTART_5_MIN.md) — shortest controlled PASS → REVIEW walkthrough.
 - [Self-Service Start](SELF_SERVICE_START.md) — installation and first-use path for independent users.
 - [GitHub Action](GITHUB_ACTION.md) — CI integration and stable Action usage.
 - [Troubleshooting](TROUBLESHOOTING.md) — environment, ptrace and evidence-health diagnostics.
 - [Examples](EXAMPLES.md) — command-line usage examples.
 
-## Evaluation and evidence
+## Evaluation and external evidence
 
 - [Independent Evaluation](INDEPENDENT_EVALUATION.md) — how an external evaluator can reproduce, challenge or falsify the public release.
 - [Technical Evaluation](TECHNICAL_EVALUATION.md) — repeatable technical evaluation pack.
 - [Team & Evidence Governance](TEAM_AND_EVIDENCE_GOVERNANCE.md) — evidence discipline, role separation and anti-drift rules.
-- [`external/`](external/) — external engagement and evidence records. A contact, referral or invitation is not validation by itself.
+- [`external/`](external/) — external engagement protocols, baselines and evidence ledgers.
+- GitHub issue `#118` — public Alpha.5 post-release review hub.
+- GitHub issue `#114` — P8 evidence qualification and tracking.
+
+Negative, partial, unsupported, reproduction-failure and no-fit findings are retained as first-class evidence. A contact, referral, invitation, internal test or self-evaluation PASS is not independent validation by itself.
 
 ## Architecture and engineering
 
@@ -34,16 +38,18 @@ This directory separates **current public guidance** from **engineering evidence
 
 - [`archive/`](archive/) — superseded state documents and retained historical material.
 
-Historical failures, negative evidence and closed gates are intentionally preserved. Moving a record into an archive changes its operational location, not its evidentiary meaning.
+Historical failures, negative evidence and closed gates are intentionally preserved. Moving a record into an archive changes its operational location, not its evidentiary meaning and never converts a failure into a pass.
 
 ## Source-of-truth order
 
-When documents from different dates appear to conflict, use this order for **current public facts**:
+When documents from different dates appear to conflict, use this order for current public facts:
 
-1. `docs/STATUS.md`
-2. the latest published GitHub Release and immutable version tag
-3. `README.md`
-4. the release-specific document under `docs/releases/`
-5. historical milestone/archive records for chronology and evidence only
+1. immutable published release/tag metadata for release identity and artifacts;
+2. `docs/STATUS.md` for current support, distribution and validation state;
+3. root `README.md` for the current user-facing path;
+4. the latest release-specific document under `docs/releases/`;
+5. dated milestone/development/archive records for chronology and historical evidence only.
 
-ExecSurface Alpha.5 remains bounded to Linux x86_64 and does not claim independent external validation unless qualified external evidence is explicitly recorded.
+ExecSurface Alpha.5 remains bounded to Linux x86_64. ARM64 is not claimed. Native ptrace remains the bounded public reference observer. Independent external validation is not claimed unless qualified external evidence is explicitly recorded.
+
+Security-sensitive findings must follow [`SECURITY.md`](../SECURITY.md) rather than public evidence channels.
