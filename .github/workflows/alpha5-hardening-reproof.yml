@@ -1,0 +1,254 @@
+name: Alpha5 hardening reproof A1-A4
+
+on:
+  push:
+    branches:
+      - release/v0.1.0-alpha.5-hardening
+    paths:
+      - '.github/workflows/alpha5-hardening-reproof.yml'
+      - 'crates/**'
+      - 'experiments/**'
+      - 'docs/release/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: alpha5-hardening-reproof-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  A1_REQUALIFIED_FLOOR: 3522cc87b5b23a42e8009e779549e5dcca95da5b
+  A2_FLOOR: d02151e8f2d1f6b0a6558d52da6f48e74763e0a5
+  A3_P5_FLOOR: 3cfa9cd1e47a23e44a6024b61416b2b76942cfe9
+  A4_P3_FLOOR: 3bb0749f08046cbe26de0d9117defc6c93466fa8
+  P5_A5_NEGATIVE_SOURCE: a7753bee6cc9f145adc7823dd82837fa40cfca01
+  P5_A5_NEGATIVE_RUN: '36755962689'
+
+jobs:
+  identity-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify clean-candidate ancestry and immutable public anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'release/v0.1.0-alpha.5-hardening'
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$ALPHA4_SOURCE" HEAD
+          git merge-base --is-ancestor "$A1_REQUALIFIED_FLOOR" HEAD
+          git merge-base --is-ancestor "$A2_FLOOR" HEAD
+          git merge-base --is-ancestor "$A3_P5_FLOOR" HEAD
+          git merge-base --is-ancestor "$A4_P3_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+      - name: Verify frozen v2 and explicit v3 domains
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/lib.rs
+          grep -F 'pub const CANONICAL_SURFACE_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/canonical.rs
+          grep -F 'pub const LOCK_SCHEMA_VERSION: u32 = 2;' crates/execsurface-baseline/src/lib.rs
+          grep -F 'pub const DIGEST_FORMAT_VERSION: u32 = 2;' crates/execsurface-baseline/src/lib.rs
+          grep -F 'pub const DIFF_SCHEMA_VERSION: u32 = 2;' crates/execsurface-diff/src/lib.rs
+          grep -F 'pub const POLICY_SCHEMA_VERSION: u32 = 2;' crates/execsurface-policy/src/lib.rs
+          grep -F 'pub const VERDICT_SCHEMA_VERSION: u32 = 2;' crates/execsurface-policy/src/lib.rs
+          grep -F 'pub const SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION: u32 = 3;' crates/execsurface-model/src/semantics_v3.rs
+
+  a1-semantics-v3:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Static gates
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-model --all-targets -- -D warnings
+      - name: Replay repaired destructive semantics corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture 2>&1 | tee a1-rework.log
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture 2>&1 | tee a1-promotion.log
+      - name: Reprove v2-adjacent model/baseline/diff/policy regression
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model -p execsurface-baseline -p execsurface-diff -p execsurface-policy --all-targets -- --nocapture
+      - name: Upload A1 logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a1-semantics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            a1-rework.log
+            a1-promotion.log
+          if-no-files-found: warn
+
+  a2-proposition-backend-authority:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: P4 static gates
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p4-backend-authority/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --all-targets -- -D warnings
+      - name: Replay promotion sensitivity and cross-proposition attacks
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test promotion_a2_authority_sensitivity -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b_cross_proposition_falsification -- --nocapture
+      - name: Replay bounded proposition contracts and live ptrace authority
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b1_open_object -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b2_rename_delete -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b3_connect_destination -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b1_ptrace_open_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b2_ptrace_rename_delete_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b3_ptrace_connect_live -- --nocapture
+      - name: Replay external Tetragon schema-import falsification
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-external-trace-import/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p4-external-trace-import/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p4-external-trace-import/Cargo.toml --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-external-trace-import/Cargo.toml --test tetragon_import -- --nocapture
+
+  a3-legitimate-variance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Freeze formatter and Clippy boundary
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml
+          target='experiments/p3-gcc-temp-grammar/tests/promotion_a4_variance.rs'
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml
+          git diff --exit-code -- "$target"
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --all-targets -- -D warnings
+      - name: Replay exact 12-test variance corpus and candidate unit corpus
+        run: |
+          set -euo pipefail
+          test "$(grep -c '^fn a4_[0-9][0-9]_' experiments/p3-gcc-temp-grammar/tests/promotion_a4_variance.rs)" -eq 12
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --test promotion_a4_variance -- --nocapture 2>&1 | tee a3-variance.log
+          grep -q 'test result: ok. 12 passed; 0 failed' a3-variance.log
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --lib -- --nocapture
+      - name: Replay poisoning/false-PASS falsifier
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-v4-falsifier/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-v4-falsifier/Cargo.toml --all-targets -- --nocapture 2>&1 | tee a3-poisoning.log
+      - name: Upload A3 logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a3-variance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            a3-variance.log
+            a3-poisoning.log
+          if-no-files-found: warn
+
+  a4-attestation-provenance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Verify retained historical negative run remains negative
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$P5_A5_NEGATIVE_RUN" > negative-run.json
+          jq -e --arg sha "$P5_A5_NEGATIVE_SOURCE" '.status == "completed" and .conclusion == "failure" and .head_sha == $sha' negative-run.json >/dev/null
+      - name: Replay exact 12-attack cross-attestation corpora
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test promotion_a3_attestation_authority -- --nocapture 2>&1 | tee a4-attestation.log
+          grep -q 'test result: ok. 12 passed; 0 failed' a4-attestation.log
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test a5_graph_redteam -- --nocapture 2>&1 | tee a4-cross-redteam.log
+          grep -q 'test result: ok. 12 passed; 0 failed' a4-cross-redteam.log
+      - name: Replay standards-composition binding corpora
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_scai_svr_binding -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_verifier_identity_addendum -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a1_runtime_trace_mapping -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a0_standards_composition -- --nocapture
+      - name: Upload A4 logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a4-attestation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            negative-run.json
+            a4-attestation.log
+            a4-cross-redteam.log
+          if-no-files-found: warn
+
+  closeout:
+    needs: [identity-boundary, a1-semantics-v3, a2-proposition-backend-authority, a3-legitimate-variance, a4-attestation-provenance]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Record A1-A4 reproof evidence only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            echo 'classification=ALPHA5_A1_A4_REPROOF_PASS_INTERNAL_ONLY'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo 'tests_weakened=false'
+            echo 'negative_evidence_retained=true'
+            echo 'public_release_authorized=false'
+            echo 'stable_action_move_authorized=false'
+            echo 'p8_external_validation_closed=false'
+          } | tee evidence/alpha5-a1-a4-reproof.txt
+      - name: Upload closeout evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a1-a4-reproof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/alpha5-a1-a4-reproof.txt
+          if-no-files-found: error
+          retention-days: 90
