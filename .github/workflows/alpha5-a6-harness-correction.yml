@@ -1,0 +1,84 @@
+name: Alpha5 A6 one-shot harness correction
+
+on:
+  push:
+    branches:
+      - release/v0.1.0-alpha.5-hardening
+    paths:
+      - '.github/workflows/alpha5-a6-harness-correction.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  bounded-correction:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Rustfmt only the new Alpha5 metamorphic corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.90.0 --profile minimal
+          rustup component add --toolchain 1.90.0 rustfmt
+          cargo +1.90.0 fmt --all
+          changed="$(git diff --name-only -- crates/execsurface-model/tests/alpha5_metamorphic.rs)"
+          test "$changed" = 'crates/execsurface-model/tests/alpha5_metamorphic.rs'
+      - name: Correct historical-scope replay without changing frozen falsifiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/workflows/alpha5-a6-integrated-destructive.yml')
+          s = p.read_text()
+          old = '''      - name: Replay P6 and P7 falsifier contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/post_alpha4_a5_p6_falsifier.py 2>&1 | tee a6-p6.log
+          python3 scripts/post_alpha4_a6_p7_falsifier.py 2>&1 | tee a6-p7.log
+'''
+          new = '''      - name: Replay frozen P6 and P7 falsifiers at their historical scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          p6_source='08a5a3775ef1618a50296c2b88f16bb93d332754'
+          p7_source='8b1a5c603e808bbf6fa1aa38e6340a35bc2082ec'
+          git cat-file -e "${p6_source}^{commit}"
+          git cat-file -e "${p7_source}^{commit}"
+          test "$(git show -s --format=%s "$p6_source")" = 'Promotion A5: close P6 validation tooling and advance inventory'
+          test "$(git show -s --format=%s "$p7_source")" = 'Promotion A6: record bounded P7 platform-contract decision'
+          git worktree add --detach "$RUNNER_TEMP/p6-history" "$p6_source"
+          git worktree add --detach "$RUNNER_TEMP/p7-history" "$p7_source"
+          (
+            cd "$RUNNER_TEMP/p6-history"
+            python3 scripts/post_alpha4_a5_p6_falsifier.py 2>&1 | tee "$GITHUB_WORKSPACE/a6-p6.log"
+          )
+          (
+            cd "$RUNNER_TEMP/p7-history"
+            python3 scripts/post_alpha4_a6_p7_falsifier.py 2>&1 | tee "$GITHUB_WORKSPACE/a6-p7.log"
+          )
+'''
+          if s.count(old) != 1:
+              raise SystemExit(f'expected one replay block, found {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          git diff --check
+          git diff -- .github/workflows/alpha5-a6-integrated-destructive.yml
+          test -z "$(git diff --name-only -- scripts/post_alpha4_a5_p6_falsifier.py scripts/post_alpha4_a6_p7_falsifier.py scripts/post_alpha4_a7_integrated_falsifier.py)"
+      - name: Commit bounded harness/static correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git diff --name-only)
+          test "${#files[@]}" -eq 2
+          printf '%s\n' "${files[@]}" | grep -Fx '.github/workflows/alpha5-a6-integrated-destructive.yml'
+          printf '%s\n' "${files[@]}" | grep -Fx 'crates/execsurface-model/tests/alpha5_metamorphic.rs'
+          git config user.name 'aetherx-alpha5-hardening'
+          git config user.email 'aetherx-alpha5-hardening@users.noreply.github.com'
+          git add .github/workflows/alpha5-a6-integrated-destructive.yml crates/execsurface-model/tests/alpha5_metamorphic.rs
+          git commit -m 'Alpha5 A6: correct historical replay scope and rustfmt corpus'
+          git push origin HEAD:release/v0.1.0-alpha.5-hardening
