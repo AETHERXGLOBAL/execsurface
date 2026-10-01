@@ -150,8 +150,7 @@ fn cross_subject_provenance_replay_is_rejected() {
 #[test]
 fn provenance_predicate_substitution_is_rejected() {
     let mut value = bindings(true);
-    value.provenance.as_mut().unwrap().predicate_type =
-        "https://example.invalid/predicate".into();
+    value.provenance.as_mut().unwrap().predicate_type = "https://example.invalid/predicate".into();
     assert!(value.validate().is_err());
 }
 
