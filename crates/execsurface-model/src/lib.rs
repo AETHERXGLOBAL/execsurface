@@ -6,6 +6,8 @@
 use serde::{Deserialize, Serialize};
 
 pub mod canonical;
+#[cfg(feature = "semantics-v3")]
+pub mod semantics_v3;
 
 pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;
 
