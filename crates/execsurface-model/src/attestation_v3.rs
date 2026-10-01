@@ -82,7 +82,9 @@ impl VerificationBindings {
             ("verifier", &self.verifier),
         ] {
             if !digest.is_valid() {
-                return Err(format!("{name} digest must be sha256:<64 hexadecimal characters>"));
+                return Err(format!(
+                    "{name} digest must be sha256:<64 hexadecimal characters>"
+                ));
             }
         }
 
@@ -214,7 +216,10 @@ pub fn verify_manifest(
     manifest: &[ManifestItem],
 ) -> Result<(), String> {
     let expected = manifest_for(bindings)?;
-    let roles = manifest.iter().map(|item| item.role).collect::<BTreeSet<_>>();
+    let roles = manifest
+        .iter()
+        .map(|item| item.role)
+        .collect::<BTreeSet<_>>();
     if roles.len() != manifest.len() {
         return Err("duplicate manifest role".to_owned());
     }
