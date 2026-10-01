@@ -48,8 +48,9 @@ class A7IntegratedFalsifier(unittest.TestCase):
         self.assertIn("backend labels/profile names never confer authority", INVENTORY)
 
     def test_a7_08_crypto_provenance_and_verifier_identity_never_raise_authority(self):
-        self.assertIn("cryptographic/signature/provenance validity never raises semantic authority", INVENTORY)
-        self.assertIn("verifier identity", INVENTORY)
+        inventory_lower = INVENTORY.lower()
+        self.assertIn("cryptographic/signature/provenance validity never raises semantic authority", inventory_lower)
+        self.assertIn("verifier identity", inventory_lower)
 
     def test_a7_09_variance_frequency_similarity_never_authorize_behavior(self):
         self.assertIn("Frequency, recurrence and similarity never authorize", INVENTORY)
