@@ -18,6 +18,10 @@ AETHERXGLOBAL/execsurface@v0.1.0-alpha.5
 
 Do not use `@main` as the normal consumer path.
 
+## Copy-ready consumer example
+
+See [the external consumer workflow](../examples/github-action-consumer.yml) for a complete check-only example. Initialize the workflow once, create and review the baseline explicitly, then commit it for the workflow to check. The workflow never creates, changes, or approves a baseline.
+
 ## Minimal workflow
 
 ```yaml
