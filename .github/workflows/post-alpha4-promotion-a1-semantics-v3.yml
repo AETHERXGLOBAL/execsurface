@@ -1,0 +1,118 @@
+name: Post-alpha4 promotion A1 Semantics v3 gate
+
+on:
+  push:
+    branches:
+      - integration/post-alpha4-promotion-candidate
+    paths:
+      - docs/development/POST_ALPHA4_PROMOTION_A1_SEMANTICS_V3_PROTOCOL.md
+      - crates/execsurface-model/tests/semantics_v3_promotion.rs
+      - .github/workflows/post-alpha4-promotion-a1-semantics-v3.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  a1-semantics-v3-eligibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify public anchors and candidate ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          PUBLIC_SHA='48e0b9a0707553349e75e97a9dfa096d13f9ab5d'
+          test "${GITHUB_REF_NAME}" = 'integration/post-alpha4-promotion-candidate'
+          git fetch --force --tags origin
+          test "$(git rev-list -n 1 v0.1.0-alpha.4)" = "${PUBLIC_SHA}"
+          test "$(git rev-list -n 1 v0.1)" = "${PUBLIC_SHA}"
+          git merge-base --is-ancestor "${PUBLIC_SHA}" HEAD
+
+      - name: Verify frozen v2 and explicit v3 version domains
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/lib.rs
+          grep -F 'pub const CANONICAL_SURFACE_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/canonical.rs
+          grep -F 'pub const LOCK_SCHEMA_VERSION: u32 = 2;' crates/execsurface-baseline/src/lib.rs
+          grep -F 'pub const DIGEST_FORMAT_VERSION: u32 = 2;' crates/execsurface-baseline/src/lib.rs
+          grep -F 'pub const DIFF_SCHEMA_VERSION: u32 = 2;' crates/execsurface-diff/src/lib.rs
+          grep -F 'pub const POLICY_SCHEMA_VERSION: u32 = 2;' crates/execsurface-policy/src/lib.rs
+          grep -F 'pub const VERDICT_SCHEMA_VERSION: u32 = 2;' crates/execsurface-policy/src/lib.rs
+          grep -F 'pub const SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION: u32 = 3;' crates/execsurface-model/src/semantics_v3.rs
+
+      - name: Verify preregistered compatibility boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          protocol='docs/development/POST_ALPHA4_PROMOTION_A1_SEMANTICS_V3_PROTOCOL.md'
+          grep -F 'v2 baseline vs v3 candidate` => `INCOMPARABLE_SCHEMA`' "${protocol}"
+          grep -F 'v3 baseline vs v2 candidate` => `INCOMPARABLE_SCHEMA`' "${protocol}"
+          grep -F 'no default PASS-eligible v2 -> v3 projection exists' "${protocol}"
+          grep -F 'Removing/disabling candidate v3 code must leave historical v2 parsing' "${protocol}"
+          grep -F 'A1 tests **eligibility for candidate implementation**, not release readiness.' "${protocol}"
+
+      - name: Verify A1 change scope is research-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          A0_SOURCE='c3c4cdadb34c77c2dba3d554c17d98d562a6e4c4'
+          allowed='^(docs/development/POST_ALPHA4_PROMOTION_A1_SEMANTICS_V3_PROTOCOL\.md|crates/execsurface-model/tests/semantics_v3_promotion\.rs|\.github/workflows/post-alpha4-promotion-a1-semantics-v3\.yml)$'
+          unexpected="$(git diff --name-only "${A0_SOURCE}" HEAD | grep -Ev "${allowed}" || true)"
+          if [ -n "${unexpected}" ]; then
+            echo 'A1 violation: product/public paths changed before eligibility decision:' >&2
+            printf '%s\n' "${unexpected}" >&2
+            exit 1
+          fi
+
+      - name: Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Model Clippy
+        run: cargo clippy --locked -p execsurface-model --all-targets -- -D warnings
+
+      - name: Execute preregistered A1 adversarial tests
+        run: cargo test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+
+      - name: Reprove v2-adjacent model baseline diff and policy tests
+        run: cargo test --locked -p execsurface-model -p execsurface-baseline -p execsurface-diff -p execsurface-policy --all-targets
+
+      - name: Produce A1 evidence report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            echo 'decision_candidate=POST_ALPHA4_PROMOTION_A1_P2_ELIGIBLE_BOUNDED_FOR_CANDIDATE_IMPLEMENTATION'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo 'a0_source=c3c4cdadb34c77c2dba3d554c17d98d562a6e4c4'
+            echo 'public_alpha4_sha=48e0b9a0707553349e75e97a9dfa096d13f9ab5d'
+            echo "alpha4_tag_sha=$(git rev-list -n 1 v0.1.0-alpha.4)"
+            echo "stable_v0_1_tag_sha=$(git rev-list -n 1 v0.1)"
+            echo 'v2_raw_schema=2'
+            echo 'v2_canonical_schema=2'
+            echo 'v2_lock_schema=2'
+            echo 'v2_digest_format=2'
+            echo 'v2_diff_schema=2'
+            echo 'v2_policy_schema=2'
+            echo 'v2_verdict_schema=2'
+            echo 'v3_prototype_schema=3'
+            echo 'cross_schema_default=INCOMPARABLE_SCHEMA'
+            echo 'default_v2_to_v3_pass_projection=false'
+            echo 'public_integration_authorized=false'
+            echo 'p8_external_dependency_unchanged=true'
+          } | tee evidence/post-alpha4-promotion-a1-semantics-v3.txt
+
+      - name: Upload A1 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-promotion-a1-semantics-v3-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/post-alpha4-promotion-a1-semantics-v3.txt
+          if-no-files-found: error
