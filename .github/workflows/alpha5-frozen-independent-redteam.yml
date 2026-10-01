@@ -1,0 +1,204 @@
+name: Alpha5 frozen candidate independent red-team
+
+on:
+  push:
+    branches:
+      - integration/post-alpha4-promotion-candidate
+    paths:
+      - .github/workflows/alpha5-frozen-independent-redteam.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: alpha5-frozen-redteam
+  cancel-in-progress: false
+
+env:
+  FROZEN_SHA: 5067200452c174da6bc8d9d7ecf6957ee379f0a2
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  A6_ACCEPTED_RUN: '36899958419'
+  A6_ACCEPTED_ARTIFACT: '11181645256'
+  A6_ACCEPTED_DIGEST: 'sha256:16f08ae9faa2d15d539fcf32d7fd6848c7199acf9ed522e93a4faf18e2fc04b7'
+  RUST_TOOLCHAIN: 1.90.0
+
+jobs:
+  evidence-binding:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.FROZEN_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prove exact frozen source and A6 evidence binding
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FROZEN_SHA"
+          git fetch --force --tags origin
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          ! git show-ref --verify --quiet refs/tags/v0.1.0-alpha.5
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$A6_ACCEPTED_RUN" > a6-run.json
+          jq -e --arg sha "$FROZEN_SHA" '.status == "completed" and .conclusion == "success" and .head_sha == $sha' a6-run.json >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$A6_ACCEPTED_ARTIFACT" > a6-artifact.json
+          jq -e --arg digest "$A6_ACCEPTED_DIGEST" '.expired == false and .digest == $digest' a6-artifact.json >/dev/null
+
+  semantic-mutator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {ref: '${{ env.FROZEN_SHA }}', persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Proposition ambiguity default-bypass and migration attacks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --all-targets
+      - name: P4 cross-proposition and live object authority attacks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test promotion_a2_authority_sensitivity -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b_cross_proposition_falsification -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b1_ptrace_open_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b2_ptrace_rename_delete_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b3_ptrace_connect_live -- --nocapture
+
+  authority-laundering:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {ref: '${{ env.FROZEN_SHA }}', persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Attestation substitution replay and verifier-identity laundering
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test promotion_a3_attestation_authority -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test a5_graph_redteam -- --nocapture
+      - name: Frequency similarity and variance poisoning
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --test promotion_a4_variance -- --nocapture
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-v4-falsifier/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-v4-falsifier/Cargo.toml --all-targets -- --nocapture
+
+  runtime-race-redteam:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {ref: '${{ env.FROZEN_SHA }}', persist-credentials: false}
+      - name: Compile race fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/path_toctou_target.c -o "$RUNNER_TEMP/frozen-path-toctou"
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/fd_share_race_target.c -o "$RUNNER_TEMP/frozen-fd-share"
+      - name: Repeat adversarial races at increased path count
+        env:
+          M12_PATH_TOCTOU_BIN: ${{ runner.temp }}/frozen-path-toctou
+          M12_FD_SHARE_BIN: ${{ runner.temp }}/frozen-fd-share
+          M12_PATH_RUNS: '500'
+          M12_RESULT_DIR: ${{ runner.temp }}/frozen-redteam-results
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$M12_RESULT_DIR"
+          cargo test --locked -p execsurface-observe --test m12_adversarial -- --test-threads=1 --nocapture
+          cargo test --locked -p execsurface-observe --test ptrace_linux -- --nocapture
+          cargo test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
+          test -s "$M12_RESULT_DIR/path-toctou.json"
+          test -s "$M12_RESULT_DIR/shared-fd.json"
+      - name: Upload frozen race evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-frozen-redteam-${{ matrix.os }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/frozen-redteam-results
+          if-no-files-found: warn
+          retention-days: 90
+
+  packaging-tamper-redteam:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {ref: '${{ env.FROZEN_SHA }}', persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Package verify install and deterministic release binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN package --locked -p execsurface --allow-dirty
+          cargo +$RUST_TOOLCHAIN install --locked --path crates/execsurface-cli --root "$RUNNER_TEMP/frozen-install"
+          "$RUNNER_TEMP/frozen-install/bin/execsurface" doctor
+          CARGO_TARGET_DIR="$RUNNER_TEMP/a" cargo +$RUST_TOOLCHAIN build --locked --release -p execsurface --bin execsurface
+          CARGO_TARGET_DIR="$RUNNER_TEMP/b" cargo +$RUST_TOOLCHAIN build --locked --release -p execsurface --bin execsurface
+          a="$(sha256sum "$RUNNER_TEMP/a/release/execsurface" | awk '{print $1}')"
+          b="$(sha256sum "$RUNNER_TEMP/b/release/execsurface" | awk '{print $1}')"
+          test "$a" = "$b"
+      - name: Tamper detection sanity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/a/release/execsurface" "$RUNNER_TEMP/tampered"
+          printf 'X' >> "$RUNNER_TEMP/tampered"
+          good="$(sha256sum "$RUNNER_TEMP/a/release/execsurface" | awk '{print $1}')"
+          bad="$(sha256sum "$RUNNER_TEMP/tampered" | awk '{print $1}')"
+          test "$good" != "$bad"
+
+  independent-closeout:
+    needs: [evidence-binding, semantic-mutator, authority-laundering, runtime-race-redteam, packaging-tamper-redteam]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {ref: '${{ env.FROZEN_SHA }}', fetch-depth: 0, persist-credentials: false}
+      - name: Record independent frozen-candidate result
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FROZEN_SHA"
+          mkdir -p evidence
+          {
+            echo 'decision_candidate=ALPHA5_FROZEN_INDEPENDENT_REDTEAM_SURVIVES_BOUNDED_INTERNAL'
+            echo "frozen_sha=${FROZEN_SHA}"
+            echo "a6_run=${A6_ACCEPTED_RUN}"
+            echo "a6_artifact=${A6_ACCEPTED_ARTIFACT}"
+            echo "a6_digest=${A6_ACCEPTED_DIGEST}"
+            echo 'path_toctou_500_replay=true'
+            echo 'shared_fd_replay=true'
+            echo 'authority_laundering_rejected=true'
+            echo 'packaging_tamper_detected=true'
+            echo 'material_gap_found=false'
+            echo 'release_authorized=false'
+            echo 'p8_external_validation_closed=false'
+          } | tee evidence/alpha5-frozen-independent-redteam.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-frozen-independent-redteam-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/alpha5-frozen-independent-redteam.txt
+          if-no-files-found: error
+          retention-days: 90
