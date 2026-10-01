@@ -66,7 +66,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Install pinned Rust
-        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
       - name: Rustfmt
         run: cargo +$RUST_TOOLCHAIN fmt --all -- --check
       - name: Clippy default mode
@@ -89,7 +91,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Install pinned Rust
-        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
       - name: Clippy opt-in Semantics v3
         run: cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-model --all-targets --features semantics-v3 -- -D warnings
       - name: Reprove exact D01-D06 repair corpus
