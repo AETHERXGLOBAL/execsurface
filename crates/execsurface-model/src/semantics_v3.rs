@@ -135,6 +135,13 @@ impl EvidenceGuarantees {
                 .is_subset(&self.temporal_bindings)
             && required.causal_bindings.is_subset(&self.causal_bindings)
     }
+
+    fn is_empty(&self) -> bool {
+        self.observation_points.is_empty()
+            && self.identity_bases.is_empty()
+            && self.temporal_bindings.is_empty()
+            && self.causal_bindings.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -162,8 +169,29 @@ pub enum CompletenessState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ProofRequirement {
+    #[serde(default)]
+    pub expected_proposition: Option<Proposition>,
     pub guarantees: EvidenceGuarantees,
     pub required_complete: BTreeSet<CompletenessDimension>,
+}
+
+impl ProofRequirement {
+    pub fn for_proposition(
+        proposition: Proposition,
+        guarantees: EvidenceGuarantees,
+        required_complete: BTreeSet<CompletenessDimension>,
+    ) -> Self {
+        Self {
+            expected_proposition: Some(proposition),
+            guarantees,
+            required_complete,
+        }
+    }
+
+    fn is_non_vacuous(&self) -> bool {
+        self.expected_proposition.is_some()
+            && (!self.guarantees.is_empty() || !self.required_complete.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,11 +226,40 @@ impl ProofCarryingObservation {
         }
     }
 
+    fn ambiguity_invalidates(&self, requirement: &ProofRequirement) -> bool {
+        for code in &self.ambiguity_codes {
+            match code.as_str() {
+                "object_identity_conflict" => {
+                    if requirement
+                        .required_complete
+                        .contains(&CompletenessDimension::ObjectIdentity)
+                    {
+                        return true;
+                    }
+                }
+                _ => {
+                    // Unknown ambiguity semantics must never silently increase authority.
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     pub fn satisfies(&self, requirement: &ProofRequirement) -> bool {
         if self.schema_version != SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION {
             return false;
         }
+        if !requirement.is_non_vacuous() {
+            return false;
+        }
+        if requirement.expected_proposition.as_ref() != Some(&self.proposition) {
+            return false;
+        }
         if !self.guarantees.entails(&requirement.guarantees) {
+            return false;
+        }
+        if self.ambiguity_invalidates(requirement) {
             return false;
         }
         requirement
@@ -244,6 +301,13 @@ mod tests {
         }
     }
 
+    fn requirement_for(
+        guarantees: EvidenceGuarantees,
+        required_complete: BTreeSet<CompletenessDimension>,
+    ) -> ProofRequirement {
+        ProofRequirement::for_proposition(pathname_attempt(), guarantees, required_complete)
+    }
+
     fn base_record() -> ProofCarryingObservation {
         let mut record = ProofCarryingObservation::new(
             pathname_attempt(),
@@ -267,13 +331,13 @@ mod tests {
     #[test]
     fn weak_path_argument_does_not_entail_kernel_object_grounding() {
         let record = base_record();
-        let requirement = ProofRequirement {
-            guarantees: EvidenceGuarantees {
+        let requirement = requirement_for(
+            EvidenceGuarantees {
                 identity_bases: BTreeSet::from([IdentityBasis::KernelObjectGrounded]),
                 ..EvidenceGuarantees::default()
             },
-            required_complete: BTreeSet::new(),
-        };
+            BTreeSet::new(),
+        );
 
         assert!(!record.satisfies(&requirement));
     }
@@ -287,13 +351,13 @@ mod tests {
                 reason_code: "shared_fd_table_ambiguity".to_owned(),
             },
         );
-        let requirement = ProofRequirement {
-            guarantees: ptrace_argument_guarantees(),
-            required_complete: BTreeSet::from([
+        let requirement = requirement_for(
+            ptrace_argument_guarantees(),
+            BTreeSet::from([
                 CompletenessDimension::SessionScope,
                 CompletenessDimension::ObjectIdentity,
             ]),
-        };
+        );
 
         assert!(!record.satisfies(&requirement));
     }
@@ -301,15 +365,66 @@ mod tests {
     #[test]
     fn exact_required_guarantees_and_completeness_are_admissible() {
         let record = base_record();
-        let requirement = ProofRequirement {
-            guarantees: ptrace_argument_guarantees(),
-            required_complete: BTreeSet::from([
+        let requirement = requirement_for(
+            ptrace_argument_guarantees(),
+            BTreeSet::from([
                 CompletenessDimension::SessionScope,
                 CompletenessDimension::Lifecycle,
             ]),
-        };
+        );
 
         assert!(record.satisfies(&requirement));
+    }
+
+    #[test]
+    fn default_requirement_fails_closed() {
+        let record = base_record();
+        assert!(!record.satisfies(&ProofRequirement::default()));
+    }
+
+    #[test]
+    fn proposition_mismatch_fails_closed() {
+        let record = base_record();
+        let mut wrong = pathname_attempt();
+        if let Proposition::FilePathnameAttemptObserved { target, .. } = &mut wrong {
+            target.value = "$WORKSPACE/other.txt".to_owned();
+        }
+        let requirement = ProofRequirement::for_proposition(
+            wrong,
+            ptrace_argument_guarantees(),
+            BTreeSet::from([CompletenessDimension::SessionScope]),
+        );
+        assert!(!record.satisfies(&requirement));
+    }
+
+    #[test]
+    fn explicit_object_identity_conflict_blocks_complete_claim() {
+        let mut record = base_record();
+        record.completeness.insert(
+            CompletenessDimension::ObjectIdentity,
+            CompletenessState::Complete,
+        );
+        record
+            .ambiguity_codes
+            .insert("object_identity_conflict".to_owned());
+        let requirement = requirement_for(
+            ptrace_argument_guarantees(),
+            BTreeSet::from([CompletenessDimension::ObjectIdentity]),
+        );
+        assert!(!record.satisfies(&requirement));
+    }
+
+    #[test]
+    fn unknown_ambiguity_code_fails_closed_for_admission() {
+        let mut record = base_record();
+        record
+            .ambiguity_codes
+            .insert("unrecognized_future_ambiguity".to_owned());
+        let requirement = requirement_for(
+            ptrace_argument_guarantees(),
+            BTreeSet::from([CompletenessDimension::SessionScope]),
+        );
+        assert!(!record.satisfies(&requirement));
     }
 
     #[test]
