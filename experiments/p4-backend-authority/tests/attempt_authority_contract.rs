@@ -62,25 +62,45 @@ fn success_object_guarantees() -> EvidenceGuarantees {
     }
 }
 
-fn attempt_requirement() -> ProofRequirement {
-    ProofRequirement {
-        guarantees: attempt_guarantees(),
-        required_complete: BTreeSet::from([
-            CompletenessDimension::SessionScope,
-            CompletenessDimension::Capability,
-        ]),
+fn pathname_attempt_proposition() -> Proposition {
+    Proposition::FilePathnameAttemptObserved {
+        actor: Some(exe("/usr/bin/cat")),
+        execution_chain: vec![exe("/bin/bash"), exe("/usr/bin/cat")],
+        operation: FileOperation::Open,
+        target: path("$WORKSPACE/input.txt"),
+        open_intent: None,
     }
 }
 
+fn success_object_proposition() -> Proposition {
+    Proposition::FileOpenObjectObserved {
+        actor: Some(exe("/usr/bin/cat")),
+        execution_chain: vec![exe("/bin/bash"), exe("/usr/bin/cat")],
+        target: path("$WORKSPACE/input.txt"),
+    }
+}
+
+fn attempt_requirement() -> ProofRequirement {
+    ProofRequirement::for_proposition(
+        pathname_attempt_proposition(),
+        attempt_guarantees(),
+        BTreeSet::from([
+            CompletenessDimension::SessionScope,
+            CompletenessDimension::Capability,
+        ]),
+    )
+}
+
 fn success_object_requirement() -> ProofRequirement {
-    ProofRequirement {
-        guarantees: success_object_guarantees(),
-        required_complete: BTreeSet::from([
+    ProofRequirement::for_proposition(
+        success_object_proposition(),
+        success_object_guarantees(),
+        BTreeSet::from([
             CompletenessDimension::SessionScope,
             CompletenessDimension::Capability,
             CompletenessDimension::ObjectIdentity,
         ]),
-    }
+    )
 }
 
 fn record(
@@ -115,13 +135,7 @@ fn record(
 fn pathname_attempt_record() -> AdapterRecord {
     record(
         "P4.PATH.ACCESS_ATTEMPT",
-        Proposition::FilePathnameAttemptObserved {
-            actor: Some(exe("/usr/bin/cat")),
-            execution_chain: vec![exe("/bin/bash"), exe("/usr/bin/cat")],
-            operation: FileOperation::Open,
-            target: path("$WORKSPACE/input.txt"),
-            open_intent: None,
-        },
+        pathname_attempt_proposition(),
         AuthorityState::AttemptOnly,
         attempt_guarantees(),
         'a',
@@ -194,11 +208,7 @@ fn a1_3u_attempt_and_success_object_records_never_compare_as_equivalent() {
     let attempt = pathname_attempt_record();
     let mut success = record(
         "P4.FILE.OPEN_OBJECT",
-        Proposition::FileOpenObjectObserved {
-            actor: Some(exe("/usr/bin/cat")),
-            execution_chain: vec![exe("/bin/bash"), exe("/usr/bin/cat")],
-            target: path("$WORKSPACE/input.txt"),
-        },
+        success_object_proposition(),
         AuthorityState::Direct,
         success_object_guarantees(),
         'e',
