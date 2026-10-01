@@ -1,0 +1,81 @@
+name: Post-alpha4 Semantics v3 independent falsification
+
+on:
+  push:
+    branches: [review/post-alpha4-semantics-v3-rework-falsification]
+    paths:
+      - docs/reviews/POST_ALPHA4_SEMANTICS_V3_REWORK_FALSIFICATION_PROTOCOL.md
+      - crates/execsurface-model/tests/semantics_v3_independent_falsification.rs
+      - .github/workflows/post-alpha4-semantics-v3-independent-falsification.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-falsification:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      REPAIRED_SOURCE: 0200f09557906118dd0e96f8a5a73aa4f5c4a9cc
+      BROKEN_SOURCE: 5079a990b924d8ccd7ac6414f8a9a2571b54e240
+      ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Verify independent review ancestry and immutable public boundary
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$REPAIRED_SOURCE" HEAD
+          git merge-base --is-ancestor "$BROKEN_SOURCE" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          grep -q '12/12 PASS' docs/reviews/POST_ALPHA4_SEMANTICS_V3_REWORK_FALSIFICATION_PROTOCOL.md
+          grep -q 'NO PUBLIC PROMOTION' docs/reviews/POST_ALPHA4_SEMANTICS_V3_REWORK_FALSIFICATION_PROTOCOL.md
+
+      - name: Rust formatting
+        run: cargo +$RUST_TOOLCHAIN fmt --all -- --check
+
+      - name: Model clippy
+        run: cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-model --all-targets -- -D warnings
+
+      - name: Execute independent F01-F12 corpus
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_independent_falsification -- --nocapture
+
+      - name: Re-run repaired D01-D06 corpus
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+
+      - name: Re-run A1 promotion corpus
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+
+      - name: Re-run model library tests
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --lib
+
+      - name: Record bounded review evidence
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            echo "review_sha=${GITHUB_SHA}"
+            echo "repaired_source=${REPAIRED_SOURCE}"
+            echo "broken_source=${BROKEN_SOURCE}"
+            echo "alpha4_source=${ALPHA4_SOURCE}"
+            echo "independent_falsification_expected=12/12"
+            echo "public_promotion_authorized=false"
+            echo "external_validation=false"
+            echo "p8_closure=false"
+          } | tee evidence/semantics-v3-independent-falsification.txt
+
+      - name: Upload independent review evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: semantics-v3-independent-falsification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/semantics-v3-independent-falsification.txt
+          if-no-files-found: error
