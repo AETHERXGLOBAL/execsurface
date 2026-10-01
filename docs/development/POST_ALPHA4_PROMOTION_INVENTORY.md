@@ -18,7 +18,7 @@ No product-affecting row may start A0 as `ELIGIBLE_BOUNDED`.
 | P2 | Semantics v3: proposition-scoped evidence, explicit authority/completeness, proof-carrying observation, bounded compatibility work | ELIGIBLE_BOUNDED | Historical A1 success `36840921782`; destructive counterevidence #116 retained; repaired source `0200f09557906118dd0e96f8a5a73aa4f5c4a9cc`; independent falsification `36853136002`; final candidate requalification run `36853799391`, artifact `11157785131` | Requalified after material-gap repair. Side-by-side candidate only; v2 remains v2; cross-schema default is `INCOMPARABLE_SCHEMA`; no public/default v3 or migration authorized. |
 | P3 | Legitimate-variance / ephemeral-identity work | UNASSESSED | Bounded research decision retained on parent branch | Must prove lower false REVIEW with zero new false PASS; frequency never authorizes behavior. |
 | P4 | Backend Adapter / Proposition Authority architecture | ELIGIBLE_BOUNDED | P4 closeout source `320c865d3e81071a8214ad726dca7a587b0fc479`; A2 candidate evidence source `d02151e8f2d1f6b0a6558d52da6f48e74763e0a5`; run `36855716538`; artifact `11159141703`; decision `POST_ALPHA4_PROMOTION_A2_P4_AUTHORITY_REQUALIFIED_BOUNDED_CANDIDATE` | Proposition-scoped authority eligible for continued candidate integration only. Backend name never raises authority; backend equivalence and baseline interchangeability remain unproved. |
-| P5 | Runtime attestation/provenance composition using existing standards | UNASSESSED | Final bounded decision `P5_EXISTING_STANDARDS_COMPOSITION_SUFFICIENT_BOUNDED`; closeout lineage includes `1f4df8f45a115a1638c997107e069c6acd74c51b` | Cryptographic validity remains separate from semantic authority; no custom-standard claim. |
+| P5 | Runtime attestation/provenance composition using existing standards | ELIGIBLE_BOUNDED | P5 bounded closeout retained; A3 accepted source `0f6cbc68bea380ff25889e762cb8cd5287a9c5a3`; run `36858724331`; closeout artifact `11160521675`; decision `POST_ALPHA4_PROMOTION_A3_P5_ATTESTATION_ELIGIBLE_BOUNDED_CANDIDATE`; initial formatting-only failure `36858589653` retained | Existing standards composition eligible for continued candidate integration only. Cryptographic/signature/provenance validity never raises semantic authority; no custom-standard claim. |
 | P6 | Competitive falsification/comparison harness and factual matrix | UNASSESSED | P6 bounded closeout; successful closeout workflow run `36773688443` | Assess as validation/tooling infrastructure separately from runtime feature promotion. No winner score. |
 | P7-arm64 | Native arm64 parity path tested and not established portable in bounded experiment | NEGATIVE_RETAINED | Retained P7 A0 failure and bounded arm64 not-portable decision | Must not be promoted as arm64 support. Fresh gate required for any future claim. |
 | P7-other | Additional CI/platform research results other than failed arm64 parity | UNASSESSED | P7 bounded closeout; workflow run `36776286847` | Assess individually; platform count cannot weaken evidence contracts. |
@@ -75,8 +75,39 @@ Retained A2 boundaries:
 - unsupported proposition families remain unsupported;
 - public v2 semantics remain unchanged.
 
+## Closed assessment — A3 / P5
+
+A3 requalified the bounded P5 standards-composition path while explicitly attacking signature/provenance authority laundering.
+
+Accepted evidence:
+- candidate evidence source: `0f6cbc68bea380ff25889e762cb8cd5287a9c5a3`;
+- workflow run: `36858724331` — SUCCESS;
+- closeout artifact: `11160521675`, digest `sha256:d56abd784e9c6ee5f23e36417177756c118781f2a0c8be15c8b5220bf78414ca`;
+- A3 promotion-specific attack artifact: `11160171982`, digest `sha256:13c5dc170767fbc6e37b02ae0df6e9f3c72da5e078cc0df1c95e07ded10adb5e`;
+- Sigstore reverification artifact: `11160531607`, digest `sha256:a40bae0e52c1ea63b66c824cf11b7feb72d84f1d6671fa1abc73388a98fe6f14`;
+- A3 frozen attestation/provenance authority corpus: 12/12 PASS;
+- P5-A5 historical cross-attestation red-team: 12/12 PASS;
+- P5 A3/A2/A1/A0 standards corpora: PASS;
+- repaired Semantics-v3, P4 authority sensitivity/cross-proposition rejection and M11 fail-closed: PASS;
+- historical P5-A5 negative run `36755962689` retained and explicitly rechecked.
+
+Retained negative A3 execution evidence:
+- initial run `36858589653` at `f39ec43916c1971f2ea728ec05a19f1b2aaa4f28` failed at rustfmt before scientific tests;
+- correction `0f6cbc68bea380ff25889e762cb8cd5287a9c5a3` was formatting-only; no test/assertion/threshold/model rule changed.
+
+Current A3 decision:
+`POST_ALPHA4_PROMOTION_A3_P5_ATTESTATION_ELIGIBLE_BOUNDED_CANDIDATE`
+
+Retained A3 boundaries:
+- cryptographic/signature/provenance validity never manufactures semantic authority;
+- standards labels, signer/workflow/verifier identity do not create PASS eligibility;
+- subject/source/baseline/current/verifier/provenance bindings remain explicit and fail closed;
+- existing standards composition remains sufficient only within the tested bounded scope;
+- no custom predicate/schema novelty claim;
+- no public integration, `main` merge, release/tag movement or P8 closure authorized.
+
 ## Next assessment
 
-A3 evaluates **P5 Runtime Attestation / Provenance promotion eligibility**.
+A4 evaluates **P3 legitimate-variance / ephemeral-identity promotion eligibility**.
 
-A3 must prove that attestation, signature, SLSA/in-toto/Sigstore identity, provenance links and verifier metadata cannot manufacture semantic authority. It must replay retained P5 substitution/replay, duplicate-semantic-property, verifier-identity and source/baseline/current binding attacks before any P5 path is eligible for candidate integration.
+A4 must demonstrate a measurable reduction in false REVIEW for the bounded legitimate-variance case while introducing zero new false PASS in the frozen falsifier corpus. Frequency, similarity or repeated observation must never become authorization, raw evidence must remain retained, and canonicalization must not erase meaningful behavioral drift.
