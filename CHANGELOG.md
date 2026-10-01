@@ -6,6 +6,9 @@ All notable public-product changes are recorded here. The detailed pre-Alpha.5 e
 
 - Independent P8 validation continues as a post-release evidence program.
 - Historical one-shot release workflows are retired from the active GitHub Actions surface without deleting their source/history.
+- Added a documentation index that separates current product guidance from historical engineering evidence.
+- Consolidated current OpenSSF engagement state under `docs/external/` and removed the engagement-specific baseline from the repository root.
+- Strengthened contribution and governance documentation around evidence preservation, release boundaries, and external-review claims.
 
 ## v0.1.0-alpha.5 — 2026-10-01
 
