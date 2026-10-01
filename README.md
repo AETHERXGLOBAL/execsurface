@@ -135,17 +135,19 @@ The baseline answers what canonical execution surface was accepted. The policy a
 
 ## Independent evaluation
 
-Use [Self-Service Start](docs/SELF_SERVICE_START.md), [Five-Minute Start](docs/QUICKSTART_5_MIN.md), [Independent Evaluation](docs/INDEPENDENT_EVALUATION.md), and [Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md). Negative, partial, unsupported-environment, usability and performance-problem results are welcome. A self-evaluation PASS is not evidence of independent adoption.
+Alpha.5 is publicly released and remains open to independent post-release review. Use [Self-Service Start](docs/SELF_SERVICE_START.md), [Five-Minute Start](docs/QUICKSTART_5_MIN.md), [Independent Evaluation](docs/INDEPENDENT_EVALUATION.md), and [Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md).
+
+Public findings can be reported through **[Issue #118 — Alpha.5 Independent External Validation & Post-Release Review](https://github.com/AETHERXGLOBAL/execsurface/issues/118)**. Negative, partial, unsupported-environment, usability and performance-problem results are welcome. A self-evaluation PASS is not evidence of independent adoption or validation.
 
 ## Distribution and verification
 
 The public alpha distribution surfaces are:
 
 - checksum-verified GitHub Release binary for Linux x86_64;
-- exact prerelease install `cargo install execsurface --version "=0.1.0-alpha.5" --locked` for Rust users after registry publication;
+- exact prerelease install `cargo install execsurface --version "=0.1.0-alpha.5" --locked` for Rust users;
 - GitHub Action `AETHERXGLOBAL/execsurface@v0.1` after stable-channel promotion.
 
-For maximum Action pinning after release, use `AETHERXGLOBAL/execsurface@v0.1.0-alpha.5`.
+For maximum Action pinning, use `AETHERXGLOBAL/execsurface@v0.1.0-alpha.5`.
 
 Optional GitHub build provenance verification:
 
@@ -157,17 +159,20 @@ A valid attestation links the artifact to its build source/workflow. It does **n
 
 ## Documentation
 
+Start with the **[Documentation Index](docs/README.md)**. It separates current product documentation from historical engineering evidence.
+
+Key documents:
+
 - [Current Status](docs/STATUS.md)
-- [Self-Service Start](docs/SELF_SERVICE_START.md)
 - [Five-Minute Start](docs/QUICKSTART_5_MIN.md)
 - [GitHub Action](docs/GITHUB_ACTION.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Independent Evaluation](docs/INDEPENDENT_EVALUATION.md)
 - [Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md)
-- [Command examples](docs/EXAMPLES.md)
-- [crates.io Publishing](docs/CRATES_IO_PUBLISHING.md)
+- [Alpha.5 release record](docs/releases/v0.1.0-alpha.5.md)
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
+- [Governance](GOVERNANCE.md)
 - [Support](SUPPORT.md)
 
 ## Developing ExecSurface
