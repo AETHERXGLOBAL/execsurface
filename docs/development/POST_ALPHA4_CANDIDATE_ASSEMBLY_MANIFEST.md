@@ -5,7 +5,7 @@ Branch: `release/post-alpha4-candidate-assembly`
 Immutable base: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
 Promotion evidence closeout: `cef8c5b8acb3f3c9e0671c497ad04837709bb024`
 A8 protocol source: `5fc3bf3ad9c8074045eae45d57faa2e92340d855`
-Status: **A8-A1 CLOSED PASS — A8-A2 IMPLEMENTED / FORMATTING-CORRECTED REPROOF RUNNING**
+Status: **A8-A1 CLOSED PASS — A8-A2 CLOSED PASS — A8-A3 NEXT**
 
 ## Clean-base invariant
 
@@ -28,29 +28,33 @@ Retained A8-A1 pre-scientific failures:
 - `36869713875`: formatting-only + lockfile dev-dependency entry; scientific corpus did not execute.
 No assertion, threshold, proof rule, semantic admission rule, default behavior, or public tag was weakened.
 
-The A1 workflow is now a slice-stability integration regression gate: accepted Semantics-v3 source/tests remain byte-identical while D01-D06, A1 and default-v2 are rerun on later tranches.
+The A1 workflow is a slice-stability integration regression gate on later tranches.
 
 ## A8-A2 — Proposition authority
 
 Preregistered protocol source: `7250002f3f7cb83f3f9ca930e8acedb524d57580`.
 Implementation source: `34c7060a58270f9bd8ed538640fcf696876e741c`.
 Formatting-only correction source: `112966e78730aea4e00296d34f2a46510fdb0b47`.
+Accepted source: `4166ff64b8110e27b47954c1f0875cce81ebf898`.
+Accepted workflow run: `36872228726` — SUCCESS.
+Decision: `POST_ALPHA4_PROMOTION_A8_A2_AUTHORITY_ELIGIBLE_BOUNDED_CLEAN_CANDIDATE`.
 Research evidence: P4 closeout `320c865d3e81071a8214ad726dca7a587b0fc479`; promotion A2 `d02151e8f2d1f6b0a6558d52da6f48e74763e0a5`.
 
-Admitted delta:
-- `crates/execsurface-model/src/authority_v3.rs`;
-- feature-gated export in `crates/execsurface-model/src/lib.rs`;
-- `crates/execsurface-model/tests/authority_v3_candidate.rs`;
-- `.github/workflows/post-alpha4-candidate-a8-a2-authority.yml`;
-- this manifest.
+Established:
+- exact authority attack corpus 16/16 PASS;
+- D01-D06 6/6 PASS and A1 9/9 PASS;
+- full feature-enabled model PASS;
+- rustfmt and Clippy default/v3 PASS;
+- default alpha.4-compatible regression PASS;
+- backend names cannot manufacture authority;
+- unsupported/ambiguous/lost remain fail-closed;
+- no duplicated textual proposition identity exists in the product contract.
 
-Hardening: no duplicated textual `proposition_id`; typed `ProofCarryingObservation.proposition` is the sole proposition identity.
+Retained negative A8-A2 execution:
+- `36871810571`: scientific authority job PASS, but separate static job failed rustfmt before default regression; overall gate did not pass and closeout was skipped.
+- correction `112966e78730aea4e00296d34f2a46510fdb0b47` was formatting-only; no test/assertion/authority rule/threshold changed.
 
-Retained first A8-A2 execution:
-- run `36871810571`: provenance/scope/A1-slice/default-boundary PASS; authority-falsification job PASS including 16/16 A8-A2 attacks, D01-D06, A1 9/9, full feature model and Clippy; separate static/default job failed at rustfmt before its default regression, so closeout was skipped and the overall A8-A2 gate did **not** pass.
-- correction `112966e78730aea4e00296d34f2a46510fdb0b47` is formatting-only in `authority_v3.rs` and `authority_v3_candidate.rs`. No test name, assertion, acceptance rule, authority rule, threshold, product semantic behavior or public boundary changed.
-
-A8-A2 remains pending until one full workflow run passes all jobs including rustfmt/default regression and closeout.
+The A2 workflow is now an authority-slice integration regression gate on later tranches.
 
 ## Explicit non-admissions through A8-A2
 
