@@ -1,0 +1,183 @@
+name: Post-alpha4 candidate A8 A7 reproducible artifact
+
+on:
+  push:
+    branches: [release/post-alpha4-candidate-assembly]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: a8-a7-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SHA: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  ALPHA4_TAG: v0.1.0-alpha.4
+
+jobs:
+  reproduce:
+    name: Two-snapshot binary / package / bundle reproducibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact candidate with full history and tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Pin Rust 1.90.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustc +$RUST_TOOLCHAIN --version --verbose | tee rustc-version.txt
+          cargo +$RUST_TOOLCHAIN --version | tee cargo-version.txt
+
+      - name: Freeze lineage, tags, protocol and source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          test "$(git merge-base "$ALPHA4_SHA" HEAD)" = "$ALPHA4_SHA"
+          test -z "$(git rev-list --merges "$ALPHA4_SHA"..HEAD)"
+          test "$(git rev-parse "$ALPHA4_TAG^{commit}")" = "$ALPHA4_SHA"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SHA"
+          grep -F 'PREREGISTERED — NO PUBLIC RELEASE AUTHORIZED' docs/development/POST_ALPHA4_CANDIDATE_A8_A7_REPRODUCIBLE_ARTIFACT_PROTOCOL.md
+          grep -F 'POST_ALPHA4_CANDIDATE_A8_A7_REPRODUCIBLE_ARTIFACT_PASS_BOUNDED_INTERNAL' docs/development/POST_ALPHA4_CANDIDATE_A8_A7_REPRODUCIBLE_ARTIFACT_PROTOCOL.md
+          git rev-parse HEAD | tee candidate-sha.txt
+          git rev-parse HEAD^{tree} | tee candidate-tree.txt
+          sha256sum Cargo.lock | tee cargo-lock-root.sha256
+
+      - name: Create two independent exact source snapshots
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/a8-a7"
+          mkdir -p "$root/a" "$root/b"
+          git archive --format=tar "$GITHUB_SHA" > "$root/source-a.tar"
+          git archive --format=tar "$GITHUB_SHA" > "$root/source-b.tar"
+          sha256sum "$root/source-a.tar" "$root/source-b.tar" | tee source-archives.sha256
+          test "$(sha256sum "$root/source-a.tar" | awk '{print $1}')" = "$(sha256sum "$root/source-b.tar" | awk '{print $1}')"
+          tar -xf "$root/source-a.tar" -C "$root/a"
+          tar -xf "$root/source-b.tar" -C "$root/b"
+          test "$(sha256sum "$root/a/Cargo.lock" | awk '{print $1}')" = "$(sha256sum "$root/b/Cargo.lock" | awk '{print $1}')"
+          test "$(sha256sum "$root/a/Cargo.lock" | awk '{print $1}')" = "$(sha256sum Cargo.lock | awk '{print $1}')"
+
+      - name: Build exact release binary independently twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/a8-a7"
+          (
+            cd "$root/a"
+            CARGO_INCREMENTAL=0 cargo +$RUST_TOOLCHAIN build --locked --release -p execsurface
+          )
+          (
+            cd "$root/b"
+            CARGO_INCREMENTAL=0 cargo +$RUST_TOOLCHAIN build --locked --release -p execsurface
+          )
+          bin_a="$root/a/target/release/execsurface"
+          bin_b="$root/b/target/release/execsurface"
+          test -x "$bin_a"
+          test -x "$bin_b"
+          sha256sum "$bin_a" "$bin_b" | tee binary-sha256.txt
+          binary_a="$(sha256sum "$bin_a" | awk '{print $1}')"
+          binary_b="$(sha256sum "$bin_b" | awk '{print $1}')"
+          test "$binary_a" = "$binary_b"
+          "$bin_a" --version | tee binary-a-version.txt
+          "$bin_b" --version | tee binary-b-version.txt
+          cmp binary-a-version.txt binary-b-version.txt
+          "$bin_a" --help >/dev/null
+          "$bin_b" --help >/dev/null
+          "$bin_a" doctor
+          "$bin_b" doctor
+
+      - name: Package independently twice and require byte identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/a8-a7"
+          (
+            cd "$root/a"
+            cargo +$RUST_TOOLCHAIN package --locked -p execsurface --allow-dirty
+          )
+          (
+            cd "$root/b"
+            cargo +$RUST_TOOLCHAIN package --locked -p execsurface --allow-dirty
+          )
+          crate_a="$(find "$root/a/target/package" -maxdepth 1 -type f -name 'execsurface-*.crate' | sort | head -n1)"
+          crate_b="$(find "$root/b/target/package" -maxdepth 1 -type f -name 'execsurface-*.crate' | sort | head -n1)"
+          test -n "$crate_a"
+          test -n "$crate_b"
+          sha256sum "$crate_a" "$crate_b" | tee package-sha256.txt
+          test "$(sha256sum "$crate_a" | awk '{print $1}')" = "$(sha256sum "$crate_b" | awk '{print $1}')"
+
+      - name: Create deterministic candidate bundles independently twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/a8-a7"
+          bin_hash="$(sha256sum "$root/a/target/release/execsurface" | awk '{print $1}')"
+          lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
+          for side in a b; do
+            stage="$root/stage-$side"
+            mkdir -p "$stage"
+            cp "$root/$side/target/release/execsurface" "$stage/execsurface"
+            {
+              echo "candidate_sha=$GITHUB_SHA"
+              echo "candidate_tree=$(cat candidate-tree.txt)"
+              echo "rust_toolchain=$RUST_TOOLCHAIN"
+              echo "cargo_lock_sha256=$lock_hash"
+              echo "binary_sha256=$bin_hash"
+              echo 'public_release_authorized=false'
+              echo 'p8_closure=false'
+              echo 'arm64_support=false'
+            } > "$stage/MANIFEST.txt"
+            (
+              cd "$stage"
+              tar --sort=name --owner=0 --group=0 --numeric-owner --mtime='@0' -cf - MANIFEST.txt execsurface | gzip -n > "$root/bundle-$side.tar.gz"
+            )
+          done
+          sha256sum "$root/bundle-a.tar.gz" "$root/bundle-b.tar.gz" | tee bundle-sha256.txt
+          test "$(sha256sum "$root/bundle-a.tar.gz" | awk '{print $1}')" = "$(sha256sum "$root/bundle-b.tar.gz" | awk '{print $1}')"
+
+      - name: Emit bounded reproducibility evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/a8-a7"
+          mkdir -p evidence
+          {
+            echo 'decision=POST_ALPHA4_CANDIDATE_A8_A7_REPRODUCIBLE_ARTIFACT_PASS_BOUNDED_INTERNAL'
+            echo "candidate_sha=$GITHUB_SHA"
+            echo "candidate_tree=$(cat candidate-tree.txt)"
+            echo "rust_toolchain=$RUST_TOOLCHAIN"
+            echo "cargo_lock_sha256=$(sha256sum Cargo.lock | awk '{print $1}')"
+            echo "binary_sha256=$(sha256sum "$root/a/target/release/execsurface" | awk '{print $1}')"
+            crate_a="$(find "$root/a/target/package" -maxdepth 1 -type f -name 'execsurface-*.crate' | sort | head -n1)"
+            echo "package_sha256=$(sha256sum "$crate_a" | awk '{print $1}')"
+            echo "bundle_sha256=$(sha256sum "$root/bundle-a.tar.gz" | awk '{print $1}')"
+            echo 'binary_reproducible=true'
+            echo 'package_reproducible=true'
+            echo 'bundle_reproducible=true'
+            echo 'same_environment_scope=ubuntu-24.04-x86_64'
+            echo 'public_release_authorized=false'
+            echo 'main_merge_authorized=false'
+            echo 'stable_tag_movement_authorized=false'
+            echo 'arm64_support=false'
+            echo 'p8_closure=false'
+          } | tee evidence/a8-a7-reproducible-artifact.txt
+          cp "$root/bundle-a.tar.gz" evidence/execsurface-a8-a7-candidate-bundle.tar.gz
+          cp binary-sha256.txt package-sha256.txt bundle-sha256.txt source-archives.sha256 rustc-version.txt cargo-version.txt evidence/
+
+      - name: Upload reproducibility evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-a7-reproducible-artifact-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 90
