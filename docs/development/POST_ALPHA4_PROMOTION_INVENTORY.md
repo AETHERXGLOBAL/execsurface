@@ -19,7 +19,7 @@ No product-affecting row may start A0 as `ELIGIBLE_BOUNDED`.
 | P3 | Legitimate-variance / ephemeral-identity work | ELIGIBLE_BOUNDED | Bounded GCC ephemeral projection only; accepted source `96ef1e2f6f316460cc88af4f89403455a910b2b4`; run `36861859874`; closeout artifact `11161694287`; attack artifact `11161424642`; decision `POST_ALPHA4_PROMOTION_A4_P3_VARIANCE_ELIGIBLE_BOUNDED_CANDIDATE`; failed pre-scientific runs `36860850659`, `36861039687`, `36861324520`, `36861475284` retained | Eligible only for the frozen GCC producer/role/grammar projection. Frequency, recurrence and similarity never authorize; raw evidence remains retained; generic learned variance and broad temp suppression remain out of scope. |
 | P4 | Backend Adapter / Proposition Authority architecture | ELIGIBLE_BOUNDED | P4 closeout source `320c865d3e81071a8214ad726dca7a587b0fc479`; A2 candidate evidence source `d02151e8f2d1f6b0a6558d52da6f48e74763e0a5`; run `36855716538`; artifact `11159141703`; decision `POST_ALPHA4_PROMOTION_A2_P4_AUTHORITY_REQUALIFIED_BOUNDED_CANDIDATE` | Proposition-scoped authority eligible for continued candidate integration only. Backend name never raises authority; backend equivalence and baseline interchangeability remain unproved. |
 | P5 | Runtime attestation/provenance composition using existing standards | ELIGIBLE_BOUNDED | P5 bounded closeout retained; A3 accepted source `0f6cbc68bea380ff25889e762cb8cd5287a9c5a3`; run `36858724331`; closeout artifact `11160521675`; decision `POST_ALPHA4_PROMOTION_A3_P5_ATTESTATION_ELIGIBLE_BOUNDED_CANDIDATE`; initial formatting-only failure `36858589653` retained | Existing standards composition eligible for continued candidate integration only. Cryptographic/signature/provenance validity never raises semantic authority; no custom-standard claim. |
-| P6 | Competitive falsification/comparison harness and factual matrix | UNASSESSED | P6 bounded closeout; successful closeout workflow run `36773688443` | Assess as validation/tooling infrastructure separately from runtime feature promotion. No winner score. |
+| P6 | Competitive falsification/comparison harness and factual matrix | ELIGIBLE_BOUNDED | Validation/tooling only; accepted source `5e1ed9ae3640bb6ffa3f33cc2be735041399022f`; run `36864447147`; closeout artifact `11163263388`; attack artifact `11163336806`; decision `POST_ALPHA4_PROMOTION_A5_P6_VALIDATION_TOOLING_ELIGIBLE_BOUNDED_CANDIDATE`; first A5 run `36864270080` retained as governance-harness failure | Eligible only as internal proposition-local falsification/comparison tooling. No score, winner, superiority, semantic-authority, release-readiness, P8 or external-validation inference is authorized. |
 | P7-arm64 | Native arm64 parity path tested and not established portable in bounded experiment | NEGATIVE_RETAINED | Retained P7 A0 failure and bounded arm64 not-portable decision | Must not be promoted as arm64 support. Fresh gate required for any future claim. |
 | P7-other | Additional CI/platform research results other than failed arm64 parity | UNASSESSED | P7 bounded closeout; workflow run `36776286847` | Assess individually; platform count cannot weaken evidence contracts. |
 | P8 | Current external validation / independent reproduction / criticism | BLOCKED | Issue #114; A5 prereg source `7bd806258ecdca415ef16ffb3689aefa13c0ece2` | Current external evidence minimum not yet satisfied. Internal work cannot manufacture independence. |
@@ -151,8 +151,41 @@ Retained A4 boundaries:
 - public v2 semantics remain unchanged;
 - no public integration, `main` merge, release/tag movement or P8 closure authorized.
 
+## Closed assessment — A5 / P6
+
+A5 evaluated P6 strictly as internal validation/falsification tooling and attacked the comparison method itself for ranking, missing-data laundering, authority inflation, evidence suppression, scope/equivalence inflation and release/P8 claim laundering.
+
+Accepted evidence:
+- accepted candidate source: `5e1ed9ae3640bb6ffa3f33cc2be735041399022f`;
+- workflow run: `36864447147` — SUCCESS;
+- closeout artifact: `11163263388`, digest `sha256:547f48bb3d43805003afc24bffff727b3b0a38083ba81ccf36219dcc9c5011c8`;
+- frozen A5 attack artifact: `11163336806`, digest `sha256:ef5c9b6b1a43c4fe0f69ce6632f328dc1f509bf8cede52d07ef8e76cd2b7d0cd`;
+- exact frozen A5 corpus: **12/12 PASS**;
+- original P6 non-ranking and negative-evidence boundaries: PASS;
+- retained historical P6 harness failure `36770551463`: independently rechecked as failure;
+- A1 Semantics-v3, A2 proposition authority, A3 attestation authority, A4 variance and P3 poisoning reproofs: PASS;
+- immutable public anchors: PASS.
+
+Retained first A5 execution:
+- run `36864270080` at `f543f6c62c9939caa321cc5eccc2e8a4c4470b00` failed only in a governance grep whose literal text did not account for Markdown emphasis in the frozen P6 protocol;
+- the A5 12-test scientific corpus itself already passed in that run;
+- correction `5e1ed9ae3640bb6ffa3f33cc2be735041399022f` changed only that grep to a Markdown-safe invariant substring;
+- no test, source pin, classification, negative-evidence requirement, acceptance rule or semantic boundary changed.
+
+Current A5 decision:
+`POST_ALPHA4_PROMOTION_A5_P6_VALIDATION_TOOLING_ELIGIBLE_BOUNDED_CANDIDATE`
+
+Retained A5 boundaries:
+- proposition-local facts only;
+- no composite score/rank/tier/winner or overall superiority/inferiority verdict;
+- source-pin mismatch remains `STALE_SOURCE`/incomparable;
+- missing/incomplete/not-testable evidence remains explicit;
+- mandatory negative evidence cannot be filtered out of closeout;
+- comparison results cannot confer Semantics-v3 authority, backend equivalence, product correctness, release readiness or P8 external validation;
+- A5 is validation/tooling only and authorizes no public runtime feature.
+
 ## Next assessment
 
-A5 evaluates **P6 competitive falsification/comparison tooling promotion eligibility** separately from runtime-feature promotion.
+A6 evaluates **P7-other platform/CI research** individually, while keeping `P7-arm64` fixed at `NEGATIVE_RETAINED`.
 
-A5 must prove that comparison/falsification infrastructure remains factual and reproducible, cannot manufacture semantic authority or external-validation claims, preserves negative findings, and does not introduce a composite winner score or use competitor comparison as a substitute for product correctness.
+A6 must not infer portability from platform count. Each candidate CI/platform path must preserve the same semantic/evidence contract, fail closed on unsupported/incomplete observation, retain platform-specific limitations, and must not use the successful P7 closeout to overwrite the bounded arm64 not-portable result.
