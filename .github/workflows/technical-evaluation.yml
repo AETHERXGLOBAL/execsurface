@@ -5,12 +5,14 @@ on:
     paths:
       - 'README.md'
       - 'docs/TECHNICAL_EVALUATION.md'
+      - 'action/release-tag.txt'
       - '.github/workflows/technical-evaluation.yml'
   push:
     branches: [main]
     paths:
       - 'README.md'
       - 'docs/TECHNICAL_EVALUATION.md'
+      - 'action/release-tag.txt'
       - '.github/workflows/technical-evaluation.yml'
   workflow_dispatch:
 
@@ -24,11 +26,20 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - name: Install exact public crates.io evaluation release
+      - name: Checkout public release pointer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install exact current public crates.io release
+        shell: bash
         run: |
           set -euo pipefail
-          cargo install execsurface --version "=0.1.0-alpha.2" --locked
-          execsurface --version
+          release_tag="$(tr -d '[:space:]' < action/release-tag.txt)"
+          version="${release_tag#v}"
+          test -n "$version"
+          cargo install execsurface --version "=$version" --locked
+          test "$(execsurface --version)" = "execsurface $version"
           execsurface doctor
 
       - name: Learn isolated baseline
