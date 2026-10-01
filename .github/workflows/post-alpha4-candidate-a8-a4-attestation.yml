@@ -1,0 +1,69 @@
+name: Post-alpha4 candidate A8 A4 attestation binding
+
+on:
+  push:
+    branches: [release/post-alpha4-candidate-assembly]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  a8-a4-attestation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+          components: rustfmt, clippy
+
+      - name: Freeze public anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse v0.1.0-alpha.4^{commit})" = "48e0b9a0707553349e75e97a9dfa096d13f9ab5d"
+          test "$(git rev-parse v0.1^{commit})" = "48e0b9a0707553349e75e97a9dfa096d13f9ab5d"
+
+      - name: Default-off and public schema invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'default = []' crates/execsurface-model/Cargo.toml
+          grep -F 'semantics-v3 = []' crates/execsurface-model/Cargo.toml
+          grep -F 'pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/lib.rs
+          grep -F 'pub const NORMALIZATION_PROFILE_VERSION: u32 = 3;' crates/execsurface-model/src/canonical.rs
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy default
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Clippy all features
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Frozen A4 attestation attack corpus
+        run: cargo test -p execsurface-model --features semantics-v3 --test attestation_v3_candidate --locked
+
+      - name: Semantics-v3 destructive rework corpus
+        run: cargo test -p execsurface-model --features semantics-v3 --test semantics_v3_rework --locked
+
+      - name: Semantics-v3 promotion corpus
+        run: cargo test -p execsurface-model --features semantics-v3 --test semantics_v3_promotion --locked
+
+      - name: Authority corpus
+        run: cargo test -p execsurface-model --features semantics-v3 --test authority_v3_candidate --locked
+
+      - name: Full default workspace regression
+        run: cargo test --workspace --all-targets --locked
+
+      - name: Full all-feature workspace regression
+        run: cargo test --workspace --all-targets --all-features --locked
+
+      - name: Release build
+        run: cargo build --workspace --release --locked
