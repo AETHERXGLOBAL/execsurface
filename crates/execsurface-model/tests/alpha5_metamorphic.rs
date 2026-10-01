@@ -110,7 +110,8 @@ fn m03_record_and_requirement_roundtrip_preserve_binding() {
     let req_json = serde_json::to_vec(&req).expect("serialize requirement");
     let record_rt: ProofCarryingObservation =
         serde_json::from_slice(&record_json).expect("deserialize record");
-    let req_rt: ProofRequirement = serde_json::from_slice(&req_json).expect("deserialize requirement");
+    let req_rt: ProofRequirement =
+        serde_json::from_slice(&req_json).expect("deserialize requirement");
 
     assert_eq!(record_rt, candidate);
     assert_eq!(req_rt, req);
@@ -126,7 +127,8 @@ fn m04_deserialized_missing_proposition_binding_fails_closed() {
     json.as_object_mut()
         .expect("requirement must be object")
         .remove("expected_proposition");
-    let stripped: ProofRequirement = serde_json::from_value(json).expect("deserialize stripped requirement");
+    let stripped: ProofRequirement =
+        serde_json::from_value(json).expect("deserialize stripped requirement");
 
     assert!(
         !candidate.satisfies(&stripped),
