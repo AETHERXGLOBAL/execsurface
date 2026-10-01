@@ -10,6 +10,7 @@ This directory separates **current public guidance** from **engineering evidence
 - [GitHub Action](GITHUB_ACTION.md) — CI integration and stable Action usage.
 - [Troubleshooting](TROUBLESHOOTING.md) — environment, ptrace and evidence-health diagnostics.
 - [Examples](EXAMPLES.md) — command-line usage examples.
+- [Why provenance is not the same as runtime behavioral integrity](WHY_RUNTIME_BEHAVIORAL_INTEGRITY.md) — shareable technical explanation of the problem ExecSurface addresses.
 - [Ecosystem Positioning](ECOSYSTEM_POSITIONING.md) — factual scope/interoperability map relative to adjacent runtime-security and provenance systems; not a winner ranking.
 
 ## Evaluation and external evidence
