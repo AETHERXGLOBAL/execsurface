@@ -1,0 +1,261 @@
+name: Alpha5 owner-authorized release bootstrap v2
+
+on:
+  push:
+    branches:
+      - integration/post-alpha4-promotion-candidate
+    paths:
+      - .github/workflows/alpha5-owner-release-bootstrap-v2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+env:
+  FROZEN_PRODUCT_SHA: 5067200452c174da6bc8d9d7ecf6957ee379f0a2
+  EXPECTED_MAIN_SHA: b47721ce675444ce029b048edce6fc94631d6408
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  RELEASE_VERSION: 0.1.0-alpha.5
+  RELEASE_TAG: v0.1.0-alpha.5
+  RELEASE_BRANCH: release/v0.1.0-alpha.5-owner-authorized-20261001
+  RUST_TOOLCHAIN: 1.90.0
+
+concurrency:
+  group: alpha5-owner-release-bootstrap-v2
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Preserve evidence, materialize Alpha.5 and dispatch publication
+    runs-on: ubuntu-22.04
+    timeout-minutes: 70
+    steps:
+      - name: Checkout current integration evidence line
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: release-src
+          fetch-depth: 0
+
+      - name: Verify frozen product semantics and publication anchors
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C release-src fetch --force --tags origin main
+          assembly_head="$(git -C release-src rev-parse HEAD)"
+          test "$assembly_head" = "$GITHUB_SHA"
+          test "$(git -C release-src rev-parse origin/main)" = "$EXPECTED_MAIN_SHA"
+          test "$(git -C release-src rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git -C release-src rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          ! git -C release-src show-ref --verify --quiet "refs/tags/$RELEASE_TAG"
+          git -C release-src diff --exit-code "$FROZEN_PRODUCT_SHA" -- 'crates/*/src' 'crates/*/tests' action.yml
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo '::error::Alpha.5 GitHub Release already exists before bootstrap; refusing ambiguous publication'
+            exit 1
+          fi
+          if git -C release-src ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
+            echo '::error::Dedicated owner-authorized release branch already exists; refusing silent overwrite'
+            exit 1
+          fi
+
+      - name: Merge current main documentation lineage
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C release-src config user.name 'github-actions[bot]'
+          git -C release-src config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C release-src merge --no-ff origin/main -m 'Merge current main documentation lineage for Alpha.5 release'
+          git -C release-src diff --exit-code "$FROZEN_PRODUCT_SHA" -- 'crates/*/src' 'crates/*/tests' action.yml
+
+      - name: Apply the qualified Alpha.5 version transform
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$RELEASE_TAG" > release-src/action/release-tag.txt
+          ROOT=release-src python3 - <<'PY'
+          import os
+          from pathlib import Path
+          old='0.1.0-alpha.4'; new='0.1.0-alpha.5'; root=Path(os.environ['ROOT'])
+          changed=[]
+          for m in root.rglob('Cargo.toml'):
+              t=m.read_text()
+              u=t.replace(f'version = "{old}"',f'version = "{new}"').replace(f'version = "={old}"',f'version = "={new}"')
+              if u != t:
+                  m.write_text(u); changed.append(str(m))
+          lock=root/'Cargo.lock'
+          chunks=lock.read_text().split('[[package]]'); out=[chunks[0]]
+          for c in chunks[1:]:
+              lines=c.splitlines()
+              name=next((x.split('=',1)[1].strip().strip('"') for x in lines if x.startswith('name = ')),None)
+              if name and name.startswith('execsurface'):
+                  lines=[f'version = "{new}"' if x==f'version = "{old}"' else x for x in lines]
+              out.append('\n'.join(lines))
+          lock.write_text('[[package]]'.join(out))
+          assert changed, 'no Cargo manifest release transforms were applied'
+          print('\n'.join(changed))
+          PY
+
+      - name: Update current public entry-point documentation only
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=release-src python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root=Path(os.environ['ROOT'])
+          targets=[
+            'README.md',
+            'docs/STATUS.md',
+            'docs/SELF_SERVICE_START.md',
+            'docs/QUICKSTART_5_MIN.md',
+            'docs/INDEPENDENT_EVALUATION.md',
+            'docs/GITHUB_ACTION.md',
+            'docs/TECHNICAL_EVALUATION.md',
+          ]
+          for rel in targets:
+              p=root/rel
+              if not p.exists():
+                  continue
+              t=p.read_text()
+              u=t.replace('v0.1.0-alpha.4','v0.1.0-alpha.5').replace('0.1.0-alpha.4','0.1.0-alpha.5')
+              p.write_text(u)
+          PY
+
+      - name: Add bounded governance and release notes; remove superseded local drivers
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-src/docs/releases release-src/docs/development
+          rm -f release-src/.github/workflows/release-alpha5.yml
+          rm -f release-src/.github/workflows/alpha5-owner-release-bootstrap.yml
+          rm -f release-src/.github/workflows/alpha5-owner-release-bootstrap-v2.yml
+          test -s release-src/.github/workflows/release-alpha5-v2.yml
+          cat > release-src/docs/development/ALPHA5_OWNER_AUTHORIZED_RELEASE_OVERRIDE.md <<'EOF'
+          # Alpha.5 Owner-Authorized Release Override
+
+          Date: 2026-10-01
+
+          This record authorizes publication of ExecSurface `v0.1.0-alpha.5` without treating P8 external validation as a pre-publication blocker.
+
+          P8_PREPUBLICATION_GATE_WAIVED_BY_OWNER=true
+          EXTERNAL_VALIDATION_CLAIM=false
+          FROZEN_PRODUCT_SHA=5067200452c174da6bc8d9d7ecf6957ee379f0a2
+          ACCEPTED_A7_RUN=36902486872
+          RETAINED_A7_FAILURE_RUN=36901600086
+          RETAINED_BOOTSTRAP_FAILURE_RUN=36909898330
+
+          Boundaries:
+          - P8 remains open after release.
+          - This waiver does not convert internal evidence into external validation.
+          - Existing negative evidence and failed release attempts remain retained.
+          - Public claims remain bounded to tested Linux x86_64 behavior and the recorded observer/authority model.
+          - ARM64 support is not claimed.
+          - Post-publication verification of the actual public artifact is mandatory.
+          - Any post-publication failure must be retained and classified; no silent artifact replacement or history rewrite is authorized.
+          EOF
+          cat > "release-src/docs/releases/$RELEASE_TAG.md" <<'EOF'
+          # ExecSurface v0.1.0-alpha.5
+
+          Fifth public alpha of ExecSurface, a runtime behavioral-integrity and verification layer for observed execution-surface drift.
+
+          ## What advances in Alpha.5
+
+          - stronger semantics-preserving handling of the current evidence model, keeping ambiguous or incomplete evidence non-PASS-eligible;
+          - stronger proposition and backend authority boundaries rather than treating a backend name as universal authority;
+          - stronger legitimate-variance handling while retaining anti-poisoning constraints on accepted behavior;
+          - stronger attestation, provenance, executable binding and release-artifact verification;
+          - improved usability, packaging and reproducibility qualification;
+          - portable release construction on Ubuntu 22.04 with a GLIBC compatibility ceiling, followed by public-artifact tests on Ubuntu 22.04 and Ubuntu 24.04.
+
+          ## Evidence boundary
+
+          Frozen product source: `5067200452c174da6bc8d9d7ecf6957ee379f0a2`.
+
+          Internal destructive release-artifact qualification passed in run `36902486872`. The earlier failed A7 run `36901600086`, which exposed reproducibility and ABI-portability problems, remains retained evidence and was repaired before the accepted run.
+
+          P8 independent external validation was **not closed before publication**. Publication was explicitly authorized by the owner with P8 waived only as a pre-publication gate. This release does **not** claim independent external validation. P8 remains open for post-release reproduction, criticism, counterexamples, interoperability review and real-workload evidence.
+
+          ## Public support boundary
+
+          - Linux x86_64 is the public support scope for this alpha.
+          - Native ptrace remains the bounded public reference observer for the portable line.
+          - ARM64 support is not claimed.
+          - Observed behavior is not all possible behavior.
+          - ExecSurface is not an antivirus, EDR, SIEM, sandbox, malware detector or proof of software safety.
+          - Incomplete or ambiguous evidence cannot silently become PASS.
+
+          ## Distribution verification
+
+          The release pipeline checks source quality, deterministic dual builds, GLIBC compatibility, checksums, provenance attestation, archive safety and privacy, clean public consumption on Ubuntu 22.04 and 24.04, source-to-artifact byte equivalence, immutable-tag installation, Action PASS/REVIEW/BLOCK/ERROR semantics, tamper rejection, stable `v0.1` promotion only after public proofs, and registry installation after publication.
+          EOF
+
+      - name: Install pinned Rust and run final pre-publication source gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+          cd release-src
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --workspace --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets
+          cargo +$RUST_TOOLCHAIN test --locked --workspace --doc
+          version="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="execsurface"))')"
+          test "$version" = "$RELEASE_VERSION"
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "$RELEASE_TAG"
+          grep -F 'Current public release: **v0.1.0-alpha.5**' README.md
+          git diff --exit-code "$FROZEN_PRODUCT_SHA" -- 'crates/*/src' 'crates/*/tests' action.yml
+
+      - name: Commit exact release materialization and publish source lineage
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-src
+          git add -A
+          git commit -m 'Release: materialize owner-authorized v0.1.0-alpha.5'
+          release_sha="$(git rev-parse HEAD)"
+          git merge-base --is-ancestor origin/main HEAD
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+          git push origin "HEAD:refs/heads/$RELEASE_BRANCH"
+          git push origin "HEAD:refs/heads/main"
+          git tag -a "$RELEASE_TAG" "$release_sha" -m "ExecSurface $RELEASE_TAG"
+          git push origin "refs/tags/$RELEASE_TAG"
+
+      - name: Verify public refs before dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-src
+          git fetch --force --tags origin main "$RELEASE_BRANCH"
+          test "$(git rev-parse origin/main)" = "${{ steps.source.outputs.release_sha }}"
+          test "$(git rev-parse "origin/$RELEASE_BRANCH")" = "${{ steps.source.outputs.release_sha }}"
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "${{ steps.source.outputs.release_sha }}"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+
+      - name: Dispatch portable public release and post-publication verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dispatched=0
+          for attempt in $(seq 1 12); do
+            if gh workflow run release-alpha5-v2.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG"; then
+              dispatched=1
+              break
+            fi
+            sleep 5
+          done
+          test "$dispatched" = 1
+
+      - name: Record bootstrap transition
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh issue comment 117 --repo "$GITHUB_REPOSITORY" --body "Alpha.5 owner-authorized bootstrap v2 passed. Historical branch \`release/v0.1.0-alpha.5\` was preserved rather than overwritten. Exact release source: \`${{ steps.source.outputs.release_sha }}\`. Main and \`$RELEASE_BRANCH\` now point to the release source; immutable tag \`$RELEASE_TAG\` was created; portable public release/post-publication verification was explicitly dispatched. P8 remains open and no external-validation claim is made. Bootstrap run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
