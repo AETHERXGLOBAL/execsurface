@@ -174,10 +174,7 @@ fn x01_wrong_proposition_cannot_be_laundered_by_pass_and_verified_provenance() {
         VerificationVerdict::Pass,
         true,
     );
-    assert!(!value.semantic_pass_admissible(&requirement(
-        "$WORKSPACE/b.txt",
-        weak_guarantees()
-    )));
+    assert!(!value.semantic_pass_admissible(&requirement("$WORKSPACE/b.txt", weak_guarantees())));
 }
 
 #[test]
@@ -192,10 +189,7 @@ fn x02_ambiguous_authority_cannot_be_laundered_by_attestation() {
         true,
     );
     assert!(value.validate().is_ok());
-    assert!(!value.semantic_pass_admissible(&requirement(
-        "$WORKSPACE/a.txt",
-        weak_guarantees()
-    )));
+    assert!(!value.semantic_pass_admissible(&requirement("$WORKSPACE/a.txt", weak_guarantees())));
 }
 
 #[test]
@@ -209,10 +203,7 @@ fn x03_observer_loss_blocks_semantic_pass_even_with_direct_authority_and_provena
         VerificationVerdict::Pass,
         true,
     );
-    assert!(!value.semantic_pass_admissible(&requirement(
-        "$WORKSPACE/a.txt",
-        weak_guarantees()
-    )));
+    assert!(!value.semantic_pass_admissible(&requirement("$WORKSPACE/a.txt", weak_guarantees())));
 }
 
 #[test]
@@ -229,10 +220,7 @@ fn x04_backend_signer_and_workflow_labels_cannot_upgrade_weak_guarantees() {
     value.authority.proof.backend_profile.name = "kernel-super-authoritative".into();
     value.bindings.signer_label = Some("root-of-trust".into());
     value.bindings.workflow_label = Some("production-approved".into());
-    assert!(!value.semantic_pass_admissible(&requirement(
-        "$WORKSPACE/a.txt",
-        strong_guarantees()
-    )));
+    assert!(!value.semantic_pass_admissible(&requirement("$WORKSPACE/a.txt", strong_guarantees())));
 }
 
 #[test]
@@ -248,10 +236,7 @@ fn x05_cross_subject_provenance_substitution_fails_before_semantic_admission() {
     );
     value.bindings.provenance.as_mut().unwrap().subject_digest = digest('9');
     assert!(value.validate().is_err());
-    assert!(!value.semantic_pass_admissible(&requirement(
-        "$WORKSPACE/a.txt",
-        weak_guarantees()
-    )));
+    assert!(!value.semantic_pass_admissible(&requirement("$WORKSPACE/a.txt", weak_guarantees())));
 }
 
 #[test]
@@ -267,10 +252,7 @@ fn x06_expected_verifier_context_cannot_be_replayed_across_attestations() {
         true,
     );
     value.bindings.verifier = digest('9');
-    assert!(value.semantic_pass_admissible(&requirement(
-        "$WORKSPACE/a.txt",
-        weak_guarantees()
-    )));
+    assert!(value.semantic_pass_admissible(&requirement("$WORKSPACE/a.txt", weak_guarantees())));
     assert!(!value.matches_expected_bindings(&expected));
 }
 
