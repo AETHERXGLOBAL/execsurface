@@ -16,7 +16,7 @@ No product-affecting row may start A0 as `ELIGIBLE_BOUNDED`.
 | Program | Research result | Status | Evidence source / boundary | Promotion note |
 |---|---|---|---|---|
 | P2 | Semantics v3: proposition-scoped evidence, explicit authority/completeness, proof-carrying observation, bounded compatibility work | ELIGIBLE_BOUNDED | Historical A1 success `36840921782`; destructive counterevidence #116 retained; repaired source `0200f09557906118dd0e96f8a5a73aa4f5c4a9cc`; independent falsification `36853136002`; final candidate requalification run `36853799391`, artifact `11157785131` | Requalified after material-gap repair. Side-by-side candidate only; v2 remains v2; cross-schema default is `INCOMPARABLE_SCHEMA`; no public/default v3 or migration authorized. |
-| P3 | Legitimate-variance / ephemeral-identity work | UNASSESSED | Bounded research decision retained on parent branch | Must prove lower false REVIEW with zero new false PASS; frequency never authorizes behavior. |
+| P3 | Legitimate-variance / ephemeral-identity work | ELIGIBLE_BOUNDED | Bounded GCC ephemeral projection only; accepted source `96ef1e2f6f316460cc88af4f89403455a910b2b4`; run `36861859874`; closeout artifact `11161694287`; attack artifact `11161424642`; decision `POST_ALPHA4_PROMOTION_A4_P3_VARIANCE_ELIGIBLE_BOUNDED_CANDIDATE`; failed pre-scientific runs `36860850659`, `36861039687`, `36861324520`, `36861475284` retained | Eligible only for the frozen GCC producer/role/grammar projection. Frequency, recurrence and similarity never authorize; raw evidence remains retained; generic learned variance and broad temp suppression remain out of scope. |
 | P4 | Backend Adapter / Proposition Authority architecture | ELIGIBLE_BOUNDED | P4 closeout source `320c865d3e81071a8214ad726dca7a587b0fc479`; A2 candidate evidence source `d02151e8f2d1f6b0a6558d52da6f48e74763e0a5`; run `36855716538`; artifact `11159141703`; decision `POST_ALPHA4_PROMOTION_A2_P4_AUTHORITY_REQUALIFIED_BOUNDED_CANDIDATE` | Proposition-scoped authority eligible for continued candidate integration only. Backend name never raises authority; backend equivalence and baseline interchangeability remain unproved. |
 | P5 | Runtime attestation/provenance composition using existing standards | ELIGIBLE_BOUNDED | P5 bounded closeout retained; A3 accepted source `0f6cbc68bea380ff25889e762cb8cd5287a9c5a3`; run `36858724331`; closeout artifact `11160521675`; decision `POST_ALPHA4_PROMOTION_A3_P5_ATTESTATION_ELIGIBLE_BOUNDED_CANDIDATE`; initial formatting-only failure `36858589653` retained | Existing standards composition eligible for continued candidate integration only. Cryptographic/signature/provenance validity never raises semantic authority; no custom-standard claim. |
 | P6 | Competitive falsification/comparison harness and factual matrix | UNASSESSED | P6 bounded closeout; successful closeout workflow run `36773688443` | Assess as validation/tooling infrastructure separately from runtime feature promotion. No winner score. |
@@ -106,8 +106,53 @@ Retained A3 boundaries:
 - no custom predicate/schema novelty claim;
 - no public integration, `main` merge, release/tag movement or P8 closure authorized.
 
+## Closed assessment — A4 / P3
+
+A4 evaluated only the bounded GCC ephemeral-identity projection that survived prior P3 research. It did not reopen generic variance learning or convert recurrence into authorization.
+
+Accepted evidence:
+- accepted candidate source: `96ef1e2f6f316460cc88af4f89403455a910b2b4`;
+- workflow run: `36861859874` — SUCCESS;
+- closeout artifact: `11161694287`, digest `sha256:6b94dc9e849359350f744b1489d89893b946ff7c95b109b287304e518a230730`;
+- frozen A4 attack artifact: `11161424642`, digest `sha256:39d4fae1ef0d36be55b76c6501fdc0adee4971434a68ac88a09e5f95706a8f5b`;
+- prior-P3 falsifier artifact: `11162255036`, digest `sha256:ecf9fa6f7562425d505964b70ae2ff9f01518ea50a075ba360b3f9c1588bd68c`;
+- exact frozen A4 corpus: **12/12 PASS**;
+- existing GCC candidate unit corpus: **7/7 PASS**;
+- P3 V4 poisoning / false-PASS falsifier replay: PASS;
+- repaired Semantics-v3 admission reproof: PASS;
+- rustfmt + Clippy `-D warnings`: PASS;
+- immutable public anchors: PASS.
+
+Value and safety established within the bounded scope:
+- the legitimate GCC ephemeral pair becomes equal only in the derived projection, reducing identity-only false REVIEW;
+- meaningful non-ephemeral drift remains visible;
+- wrong actor/root/grammar/role, collision and rename cases remain ineligible;
+- 256-fold repetition does not manufacture eligibility;
+- raw evidence is not mutated;
+- projection is deterministic under the tested effect-order variation;
+- unrelated Go-build normalization remains distinct.
+
+Retained failed A4 execution evidence:
+- `36860850659` — pre-scientific static-gate failure; A4 scientific corpus did not execute;
+- `36861039687` — pre-scientific static-gate failure; A4 scientific corpus did not execute;
+- `36861324520` — lockfile PASS, rustfmt FAIL; Clippy/scientific corpus did not execute;
+- `36861475284` — diagnostic rustfmt FAIL; exact Rust 1.90 output retained in artifact `11161608989`, digest `sha256:a454432f96671e79fb4044779fa3b7b98b8df893468a407b1055e21cada34b23`.
+
+No test name, scientific assertion, threshold, acceptance rule or candidate semantic mechanism was weakened to obtain the successful run.
+
+Current A4 decision:
+`POST_ALPHA4_PROMOTION_A4_P3_VARIANCE_ELIGIBLE_BOUNDED_CANDIDATE`
+
+Retained A4 boundaries:
+- only exact GCC producer/role/grammar ephemeral projection is eligible;
+- frequency, recurrence and similarity remain non-authoritative;
+- no learned acceptance or broad temp/cache suppression;
+- raw evidence and prior P3 negative evidence remain retained;
+- public v2 semantics remain unchanged;
+- no public integration, `main` merge, release/tag movement or P8 closure authorized.
+
 ## Next assessment
 
-A4 evaluates **P3 legitimate-variance / ephemeral-identity promotion eligibility**.
+A5 evaluates **P6 competitive falsification/comparison tooling promotion eligibility** separately from runtime-feature promotion.
 
-A4 must demonstrate a measurable reduction in false REVIEW for the bounded legitimate-variance case while introducing zero new false PASS in the frozen falsifier corpus. Frequency, similarity or repeated observation must never become authorization, raw evidence must remain retained, and canonicalization must not erase meaningful behavioral drift.
+A5 must prove that comparison/falsification infrastructure remains factual and reproducible, cannot manufacture semantic authority or external-validation claims, preserves negative findings, and does not introduce a composite winner score or use competitor comparison as a substitute for product correctness.
