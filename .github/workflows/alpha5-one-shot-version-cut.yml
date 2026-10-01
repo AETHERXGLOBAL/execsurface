@@ -1,0 +1,109 @@
+name: Alpha5 one-shot exact-source version cut
+
+on:
+  push:
+    branches: [release/v0.1.0-alpha.5]
+    paths: ['.github/workflows/alpha5-one-shot-version-cut.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  version-cut:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Apply bounded alpha.4 to alpha.5 release-surface cut
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          old='0.1.0-alpha.4'
+          new='0.1.0-alpha.5'
+          files=[Path('Cargo.toml'), Path('Cargo.lock'), Path('README.md'), Path('action/release-tag.txt'), Path('docs/QUICKSTART_5_MIN.md'), Path('docs/SELF_SERVICE_START.md'), Path('docs/GITHUB_ACTION.md'), Path('.github/workflows/release.yml'), Path('.github/workflows/publish-crates.yml')]
+          files += sorted(Path('crates').glob('*/Cargo.toml'))
+          changed=[]
+          for p in files:
+              if not p.exists():
+                  raise SystemExit(f'missing active release surface: {p}')
+              s=p.read_text()
+              if old in s:
+                  p.write_text(s.replace(old,new))
+                  changed.append(str(p))
+          if 'Cargo.toml' not in changed or 'Cargo.lock' not in changed or 'action/release-tag.txt' not in changed:
+              raise SystemExit(f'mandatory version surfaces not changed: {changed}')
+          print('\n'.join(changed))
+          PY
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = 'v0.1.0-alpha.5'
+          grep -F 'version = "0.1.0-alpha.5"' Cargo.toml
+          ! grep -F '=0.1.0-alpha.4' crates/*/Cargo.toml
+          git diff --check
+      - name: Create bounded release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p docs/releases
+          cat > docs/releases/v0.1.0-alpha.5.md <<'EOF'
+          # ExecSurface v0.1.0-alpha.5
+
+          Fifth public-alpha candidate, assembled from the immutable alpha.4 public line through the evidence-gated post-alpha.4 promotion program.
+
+          ## Behavioral-integrity hardening
+
+          - adds opt-in Semantics-v3 proof-contract machinery with proposition-bound requirements, fail-closed ambiguity handling, and rejection of empty/underspecified proof contracts;
+          - preserves baseline-v2/public-default behavior; there is no silent v2→v3 reinterpretation;
+          - keeps proposition authority explicit: backend names, versions, frequency, similarity, signatures, and attestation metadata do not manufacture semantic authority;
+          - retains bounded legitimate-variance handling without turning recurrence into authorization;
+          - retains explicit attestation/provenance bindings without treating cryptographic validity as semantic proof.
+
+          ## Adversarial verification
+
+          The clean candidate was replayed through Semantics-v3 repair and promotion corpora, proposition-authority attacks, attestation substitution attacks, variance-poisoning tests, M11/M12 shared-FD and PATH-TOCTOU adversarial suites on Ubuntu 22.04/24.04, public-surface compatibility, package/install checks, and a final integrated destructive closeout.
+
+          ## Reproducible release engineering
+
+          An initial two-snapshot reproducibility run failed because binaries built from different absolute source roots were not byte-identical. That failure remains retained. The release build recipe now remaps the source root to a canonical virtual path and keeps the original byte-identity criterion. Independent same-environment builds subsequently produced identical binary, crate package, and deterministic bundle hashes.
+
+          ## Developer experience
+
+          - Linux x86_64 remains the bounded public support scope;
+          - native ptrace remains the public default/reference observer;
+          - CLI, package install, local GitHub Action PASS/REVIEW/BLOCK/ERROR behavior, privacy sentinel handling, and rollback/default-v2 contracts are regression-tested;
+          - incomplete, ambiguous, unsupported, or lost evidence remains non-PASS-eligible.
+
+          ## Explicit boundaries
+
+          - eBPF/BPF-LSM work remains research-only/non-default;
+          - native arm64 portability is not claimed;
+          - observed behavior is not all possible behavior;
+          - internal A8 evidence does not close P8 external validation and must not be described as independent external validation.
+
+          Publication remains gated by the external-validation boundary and final release readiness. This file is release-preparation material until an immutable `v0.1.0-alpha.5` tag and GitHub Release exist.
+          EOF
+          sed -i 's/^          //' docs/releases/v0.1.0-alpha.5.md
+      - name: Verify metadata resolves to alpha.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --no-deps --format-version 1 > metadata.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('metadata.json'))
+          bad=[(p['name'],p['version']) for p in d['packages'] if p['version']!='0.1.0-alpha.5']
+          if bad: raise SystemExit(f'workspace version mismatch: {bad}')
+          PY
+          git diff --exit-code -- Cargo.lock || true
+      - name: Commit exact-source version cut
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f metadata.json
+          git diff --check
+          git config user.name 'aetherx-alpha5-release'
+          git config user.email 'aetherx-alpha5-release@users.noreply.github.com'
+          git add Cargo.toml Cargo.lock crates/*/Cargo.toml README.md action/release-tag.txt docs/QUICKSTART_5_MIN.md docs/SELF_SERVICE_START.md docs/GITHUB_ACTION.md docs/releases/v0.1.0-alpha.5.md .github/workflows/release.yml .github/workflows/publish-crates.yml
+          git commit -m 'Release: prepare v0.1.0-alpha.5 exact source'
+          git push origin HEAD:release/v0.1.0-alpha.5
