@@ -1,0 +1,95 @@
+name: Post-alpha4 promotion A0 gate
+
+on:
+  push:
+    branches:
+      - integration/post-alpha4-promotion-candidate
+    paths:
+      - docs/development/POST_ALPHA4_PROMOTION_INTEGRATION_PROTOCOL.md
+      - docs/development/POST_ALPHA4_PROMOTION_INVENTORY.md
+      - .github/workflows/post-alpha4-promotion-a0.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  a0-protocol-and-immutability:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify branch and public tag anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_BRANCH='integration/post-alpha4-promotion-candidate'
+          PUBLIC_SHA='48e0b9a0707553349e75e97a9dfa096d13f9ab5d'
+
+          test "${GITHUB_REF_NAME}" = "${EXPECTED_BRANCH}"
+          git fetch --force --tags origin
+
+          alpha_sha="$(git rev-list -n 1 v0.1.0-alpha.4)"
+          stable_sha="$(git rev-list -n 1 v0.1)"
+
+          test "${alpha_sha}" = "${PUBLIC_SHA}"
+          test "${stable_sha}" = "${PUBLIC_SHA}"
+          git merge-base --is-ancestor "${PUBLIC_SHA}" HEAD
+
+      - name: Verify frozen governance markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          protocol='docs/development/POST_ALPHA4_PROMOTION_INTEGRATION_PROTOCOL.md'
+          inventory='docs/development/POST_ALPHA4_PROMOTION_INVENTORY.md'
+
+          grep -F 'A0 PREREGISTERED — NO PRODUCT PROMOTION AUTHORIZED' "${protocol}"
+          grep -F '48e0b9a0707553349e75e97a9dfa096d13f9ab5d' "${protocol}"
+          grep -F 'P8 is externally dependent and remains open' "${protocol}"
+          grep -F 'Linux arm64 is **not** promoted as supported' "${protocol}"
+          grep -F '| P8 | Current external validation / independent reproduction / criticism | BLOCKED |' "${inventory}"
+          grep -F '| P7-arm64 | Native arm64 parity path tested and not established portable in bounded experiment | NEGATIVE_RETAINED |' "${inventory}"
+
+          if grep -E '^\| P(2|3|4|5|6|7|8)' "${inventory}" | grep -F '| ELIGIBLE_BOUNDED |'; then
+            echo 'A0 violation: inventory contains a pre-promoted product-affecting item.' >&2
+            exit 1
+          fi
+
+      - name: Verify A0 commit scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          allowed='^(docs/development/POST_ALPHA4_PROMOTION_INTEGRATION_PROTOCOL\.md|docs/development/POST_ALPHA4_PROMOTION_INVENTORY\.md|\.github/workflows/post-alpha4-promotion-a0\.yml)$'
+          unexpected="$(git diff --name-only HEAD^ HEAD | grep -Ev "${allowed}" || true)"
+          if [ -n "${unexpected}" ]; then
+            echo 'A0 violation: unexpected paths changed in protocol-freeze commit:' >&2
+            printf '%s\n' "${unexpected}" >&2
+            exit 1
+          fi
+
+      - name: Produce A0 evidence report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            echo 'decision=POST_ALPHA4_PROMOTION_A0_PROTOCOL_PASS'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo 'candidate_branch=integration/post-alpha4-promotion-candidate'
+            echo 'public_alpha4_sha=48e0b9a0707553349e75e97a9dfa096d13f9ab5d'
+            echo "alpha4_tag_sha=$(git rev-list -n 1 v0.1.0-alpha.4)"
+            echo "stable_v0_1_tag_sha=$(git rev-list -n 1 v0.1)"
+            echo 'p8_status=BLOCKED_EXTERNAL_INPUT_PENDING'
+            echo 'arm64_status=NEGATIVE_RETAINED'
+            echo 'public_promotion_authorized=false'
+          } | tee evidence/post-alpha4-promotion-a0.txt
+
+      - name: Upload A0 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-promotion-a0-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/post-alpha4-promotion-a0.txt
+          if-no-files-found: error
