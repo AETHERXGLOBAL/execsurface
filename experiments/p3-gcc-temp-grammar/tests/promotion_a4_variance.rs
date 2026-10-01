@@ -286,10 +286,7 @@ fn a4_12_unrelated_existing_normalization_remains_distinct() {
     let input = surface(vec![file(
         GCC,
         FileOperation::Open,
-        path(
-            "$TMP/go-build<ephemeral>/b001/vet.cfg",
-            PathClass::Temp,
-        ),
+        path("$TMP/go-build<ephemeral>/b001/vet.cfg", PathClass::Temp),
         Some(create_intent()),
     )]);
     assert!(eligible(&input).is_empty());
