@@ -1,0 +1,318 @@
+name: Alpha5 candidate A6 final integrated destructive assault
+
+on:
+  push:
+    branches:
+      - integration/post-alpha4-promotion-candidate
+    paths:
+      - .github/workflows/alpha5-candidate-a6-final-destructive.yml
+      - scripts/post_alpha4_a7_integrated_falsifier.py
+      - .github/m12-fixtures/**
+      - crates/**
+      - experiments/p3-gcc-temp-grammar/**
+      - experiments/p3-v4-falsifier/**
+      - experiments/p4-backend-authority/**
+      - experiments/p5-attestation-provenance/**
+      - experiments/p5-cross-attestation-redteam/**
+      - experiments/p7-platform-ci/**
+      - action/**
+      - action.yml
+      - README.md
+      - docs/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: alpha5-candidate-a6-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  ALPHA5_A5_FLOOR: 79955e3d85ac23dda1239d5efbdcb2f4761dcc96
+  A4_HARNESS_FAILURE_RUN: '36898676440'
+  A5_HARNESS_FAILURE_RUN: '36899085032'
+  HISTORICAL_P5_NEGATIVE_RUN: '36755962689'
+
+jobs:
+  identity-governance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Verify frozen public boundary and candidate order
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'integration/post-alpha4-promotion-candidate'
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$ALPHA5_A5_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = 'v0.1.0-alpha.4'
+          ! git show-ref --verify --quiet refs/tags/v0.1.0-alpha.5
+          grep -F 'pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/lib.rs
+          grep -F 'pub const SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION: u32 = 3;' crates/execsurface-model/src/semantics_v3.rs
+      - name: Execute exact frozen 16-invariant A7 governance falsifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(grep -c '^    def test_a7_[0-9][0-9]_' scripts/post_alpha4_a7_integrated_falsifier.py)" -eq 16
+          python3 scripts/post_alpha4_a7_integrated_falsifier.py 2>&1 | tee a7-falsifier.log
+          grep -q 'Ran 16 tests' a7-falsifier.log
+          grep -q '^OK$' a7-falsifier.log
+      - name: Verify retained negative runs remain failures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run in "$A4_HARNESS_FAILURE_RUN" "$A5_HARNESS_FAILURE_RUN" "$HISTORICAL_P5_NEGATIVE_RUN"; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" > "run-$run.json"
+            jq -e '.status == "completed" and .conclusion == "failure"' "run-$run.json" >/dev/null
+          done
+      - name: Verify no arm64 promotion and P8 remains external
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -R -F 'P8_EXTERNAL_EVIDENCE_INSUFFICIENT' docs/development docs/reviews 2>/dev/null | head -n 1
+          grep -R -Ei 'arm64.*(not|no |unsupported|negative)|not.*arm64' docs/development docs/reviews 2>/dev/null | head -n 1
+
+  semantics-p4-live:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Rebreak repaired Semantics v3
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+      - name: Rebreak proposition-scoped authority
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test promotion_a2_authority_sensitivity -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b_cross_proposition_falsification -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b0_success_evidence -- --nocapture
+      - name: Live ptrace authority attack corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b1_ptrace_open_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b2_ptrace_rename_delete_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b3_ptrace_connect_live -- --nocapture
+
+  p5-cross-layer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Static P5 gate
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --all-targets -- -D warnings
+      - name: Cross-attestation substitution and authority attacks
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test promotion_a3_attestation_authority -- --nocapture 2>&1 | tee p5-authority.log
+          grep -q 'test result: ok. 12 passed; 0 failed' p5-authority.log
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test a5_graph_redteam -- --nocapture 2>&1 | tee p5-graph.log
+          grep -q 'test result: ok. 12 passed; 0 failed' p5-graph.log
+      - name: Standards binding replay
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_scai_svr_binding -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a1_runtime_trace_mapping -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a0_standards_composition -- --nocapture
+
+  variance-platform:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Exact 12-test legitimate variance corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --test promotion_a4_variance -- --nocapture 2>&1 | tee p3-variance.log
+          grep -q 'test result: ok. 12 passed; 0 failed' p3-variance.log
+      - name: Poisoning and false-PASS falsifier
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-v4-falsifier/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-v4-falsifier/Cargo.toml --all-targets -- --nocapture
+      - name: P7 platform contract replay
+        working-directory: experiments/p7-platform-ci
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v test_gitlab_context_adapter.py
+          python3 -m unittest -v test_self_hosted_evidence_contract.py
+          python3 -m unittest -v test_self_hosted_package.py
+
+  m12-adversarial:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Compile adversarial fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/path_toctou_target.c -o "$RUNNER_TEMP/alpha5-path-toctou"
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/fd_share_race_target.c -o "$RUNNER_TEMP/alpha5-fd-share-race"
+      - name: Observer format and clippy
+        run: |
+          set -euo pipefail
+          rustfmt --edition 2021 --check crates/execsurface-observe/tests/m12_adversarial.rs
+          cargo clippy --locked -p execsurface-observe --all-targets -- -D warnings
+      - name: PATH-TOCTOU and shared-FD destructive suite
+        env:
+          M12_PATH_TOCTOU_BIN: ${{ runner.temp }}/alpha5-path-toctou
+          M12_FD_SHARE_BIN: ${{ runner.temp }}/alpha5-fd-share-race
+          M12_PATH_RUNS: '300'
+          M12_RESULT_DIR: ${{ runner.temp }}/alpha5-m12-results
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$M12_RESULT_DIR"
+          cargo test --locked -p execsurface-observe --test m12_adversarial -- --test-threads=1 --nocapture
+          test -s "$M12_RESULT_DIR/path-toctou.json"
+          test -s "$M12_RESULT_DIR/shared-fd.json"
+      - name: Existing ptrace and M11 regressions
+        run: |
+          set -euo pipefail
+          cargo test --locked -p execsurface-observe --test ptrace_linux
+          cargo test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
+      - name: Upload destructive evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a6-m12-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/alpha5-m12-results
+          if-no-files-found: warn
+
+  action-enforcement:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Build candidate learner and baseline
+        run: |
+          set -euo pipefail
+          cargo build --locked -p execsurface --bin execsurface
+          ./target/debug/execsurface learn --output alpha5-a6.lock.json -- /bin/bash -lc true
+      - name: Action PASS
+        id: pass
+        uses: ./
+        with: {command: 'true', baseline: alpha5-a6.lock.json, upload-artifact: 'false'}
+      - name: Assert PASS
+        env: {VERDICT: '${{ steps.pass.outputs.verdict }}', EXIT_CODE: '${{ steps.pass.outputs.exit-code }}'}
+        run: |
+          test "$VERDICT" = pass
+          test "$EXIT_CODE" = 0
+      - name: Action REVIEW
+        id: review
+        uses: ./
+        with: {command: 'true; /bin/echo a6-drift >/dev/null', baseline: alpha5-a6.lock.json, upload-artifact: 'false'}
+      - name: Assert REVIEW
+        env: {VERDICT: '${{ steps.review.outputs.verdict }}', EXIT_CODE: '${{ steps.review.outputs.exit-code }}'}
+        run: |
+          test "$VERDICT" = review
+          test "$EXIT_CODE" = 10
+      - name: Create blocking policy
+        run: |
+          cat > alpha5-a6-policy.json <<'JSON'
+          {"schema_version":1,"default_action":"review","rules":[{"id":"block-added-exec","action":"block","match":{"change":"added","effect":"process_exec"}}]}
+          JSON
+      - name: Action BLOCK
+        id: block
+        continue-on-error: true
+        uses: ./
+        with: {command: 'true; /bin/echo a6-block >/dev/null', baseline: alpha5-a6.lock.json, policy: alpha5-a6-policy.json, upload-artifact: 'false'}
+      - name: Assert BLOCK
+        env: {OUTCOME: '${{ steps.block.outcome }}', VERDICT: '${{ steps.block.outputs.verdict }}', EXIT_CODE: '${{ steps.block.outputs.exit-code }}'}
+        run: |
+          test "$OUTCOME" = failure
+          test "$VERDICT" = block
+          test "$EXIT_CODE" = 20
+      - name: Action ERROR
+        id: error
+        continue-on-error: true
+        uses: ./
+        with: {command: 'true', baseline: missing-alpha5-a6.lock.json, upload-artifact: 'false'}
+      - name: Assert ERROR
+        env: {OUTCOME: '${{ steps.error.outcome }}', VERDICT: '${{ steps.error.outputs.verdict }}', EXIT_CODE: '${{ steps.error.outputs.exit-code }}'}
+        run: |
+          test "$OUTCOME" = failure
+          test "$VERDICT" = error
+          test "$EXIT_CODE" = 2
+      - name: Privacy sentinel must not leak
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./target/debug/execsurface learn --output alpha5-a6-privacy.lock.json -- /bin/bash -lc 'printf "%s" "AX_ALPHA5_A6_SECRET_8f3c" >/dev/null'
+          ./target/debug/execsurface check --baseline alpha5-a6-privacy.lock.json -- /bin/bash -lc 'printf "%s" "AX_ALPHA5_A6_SECRET_8f3c" >/dev/null'
+          ! grep -R -F 'AX_ALPHA5_A6_SECRET_8f3c' . --include='*.json' --include='*.md'
+
+  closeout:
+    needs: [identity-governance, semantics-p4-live, p5-cross-layer, variance-platform, m12-adversarial, action-enforcement]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Record final bounded internal destructive result
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$ALPHA5_A5_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          mkdir -p evidence
+          {
+            echo 'decision_candidate=ALPHA5_A6_INTEGRATED_DESTRUCTIVE_SURVIVES_BOUNDED_INTERNAL'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "alpha5_a5_floor=${ALPHA5_A5_FLOOR}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo 'material_internal_gap_found=false'
+            echo 'path_toctou_replayed=true'
+            echo 'shared_fd_replayed=true'
+            echo 'ubuntu_22_04_replayed=true'
+            echo 'ubuntu_24_04_replayed=true'
+            echo 'cross_layer_authority_laundering=false'
+            echo 'negative_evidence_retained=true'
+            echo 'arm64_support_promoted=false'
+            echo 'release_authorized=false'
+            echo 'p8_external_validation_closed=false'
+          } | tee evidence/alpha5-a6-final-destructive.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a6-final-destructive-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/alpha5-a6-final-destructive.txt
+          if-no-files-found: error
+          retention-days: 90
