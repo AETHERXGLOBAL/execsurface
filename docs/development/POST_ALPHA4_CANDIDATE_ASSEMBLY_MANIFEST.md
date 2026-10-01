@@ -41,6 +41,7 @@ After closure, the A1 workflow was converted to a slice-stability integration re
 ## A8-A2 — Proposition authority
 
 Preregistered protocol source: `7250002f3f7cb83f3f9ca930e8acedb524d57580`.
+Implementation source: `34c7060a58270f9bd8ed538640fcf696876e741c`.
 Research evidence sources: P4 closeout `320c865d3e81071a8214ad726dca7a587b0fc479`; promotion A2 `d02151e8f2d1f6b0a6558d52da6f48e74763e0a5`.
 
 Admitted implementation delta:
