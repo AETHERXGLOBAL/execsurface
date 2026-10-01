@@ -19,15 +19,17 @@ concurrency:
 env:
   FROZEN_SHA: 5067200452c174da6bc8d9d7ecf6957ee379f0a2
   ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
-  DRY_RUN: '36900721300'
-  DRY_RUN_HEAD: 0b857c1528218abfcc71f5eaf90eb2d51f3b29d2
-  DRY_RUN_ARTIFACT: '11180749812'
-  DRY_RUN_ARTIFACT_DIGEST: sha256:beb3cdf48073edef464817f9be14f22275c79ea2acc32c3af6336b1803832267
+  DRY_RUN: '36901991871'
+  DRY_RUN_HEAD: 10a27bea65044bcca575454010c18f62540fa15b
+  DRY_RUN_ARTIFACT: '11182231176'
+  DRY_RUN_ARTIFACT_DIGEST: sha256:476d8aaa86d47934b042c947b71b3aaca35ce52498783f9ff2d6c41f9dc2c798
+  RETAINED_FAILED_A7_RUN: '36901600086'
   NEXT_VERSION: 0.1.0-alpha.5
   NEXT_TAG: v0.1.0-alpha.5
   TARGET_TRIPLE: x86_64-unknown-linux-gnu
   ASSET_NAME: execsurface-v0.1.0-alpha.5-x86_64-unknown-linux-gnu.tar.gz
   RUST_TOOLCHAIN: 1.90.0
+  SOURCE_DATE_EPOCH: '1790875860'
 
 jobs:
   artifact-binding:
@@ -38,7 +40,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Bind exact dry-run artifact and immutable public anchors
+      - name: Bind exact repaired artifact, retained failure, and public anchors
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -48,6 +50,8 @@ jobs:
           test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
           test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
           ! git show-ref --verify --quiet refs/tags/v0.1.0-alpha.5
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RETAINED_FAILED_A7_RUN" > retained-failure.json
+          jq -e '.status == "completed" and .conclusion == "failure"' retained-failure.json >/dev/null
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$DRY_RUN" > run.json
           jq -e --arg sha "$DRY_RUN_HEAD" '.status == "completed" and .conclusion == "success" and .head_sha == $sha' run.json >/dev/null
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$DRY_RUN_ARTIFACT" > artifact.json
@@ -63,11 +67,9 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$DRY_RUN_ARTIFACT/zip" \
             -o dry-run-artifact.zip
-          got="sha256:$(sha256sum dry-run-artifact.zip | awk '{print $1}')"
-          test "$got" = "$DRY_RUN_ARTIFACT_DIGEST"
+          test "sha256:$(sha256sum dry-run-artifact.zip | awk '{print $1}')" = "$DRY_RUN_ARTIFACT_DIGEST"
           unzip -q dry-run-artifact.zip -d preserved
-          find preserved -type f -print | sort
-      - name: Verify bundle checksum provenance and archive safety
+      - name: Verify checksum, provenance, build contract, and archive safety
         shell: bash
         run: |
           set -euo pipefail
@@ -76,13 +78,12 @@ jobs:
           sidecar="${asset}.sha256"
           test -s "$sidecar"
           (cd "$(dirname "$asset")" && sha256sum -c "$(basename "$sidecar")")
-          prov="$(find preserved -type f -name alpha5-provenance.json -print -quit)"
+          prov="$(find preserved -type f -name alpha5-provenance-v2.json -print -quit)"
           test -s "$prov"
           ASSET="$asset" PROV="$prov" python3 - <<'PY'
           import hashlib,json,os,tarfile
           from pathlib import Path,PurePosixPath
-          asset=Path(os.environ['ASSET'])
-          p=json.loads(Path(os.environ['PROV']).read_text())
+          asset=Path(os.environ['ASSET']); p=json.loads(Path(os.environ['PROV']).read_text())
           assert p['_type']=='https://in-toto.io/Statement/v1'
           assert p['predicateType']=='https://slsa.dev/provenance/v1'
           assert len(p['subject'])==1
@@ -91,25 +92,27 @@ jobs:
           assert hashlib.sha256(asset.read_bytes()).hexdigest()==s['digest']['sha256']
           bd=p['predicate']['buildDefinition']
           assert bd['internalParameters']['frozenSourceCommit']==os.environ['FROZEN_SHA']
+          assert bd['internalParameters']['sourceDateEpoch']==os.environ['SOURCE_DATE_EPOCH']
+          assert bd['internalParameters']['deterministicPathRemap'] is True
           assert bd['externalParameters']['prospectiveVersion']==os.environ['NEXT_VERSION']
           assert bd['externalParameters']['prospectiveTag']==os.environ['NEXT_TAG']
           assert bd['externalParameters']['target']==os.environ['TARGET_TRIPLE']
+          assert bd['externalParameters']['builderBaseline']=='ubuntu-22.04'
           assert p['predicate']['runDetails']['metadata']['dryRun'] is True
           root=f"execsurface-{os.environ['NEXT_TAG']}-{os.environ['TARGET_TRIPLE']}"
-          allowed={root, f'{root}/execsurface', f'{root}/LICENSE', f'{root}/NOTICE', f'{root}/BUILD_INFO.txt'}
+          required={f'{root}/execsurface',f'{root}/LICENSE',f'{root}/NOTICE',f'{root}/BUILD_INFO.txt'}
           seen=set()
           with tarfile.open(asset,'r:gz') as tf:
               for m in tf.getmembers():
                   pp=PurePosixPath(m.name)
-                  assert not pp.is_absolute()
-                  assert '..' not in pp.parts
+                  assert not pp.is_absolute() and '..' not in pp.parts
                   assert m.name not in seen
                   seen.add(m.name)
-                  assert m.name in allowed, m.name
+                  assert m.name in ({root}|required), m.name
                   assert not (m.issym() or m.islnk() or m.isdev())
-          assert {f'{root}/execsurface',f'{root}/LICENSE',f'{root}/NOTICE',f'{root}/BUILD_INFO.txt'} <= seen
+          assert required <= seen
           PY
-      - name: Extract and verify build identity
+      - name: Verify embedded build identity
         shell: bash
         run: |
           set -euo pipefail
@@ -121,6 +124,9 @@ jobs:
           grep -Fx "product_version=$NEXT_VERSION" "$root/BUILD_INFO.txt"
           grep -Fx "target=$TARGET_TRIPLE" "$root/BUILD_INFO.txt"
           grep -Fx "frozen_source_commit=$FROZEN_SHA" "$root/BUILD_INFO.txt"
+          grep -Fx 'builder_baseline=ubuntu-22.04' "$root/BUILD_INFO.txt"
+          grep -Fx 'rust_toolchain=1.90.0' "$root/BUILD_INFO.txt"
+          grep -Fx 'deterministic_path_remap=true' "$root/BUILD_INFO.txt"
           grep -Fx 'publication=dry-run-only' "$root/BUILD_INFO.txt"
           grep -Fx 'p8_external_validation_closed=false' "$root/BUILD_INFO.txt"
           test "$("$root/execsurface" --version)" = "execsurface $NEXT_VERSION"
@@ -130,6 +136,7 @@ jobs:
           path: |
             run.json
             artifact.json
+            retained-failure.json
           if-no-files-found: error
           retention-days: 90
 
@@ -160,7 +167,7 @@ jobs:
           tar -xzf "$asset" -C extracted
           cp "extracted/execsurface-${NEXT_TAG}-${TARGET_TRIPLE}/execsurface" ./execsurface
           chmod 0755 ./execsurface
-      - name: Pure black-box CLI contract
+      - name: Pure black-box CLI and verdict contract
         shell: bash
         run: |
           set -euo pipefail
@@ -190,12 +197,15 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: alpha5-a7-blackbox-${{ matrix.os }}-${{ github.run_id }}
-          path: case/
+          path: |
+            doctor.out
+            help.out
+            case/
           if-no-files-found: error
           retention-days: 90
 
   source-equivalence:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
       - name: Checkout exact frozen source
@@ -209,8 +219,12 @@ jobs:
         run: |
           set -euo pipefail
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
-      - name: Recreate release staging transform independently
+      - name: Recreate exact staging transform and deterministic build independently
         shell: bash
+        env:
+          CARGO_INCREMENTAL: '0'
+          TZ: UTC
+          LC_ALL: C
         run: |
           set -euo pipefail
           cp -a frozen control
@@ -229,7 +243,10 @@ jobs:
               out.append('\n'.join(ls))
           lock.write_text('[[package]]'.join(out))
           PY
-          CARGO_TARGET_DIR="$RUNNER_TEMP/control-target" cargo +$RUST_TOOLCHAIN build --manifest-path control/Cargo.toml --locked --release -p execsurface --bin execsurface
+          common='-C debuginfo=0 -C link-arg=-Wl,--build-id=none'
+          RUSTFLAGS="$common --remap-path-prefix=$(pwd)/control=/src --remap-path-prefix=$HOME/.cargo=/cargo" \
+            CARGO_TARGET_DIR="$RUNNER_TEMP/control-target" \
+            cargo +$RUST_TOOLCHAIN build --manifest-path control/Cargo.toml --locked --release -p execsurface --bin execsurface
           cp "$RUNNER_TEMP/control-target/release/execsurface" control-binary
           test "$(./control-binary --version)" = "execsurface $NEXT_VERSION"
       - name: Download exact preserved release binary
@@ -250,12 +267,22 @@ jobs:
           tar -xzf "$asset" -C extracted
           cp "extracted/execsurface-${NEXT_TAG}-${TARGET_TRIPLE}/execsurface" artifact-binary
           chmod 0755 artifact-binary
-      - name: Require byte-for-byte build equivalence
+      - name: Require byte-for-byte frozen-source equivalence and glibc ceiling
         shell: bash
         run: |
           set -euo pipefail
           sha256sum artifact-binary control-binary | tee binary-digests.txt
           cmp -s artifact-binary control-binary
+          strings artifact-binary | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sort -Vu | tee glibc-required.txt
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          vals=[]
+          for x in Path('glibc-required.txt').read_text().splitlines():
+              m=re.fullmatch(r'GLIBC_([0-9]+(?:\.[0-9]+)+)',x.strip())
+              if m: vals.append(tuple(map(int,m.group(1).split('.'))))
+          assert vals and max(vals) <= (2,35), vals
+          PY
       - name: Require bidirectional baseline and verdict equivalence
         shell: bash
         run: |
@@ -284,6 +311,7 @@ jobs:
           name: alpha5-a7-source-equivalence-${{ github.run_id }}
           path: |
             binary-digests.txt
+            glibc-required.txt
             artifact-help.txt
             control-help.txt
             artifact-doctor.txt
@@ -312,8 +340,8 @@ jobs:
           asset="$(find preserved -type f -name "$ASSET_NAME" -print -quit)"
           cp "$asset" original.tar.gz
           cp "${asset}.sha256" original.tar.gz.sha256
-          cp "$(find preserved -type f -name alpha5-provenance.json -print -quit)" provenance.json
-      - name: Reject archive mutation and truncation
+          cp "$(find preserved -type f -name alpha5-provenance-v2.json -print -quit)" provenance.json
+      - name: Reject archive mutation, truncation, and binary tamper
         shell: bash
         run: |
           set -euo pipefail
@@ -325,6 +353,12 @@ jobs:
             echo 'truncated archive unexpectedly parsed cleanly' >&2
             exit 1
           fi
+          mkdir extracted
+          tar -xzf original.tar.gz -C extracted
+          bin="extracted/execsurface-${NEXT_TAG}-${TARGET_TRIPLE}/execsurface"
+          cp "$bin" tampered-binary
+          printf 'X' >> tampered-binary
+          test "$(sha256sum "$bin" | awk '{print $1}')" != "$(sha256sum tampered-binary | awk '{print $1}')"
       - name: Reject provenance subject substitution
         shell: bash
         run: |
@@ -332,15 +366,12 @@ jobs:
           python3 - <<'PY'
           import hashlib,json
           from pathlib import Path
-          p=json.loads(Path('provenance.json').read_text())
-          good=Path('original.tar.gz')
+          p=json.loads(Path('provenance.json').read_text()); good=Path('original.tar.gz'); bad=Path('mutated.tar.gz')
           assert p['subject'][0]['name']=='execsurface-v0.1.0-alpha.5-x86_64-unknown-linux-gnu.tar.gz'
           assert p['subject'][0]['digest']['sha256']==hashlib.sha256(good.read_bytes()).hexdigest()
-          bad=Path('mutated.tar.gz')
           assert p['subject'][0]['digest']['sha256']!=hashlib.sha256(bad.read_bytes()).hexdigest()
-          p2=json.loads(Path('provenance.json').read_text())
-          p2['subject'][0]['name']='execsurface-v0.1.0-alpha.4-x86_64-unknown-linux-gnu.tar.gz'
-          assert p2['subject'][0]['name']!='execsurface-v0.1.0-alpha.5-x86_64-unknown-linux-gnu.tar.gz'
+          q=json.loads(Path('provenance.json').read_text()); q['subject'][0]['name']='execsurface-v0.1.0-alpha.4-x86_64-unknown-linux-gnu.tar.gz'
+          assert q['subject'][0]['name']!='execsurface-v0.1.0-alpha.5-x86_64-unknown-linux-gnu.tar.gz'
           PY
       - name: Reject unsafe archive member classes
         shell: bash
@@ -357,24 +388,12 @@ jobs:
                   seen.add(m.name)
               return True
           with tarfile.open('path-traversal.tar','w') as tf:
-              info=tarfile.TarInfo('../escape'); data=b'x'; info.size=len(data); tf.addfile(info,io.BytesIO(data))
+              i=tarfile.TarInfo('../escape'); d=b'x'; i.size=len(d); tf.addfile(i,io.BytesIO(d))
           with tarfile.open('symlink.tar','w') as tf:
-              info=tarfile.TarInfo('root/link'); info.type=tarfile.SYMTYPE; info.linkname='/tmp/target'; tf.addfile(info)
+              i=tarfile.TarInfo('root/link'); i.type=tarfile.SYMTYPE; i.linkname='/tmp/target'; tf.addfile(i)
           with tarfile.open('path-traversal.tar') as tf: assert not safe(tf)
           with tarfile.open('symlink.tar') as tf: assert not safe(tf)
           PY
-      - name: Reject post-extraction binary tamper
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir extracted
-          tar -xzf original.tar.gz -C extracted
-          bin="extracted/execsurface-${NEXT_TAG}-${TARGET_TRIPLE}/execsurface"
-          original="$(sha256sum "$bin" | awk '{print $1}')"
-          cp "$bin" tampered-binary
-          printf 'X' >> tampered-binary
-          tampered="$(sha256sum tampered-binary | awk '{print $1}')"
-          test "$original" != "$tampered"
 
   closeout:
     needs: [artifact-binding, blackbox-runtime, source-equivalence, tamper-and-substitution]
@@ -384,7 +403,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Record bounded artifact-destructive decision
+      - name: Record bounded repaired artifact-destructive decision
         shell: bash
         run: |
           set -euo pipefail
@@ -396,15 +415,17 @@ jobs:
           {
             echo 'decision_candidate=ALPHA5_A7_RELEASE_ARTIFACT_DESTRUCTIVE_EQUIVALENCE_PASS'
             echo "frozen_sha=${FROZEN_SHA}"
-            echo "dry_run=${DRY_RUN}"
-            echo "dry_run_artifact=${DRY_RUN_ARTIFACT}"
-            echo "dry_run_artifact_digest=${DRY_RUN_ARTIFACT_DIGEST}"
+            echo "repaired_dry_run=${DRY_RUN}"
+            echo "repaired_artifact=${DRY_RUN_ARTIFACT}"
+            echo "repaired_artifact_digest=${DRY_RUN_ARTIFACT_DIGEST}"
+            echo "retained_failed_a7_run=${RETAINED_FAILED_A7_RUN}"
             echo 'artifact_transport_digest_verified=true'
             echo 'archive_checksum_verified=true'
             echo 'provenance_subject_verified=true'
             echo 'archive_path_safety_verified=true'
             echo 'ubuntu_22_04_blackbox=true'
             echo 'ubuntu_24_04_blackbox=true'
+            echo 'glibc_ceiling_2_35=true'
             echo 'byte_for_byte_frozen_source_equivalence=true'
             echo 'bidirectional_baseline_compatibility=true'
             echo 'tamper_and_substitution_rejected=true'
