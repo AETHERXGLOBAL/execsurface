@@ -1,0 +1,342 @@
+name: Post-alpha4 candidate A8 A5 public-surface compatibility
+
+on:
+  push:
+    branches: [release/post-alpha4-candidate-assembly]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: a8-a5-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ALPHA4_SHA: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  ALPHA4_TAG: v0.1.0-alpha.4
+
+jobs:
+  candidate-contracts:
+    name: Candidate CLI / package / v2 / rollback contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact candidate with history and tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Pin Rust 1.90.0 with static-analysis components
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+          components: rustfmt,clippy
+
+      - name: Freeze clean-assembly provenance and immutable public anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git merge-base "$ALPHA4_SHA" HEAD)" = "$ALPHA4_SHA"
+          test -z "$(git rev-list --merges "$ALPHA4_SHA"..HEAD)"
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "$ALPHA4_TAG"
+          test "$(git rev-parse "$ALPHA4_TAG^{commit}")" = "$ALPHA4_SHA"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SHA"
+          grep -Fx 'base=48e0b9a0707553349e75e97a9dfa096d13f9ab5d' .a8-assembly-start
+          grep -F 'version = "0.1.0-alpha.4"' Cargo.toml
+
+      - name: Format and lint full candidate
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+      - name: Default-off rollback surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'default = []' crates/execsurface-model/Cargo.toml
+          grep -F 'semantics-v3 = []' crates/execsurface-model/Cargo.toml
+          cargo test --locked -p execsurface-model
+          cargo build --locked --release -p execsurface
+
+      - name: Frozen baseline v2 and legacy rejection
+        run: |
+          cargo test --locked -p execsurface-baseline digest_serialization_vector_is_frozen
+          cargo test --locked -p execsurface-baseline legacy_lock_schema_is_rejected_instead_of_reinterpreted
+
+      - name: CLI public contract regressions
+        run: |
+          cargo test --locked -p execsurface --test learn_linux
+          cargo test --locked -p execsurface --test check_linux
+          cargo test --locked -p execsurface --test policy_linux
+          cargo test --locked -p execsurface --test self_service_linux
+
+      - name: Full default and all-feature workspace regressions
+        run: |
+          cargo test --locked --workspace --all-targets
+          cargo test --locked --workspace --all-targets --all-features
+
+      - name: Candidate package and path install
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo package --locked -p execsurface --allow-dirty
+          root="$RUNNER_TEMP/a8-a5-candidate"
+          cargo install --locked --path crates/execsurface-cli --root "$root"
+          bin="$root/bin/execsurface"
+          test -x "$bin"
+          test "$("$bin" --version)" = 'execsurface 0.1.0-alpha.4'
+          "$bin" --help >/tmp/a8-a5-help.txt
+          "$bin" doctor
+          work="$RUNNER_TEMP/a8-a5-cli"
+          mkdir -p "$work"
+          cd "$work"
+          "$bin" learn -- /bin/bash -lc true
+          "$bin" check -- /bin/bash -lc true
+          set +e
+          output="$("$bin" check -- /bin/bash -lc 'true; /bin/echo controlled-drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 10
+          grep -F 'ExecSurface: REVIEW' <<<"$output"
+
+      - name: Public claim boundary stays bounded
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'Public alpha currently supports Linux x86_64 only' action/install.sh
+          grep -F 'x86_64' action/install.sh
+          grep -F 'v0.1.0-alpha.4' action/release-tag.txt
+          ! grep -Eiq 'arm64.*(supported|production|ready)|aarch64.*(supported|production|ready)' action.yml
+
+      - name: Lockfile integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- Cargo.lock
+          test -z "$(git status --porcelain -- Cargo.lock)"
+
+      - name: Emit candidate evidence manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p a8-a5-evidence
+          head="$(git rev-parse HEAD)"
+          lock_digest="$(sha256sum Cargo.lock | awk '{print $1}')"
+          action_digest="$(sha256sum action.yml | awk '{print $1}')"
+          printf '{\n  "gate": "A8-A5",\n  "candidate_sha": "%s",\n  "alpha4_base": "%s",\n  "stable_tag": "v0.1",\n  "public_release": "%s",\n  "cargo_lock_sha256": "%s",\n  "action_yml_sha256": "%s",\n  "classification": "PUBLIC_SURFACE_COMPATIBILITY_REPROOF"\n}\n' \
+            "$head" "$ALPHA4_SHA" "$ALPHA4_TAG" "$lock_digest" "$action_digest" \
+            > a8-a5-evidence/manifest.json
+          cat a8-a5-evidence/manifest.json
+
+      - name: Upload candidate evidence manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-a5-candidate-evidence
+          path: a8-a5-evidence/manifest.json
+          if-no-files-found: error
+          retention-days: 30
+
+  local-action-contract:
+    name: Candidate local Action PASS / REVIEW / BLOCK / ERROR / privacy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Pin Rust 1.90.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+
+      - name: Build candidate baseline learner
+        run: cargo build --locked -p execsurface --bin execsurface
+
+      - name: Learn PASS baseline
+        run: ./target/debug/execsurface learn --output a8-a5-pass.lock.json -- /bin/bash -lc 'echo hello-from-target'
+
+      - name: Candidate Action PASS
+        id: pass
+        uses: ./
+        with:
+          command: 'echo hello-from-target'
+          baseline: a8-a5-pass.lock.json
+          upload-artifact: 'false'
+
+      - name: Assert PASS outputs
+        env:
+          VERDICT: ${{ steps.pass.outputs.verdict }}
+          EXIT_CODE: ${{ steps.pass.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = pass
+          test "$EXIT_CODE" = 0
+
+      - name: Learn REVIEW baseline
+        run: ./target/debug/execsurface learn --output a8-a5-review.lock.json -- /bin/bash -lc true
+
+      - name: Candidate Action REVIEW
+        id: review
+        uses: ./
+        with:
+          command: 'true; /bin/echo controlled-drift >/dev/null'
+          baseline: a8-a5-review.lock.json
+          upload-artifact: 'false'
+
+      - name: Assert REVIEW outputs
+        env:
+          VERDICT: ${{ steps.review.outputs.verdict }}
+          EXIT_CODE: ${{ steps.review.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = review
+          test "$EXIT_CODE" = 10
+
+      - name: Create blocking policy
+        run: |
+          cat > a8-a5-block-policy.json <<'JSON'
+          {
+            "schema_version": 1,
+            "default_action": "review",
+            "rules": [{
+              "id": "block-added-exec",
+              "action": "block",
+              "match": {"change": "added", "effect": "process_exec"}
+            }]
+          }
+          JSON
+
+      - name: Candidate Action BLOCK
+        id: block
+        continue-on-error: true
+        uses: ./
+        with:
+          command: 'true; /bin/echo controlled-drift >/dev/null'
+          baseline: a8-a5-review.lock.json
+          policy: a8-a5-block-policy.json
+          upload-artifact: 'false'
+
+      - name: Assert BLOCK enforcement
+        env:
+          OUTCOME: ${{ steps.block.outcome }}
+          VERDICT: ${{ steps.block.outputs.verdict }}
+          EXIT_CODE: ${{ steps.block.outputs.exit-code }}
+        run: |
+          test "$OUTCOME" = failure
+          test "$VERDICT" = block
+          test "$EXIT_CODE" = 20
+
+      - name: Candidate Action ERROR
+        id: error
+        continue-on-error: true
+        uses: ./
+        with:
+          command: 'true'
+          baseline: does-not-exist.lock.json
+          upload-artifact: 'false'
+
+      - name: Assert ERROR enforcement
+        env:
+          OUTCOME: ${{ steps.error.outcome }}
+          VERDICT: ${{ steps.error.outputs.verdict }}
+          EXIT_CODE: ${{ steps.error.outputs.exit-code }}
+        run: |
+          test "$OUTCOME" = failure
+          test "$VERDICT" = error
+          test "$EXIT_CODE" = 2
+
+      - name: Learn privacy baseline with argv sentinel
+        run: ./target/debug/execsurface learn --output a8-a5-privacy.lock.json -- /bin/bash -lc 'printf "%s" "AX_A8_A5_SECRET_7c3b" >/dev/null'
+
+      - name: Candidate Action privacy PASS
+        id: privacy
+        uses: ./
+        with:
+          command: 'printf "%s" "AX_A8_A5_SECRET_7c3b" >/dev/null'
+          baseline: a8-a5-privacy.lock.json
+          upload-artifact: 'false'
+
+      - name: Assert sentinel absent from generated evidence
+        env:
+          REPORT_JSON: ${{ steps.privacy.outputs.report-json }}
+          SUMMARY_MARKDOWN: ${{ steps.privacy.outputs.summary-markdown }}
+        run: |
+          test -f "$REPORT_JSON"
+          test -f "$SUMMARY_MARKDOWN"
+          ! grep -F 'AX_A8_A5_SECRET_7c3b' "$REPORT_JSON"
+          ! grep -F 'AX_A8_A5_SECRET_7c3b' "$SUMMARY_MARKDOWN"
+
+  stable-public-channel:
+    name: Immutable alpha.4 release and stable v0.1 remain healthy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout candidate with tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Assert stable refs still resolve to alpha.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "$ALPHA4_TAG^{commit}")" = "$ALPHA4_SHA"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SHA"
+
+      - name: Install checksum-verified immutable alpha.4 release
+        shell: bash
+        run: |
+          set -euo pipefail
+          target=x86_64-unknown-linux-gnu
+          asset="execsurface-${ALPHA4_TAG}-${target}.tar.gz"
+          install_dir="$RUNNER_TEMP/a8-a5-public"
+          mkdir -p "$install_dir"
+          cd "$install_dir"
+          curl --fail --location --silent --show-error --output "$asset" \
+            "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${ALPHA4_TAG}/${asset}"
+          curl --fail --location --silent --show-error --output "$asset.sha256" \
+            "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${ALPHA4_TAG}/${asset}.sha256"
+          sha256sum -c "$asset.sha256"
+          tar -xzf "$asset"
+          binary="$install_dir/execsurface-${ALPHA4_TAG}-${target}/execsurface"
+          test -x "$binary"
+          test "$("$binary" --version)" = 'execsurface 0.1.0-alpha.4'
+          echo "EXECSURFACE_PUBLIC_BIN=$binary" >> "$GITHUB_ENV"
+
+      - name: Build public alpha.4 baseline for stable Action
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$EXECSURFACE_PUBLIC_BIN" doctor
+          "$EXECSURFACE_PUBLIC_BIN" learn --output a8-a5-stable.lock.json -- /bin/bash -lc true
+
+      - name: Stable v0.1 Action PASS
+        id: stable_pass
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: 'true'
+          baseline: a8-a5-stable.lock.json
+          upload-artifact: 'false'
+
+      - name: Assert stable PASS
+        env:
+          VERDICT: ${{ steps.stable_pass.outputs.verdict }}
+          EXIT_CODE: ${{ steps.stable_pass.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = pass
+          test "$EXIT_CODE" = 0
+
+      - name: Stable v0.1 Action controlled REVIEW
+        id: stable_review
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: 'true; /bin/echo controlled-drift >/dev/null'
+          baseline: a8-a5-stable.lock.json
+          upload-artifact: 'false'
+
+      - name: Assert stable REVIEW
+        env:
+          VERDICT: ${{ steps.stable_review.outputs.verdict }}
+          EXIT_CODE: ${{ steps.stable_review.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = review
+          test "$EXIT_CODE" = 10
