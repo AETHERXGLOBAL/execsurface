@@ -1,0 +1,215 @@
+name: Alpha5 A5 usability and distribution gate
+
+on:
+  push:
+    branches:
+      - release/v0.1.0-alpha.5-hardening
+    paths:
+      - '.github/workflows/alpha5-a5-usability-distribution.yml'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'action/**'
+      - 'action.yml'
+      - 'README.md'
+      - 'docs/release/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  CURRENT_PUBLIC: v0.1.0-alpha.4
+
+jobs:
+  candidate-package-cli:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Package exact candidate workspace CLI
+        run: cargo package --locked -p execsurface --allow-dirty
+      - name: Install exact candidate from workspace path
+        run: cargo install --locked --path crates/execsurface-cli --root "$RUNNER_TEMP/alpha5-candidate"
+      - name: Developer zero-assistance CLI smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/alpha5-candidate/bin/execsurface"
+          test -x "$bin"
+          "$bin" --help > alpha5-help.txt
+          grep -F 'doctor' alpha5-help.txt
+          grep -F 'learn' alpha5-help.txt
+          grep -F 'check' alpha5-help.txt
+          "$bin" doctor
+          work="$RUNNER_TEMP/alpha5-zero-assistance"
+          mkdir -p "$work"
+          cd "$work"
+          "$bin" learn -- /bin/bash -lc true
+          test -s execsurface.lock.json
+          "$bin" check -- /bin/bash -lc true
+          set +e
+          output="$("$bin" check -- /bin/bash -lc 'true; /bin/echo controlled-drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 10
+          grep -F 'ExecSurface: REVIEW' <<<"$output"
+      - name: Candidate release build
+        run: cargo build --locked --release -p execsurface
+      - name: Upload CLI evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a5-cli-${{ github.run_id }}-${{ github.run_attempt }}
+          path: alpha5-help.txt
+          if-no-files-found: error
+
+  public-alpha4-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Verify immutable tag and Action pointer
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "$CURRENT_PUBLIC"
+      - name: Download checksum-verified alpha4 asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          target='x86_64-unknown-linux-gnu'
+          asset="execsurface-${CURRENT_PUBLIC}-${target}.tar.gz"
+          dir="$RUNNER_TEMP/alpha4-public"
+          mkdir -p "$dir"
+          cd "$dir"
+          curl --fail --location --silent --show-error -O "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${CURRENT_PUBLIC}/${asset}"
+          curl --fail --location --silent --show-error -O "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${CURRENT_PUBLIC}/${asset}.sha256"
+          sha256sum -c "${asset}.sha256"
+          tar -xzf "$asset"
+          bin="$dir/execsurface-${CURRENT_PUBLIC}-${target}/execsurface"
+          test -x "$bin"
+          test "$("$bin" --version)" = "execsurface ${CURRENT_PUBLIC#v}"
+          echo "PUBLIC_BIN=$bin" >> "$GITHUB_ENV"
+      - name: Public alpha4 remains behaviorally healthy
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alpha4-consumer"
+          mkdir -p "$work"
+          cd "$work"
+          "$PUBLIC_BIN" doctor
+          "$PUBLIC_BIN" learn -- /bin/bash -lc true
+          "$PUBLIC_BIN" check -- /bin/bash -lc true
+          set +e
+          out="$("$PUBLIC_BIN" check -- /bin/bash -lc 'true; /bin/echo controlled-drift >/dev/null' 2>&1)"
+          rc=$?
+          set -e
+          test "$rc" -eq 10
+          grep -F 'ExecSurface: REVIEW' <<<"$out"
+
+  stable-action-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Prepare baseline using current public release
+        shell: bash
+        run: |
+          set -euo pipefail
+          target='x86_64-unknown-linux-gnu'
+          asset="execsurface-${CURRENT_PUBLIC}-${target}.tar.gz"
+          dir="$RUNNER_TEMP/action-baseline"
+          mkdir -p "$dir"
+          cd "$dir"
+          curl --fail --location --silent --show-error -O "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${CURRENT_PUBLIC}/${asset}"
+          curl --fail --location --silent --show-error -O "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${CURRENT_PUBLIC}/${asset}.sha256"
+          sha256sum -c "${asset}.sha256"
+          tar -xzf "$asset"
+          bin="$dir/execsurface-${CURRENT_PUBLIC}-${target}/execsurface"
+          cd "$GITHUB_WORKSPACE"
+          "$bin" learn --output alpha5-stable-action.lock.json -- /bin/bash -lc true
+      - name: Stable Action PASS
+        id: pass
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: 'true'
+          baseline: alpha5-stable-action.lock.json
+          upload-artifact: 'false'
+      - name: Assert stable Action PASS contract
+        env:
+          VERDICT: ${{ steps.pass.outputs.verdict }}
+          EXIT_CODE: ${{ steps.pass.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = 'pass'
+          test "$EXIT_CODE" = '0'
+      - name: Stable Action controlled REVIEW
+        id: review
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: 'true; /bin/echo controlled-drift >/dev/null'
+          baseline: alpha5-stable-action.lock.json
+          upload-artifact: 'false'
+      - name: Assert stable Action REVIEW contract
+        env:
+          VERDICT: ${{ steps.review.outputs.verdict }}
+          EXIT_CODE: ${{ steps.review.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = 'review'
+          test "$EXIT_CODE" = '10'
+
+  source-action-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Validate composite Action metadata and scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f action.yml
+          test -x action/install.sh
+          test -x action/run.sh
+          grep -F 'Runtime execution-surface drift detection for Linux CI' action.yml
+          grep -F 'verdict:' action.yml
+          grep -F 'exit-code:' action.yml
+          grep -F 'report-json:' action.yml
+          grep -F 'summary-markdown:' action.yml
+          grep -F 'artifact-digest:' action.yml
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "$CURRENT_PUBLIC"
+
+  closeout:
+    needs: [candidate-package-cli, public-alpha4-regression, stable-action-regression, source-action-contract]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Record bounded A5 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            echo 'classification=ALPHA5_A5_USABILITY_DISTRIBUTION_PASS_INTERNAL_ONLY'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo 'candidate_path_install=true'
+            echo 'candidate_package=true'
+            echo 'candidate_cli_zero_assistance_smoke=true'
+            echo 'public_alpha4_checksum_regression=true'
+            echo 'stable_action_v0_1_regression=true'
+            echo 'public_pointer_changed=false'
+            echo 'release_authorized=false'
+          } | tee evidence/alpha5-a5-usability-distribution.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a5-closeout-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/alpha5-a5-usability-distribution.txt
+          if-no-files-found: error
+          retention-days: 90
