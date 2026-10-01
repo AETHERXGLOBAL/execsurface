@@ -65,11 +65,17 @@ jobs:
           set -euo pipefail
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
           rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
-      - name: Static gate
+      - name: Generate isolated experiment lockfile
         run: |
           set -euo pipefail
           cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml
+      - name: Verify rustfmt without changing frozen corpus
+        run: |
+          set -euo pipefail
           cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml -- --check
+      - name: Verify clippy without weakening warnings
+        run: |
+          set -euo pipefail
           cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --all-targets -- -D warnings
       - name: Execute exact frozen A4 12-test corpus
         run: |
