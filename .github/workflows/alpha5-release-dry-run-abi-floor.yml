@@ -1,0 +1,246 @@
+name: Alpha5 frozen release dry-run ABI-floor rebuild
+
+on:
+  push:
+    branches:
+      - integration/post-alpha4-promotion-candidate
+    paths:
+      - .github/workflows/alpha5-release-dry-run-abi-floor.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: alpha5-release-dry-run-abi-floor
+  cancel-in-progress: false
+
+env:
+  FROZEN_SHA: 5067200452c174da6bc8d9d7ecf6957ee379f0a2
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  CURRENT_VERSION: 0.1.0-alpha.4
+  CURRENT_TAG: v0.1.0-alpha.4
+  NEXT_VERSION: 0.1.0-alpha.5
+  NEXT_TAG: v0.1.0-alpha.5
+  TARGET_TRIPLE: x86_64-unknown-linux-gnu
+  RUST_TOOLCHAIN: 1.90.0
+  A6_RUN: '36899958419'
+  A6_ARTIFACT: '11181645256'
+  A6_DIGEST: 'sha256:16f08ae9faa2d15d539fcf32d7fd6848c7199acf9ed522e93a4faf18e2fc04b7'
+  REDTEAM_RUN: '36900214264'
+  REDTEAM_ARTIFACT: '11181895481'
+  REDTEAM_DIGEST: 'sha256:87eff6e53f77fe514d8785a98960471092c074eeaef842fcb44ac8de9224bb85'
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  staged-release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout workflow driver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: driver
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout exact frozen candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.FROZEN_SHA }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify immutable boundary and accepted evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$FROZEN_SHA"
+          git -C driver fetch --force --tags origin
+          test "$(git -C driver rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git -C driver rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          ! git -C driver show-ref --verify --quiet refs/tags/v0.1.0-alpha.5
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$A6_RUN" > a6-run.json
+          jq -e --arg sha "$FROZEN_SHA" '.status == "completed" and .conclusion == "success" and .head_sha == $sha' a6-run.json >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$A6_ARTIFACT" > a6-artifact.json
+          jq -e --arg d "$A6_DIGEST" '.expired == false and .digest == $d' a6-artifact.json >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REDTEAM_RUN" > redteam-run.json
+          jq -e '.status == "completed" and .conclusion == "success"' redteam-run.json >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$REDTEAM_ARTIFACT" > redteam-artifact.json
+          jq -e --arg d "$REDTEAM_DIGEST" '.expired == false and .digest == $d' redteam-artifact.json >/dev/null
+          epoch="$(git -C source show -s --format=%ct "$FROZEN_SHA")"
+          test "$epoch" -gt 0
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
+
+      - name: Install pinned Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+
+      - name: Materialize two independent staged trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a source stage-a
+          cp -a source stage-b
+          for root in stage-a stage-b; do
+            printf '%s\n' "$NEXT_TAG" > "$root/action/release-tag.txt"
+            ROOT="$root" python3 - <<'PY'
+          import os
+          from pathlib import Path
+          old='0.1.0-alpha.4'; new='0.1.0-alpha.5'; root=Path(os.environ['ROOT'])
+          for m in root.rglob('Cargo.toml'):
+              t=m.read_text().replace(f'version = "{old}"',f'version = "{new}"').replace(f'version = "={old}"',f'version = "={new}"')
+              m.write_text(t)
+          lock=root/'Cargo.lock'; chunks=lock.read_text().split('[[package]]'); out=[chunks[0]]
+          for c in chunks[1:]:
+              ls=c.splitlines(); name=next((x.split('=',1)[1].strip().strip('"') for x in ls if x.startswith('name = ')),None)
+              if name and name.startswith('execsurface'):
+                  ls=[f'version = "{new}"' if x==f'version = "{old}"' else x for x in ls]
+              out.append('\n'.join(ls))
+          lock.write_text('[[package]]'.join(out))
+          PY
+          done
+          diff -ru --exclude=.git stage-a stage-b
+          grep -F 'version = "0.1.0-alpha.5"' stage-a/Cargo.toml
+          if grep -R --include='Cargo.toml' -F '=0.1.0-alpha.4' stage-a/crates; then
+            echo 'stale internal alpha.4 dependency pin remains' >&2
+            exit 1
+          fi
+
+      - name: Full staged qualification on ABI floor
+        working-directory: stage-a
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --workspace --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets
+          cargo +$RUST_TOOLCHAIN test --locked --workspace --doc
+          cargo +$RUST_TOOLCHAIN package --locked --allow-dirty -p execsurface
+
+      - name: Build in two independent roots with canonical path remapping
+        shell: bash
+        run: |
+          set -euo pipefail
+          root_a="$(realpath stage-a)"
+          root_b="$(realpath stage-b)"
+          common='-C debuginfo=0'
+          RUSTFLAGS="$common --remap-path-prefix=$root_a=/src/execsurface" CARGO_TARGET_DIR="$RUNNER_TEMP/build-a" cargo +$RUST_TOOLCHAIN build --manifest-path stage-a/Cargo.toml --locked --release -p execsurface --bin execsurface
+          RUSTFLAGS="$common --remap-path-prefix=$root_b=/src/execsurface" CARGO_TARGET_DIR="$RUNNER_TEMP/build-b" cargo +$RUST_TOOLCHAIN build --manifest-path stage-b/Cargo.toml --locked --release -p execsurface --bin execsurface
+          bin_a="$RUNNER_TEMP/build-a/release/execsurface"
+          bin_b="$RUNNER_TEMP/build-b/release/execsurface"
+          test "$("$bin_a" --version)" = "execsurface $NEXT_VERSION"
+          sha256sum "$bin_a" "$bin_b" | tee binary-digests.txt
+          cmp -s "$bin_a" "$bin_b"
+          mkdir -p evidence
+          sha256sum "$bin_a" | awk '{print $1}' > evidence/release-binary.sha256
+
+      - name: Enforce Ubuntu 22.04 ABI ceiling
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/build-a/release/execsurface"
+          ldd --version | head -1 | tee evidence/build-libc.txt
+          readelf --version-info "$bin" > evidence/version-info.txt
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text=Path('evidence/version-info.txt').read_text()
+          versions=[tuple(map(int,m.groups())) for m in re.finditer(r'GLIBC_(\d+)\.(\d+)',text)]
+          assert versions, 'no GLIBC version requirements found'
+          maximum=max(versions)
+          print('max_glibc_requirement=%d.%d' % maximum)
+          assert maximum <= (2,35), maximum
+          PY
+
+      - name: Assemble deterministic staged bundle
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          dirname="execsurface-${NEXT_TAG}-${TARGET_TRIPLE}"
+          asset="${dirname}.tar.gz"
+          mkdir -p "evidence/dist/$dirname"
+          cp "$RUNNER_TEMP/build-a/release/execsurface" "evidence/dist/$dirname/execsurface"
+          cp stage-a/LICENSE stage-a/NOTICE "evidence/dist/$dirname/"
+          {
+            echo "ExecSurface $NEXT_TAG"
+            echo "product_version=$NEXT_VERSION"
+            echo "target=$TARGET_TRIPLE"
+            echo "frozen_source_commit=$FROZEN_SHA"
+            echo "abi_floor=ubuntu-22.04-glibc<=2.35"
+            echo "source_date_epoch=$SOURCE_DATE_EPOCH"
+            echo "path_remap=/src/execsurface"
+            echo "publication=dry-run-only"
+            echo "p8_external_validation_closed=false"
+          } > "evidence/dist/$dirname/BUILD_INFO.txt"
+          tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner -C evidence/dist -cf - "$dirname" | gzip -n > "evidence/dist/$asset"
+          (cd evidence/dist && sha256sum "$asset" > "$asset.sha256" && sha256sum -c "$asset.sha256")
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - name: Generate and verify provenance
+        env:
+          ASSET: ${{ steps.bundle.outputs.asset }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          asset=os.environ['ASSET']; p=Path('evidence/dist')/asset
+          statement={
+            '_type':'https://in-toto.io/Statement/v1',
+            'subject':[{'name':asset,'digest':{'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}}],
+            'predicateType':'https://slsa.dev/provenance/v1',
+            'predicate':{
+              'buildDefinition':{
+                'buildType':'https://github.com/AETHERXGLOBAL/execsurface/alpha5-release-abi-floor/v1',
+                'externalParameters':{'prospectiveVersion':os.environ['NEXT_VERSION'],'prospectiveTag':os.environ['NEXT_TAG'],'target':os.environ['TARGET_TRIPLE'],'abiFloor':'ubuntu-22.04'},
+                'internalParameters':{'frozenSourceCommit':os.environ['FROZEN_SHA'],'sourceDateEpoch':os.environ['SOURCE_DATE_EPOCH'],'pathRemap':'/src/execsurface'},
+                'resolvedDependencies':[{'uri':'git+https://github.com/AETHERXGLOBAL/execsurface.git','digest':{'gitCommit':os.environ['FROZEN_SHA']}}]
+              },
+              'runDetails':{'builder':{'id':f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/alpha5-release-dry-run-abi-floor.yml"},'metadata':{'invocationId':f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",'dryRun':True}}
+            }
+          }
+          Path('evidence/alpha5-provenance.json').write_text(json.dumps(statement,indent=2,sort_keys=True)+'\n')
+          PY
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          s=json.loads(Path('evidence/alpha5-provenance.json').read_text()); sub=s['subject'][0]
+          p=Path('evidence/dist')/sub['name']
+          assert hashlib.sha256(p.read_bytes()).hexdigest()==sub['digest']['sha256']
+          assert s['predicate']['buildDefinition']['internalParameters']['frozenSourceCommit']=='5067200452c174da6bc8d9d7ecf6957ee379f0a2'
+          PY
+
+      - name: Record repaired dry-run boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo 'decision_candidate=ALPHA5_RELEASE_ABI_FLOOR_DRY_RUN_PASS'
+            echo "frozen_sha=${FROZEN_SHA}"
+            echo "prospective_version=${NEXT_VERSION}"
+            echo 'abi_floor=ubuntu-22.04'
+            echo 'glibc_ceiling=2.35'
+            echo 'independent_root_binary_equivalence=true'
+            echo 'canonical_path_remap=true'
+            echo 'deterministic_archive=true'
+            echo 'release_authorized=false'
+            echo 'p8_external_validation_closed=false'
+          } | tee evidence/alpha5-release-abi-floor-dry-run.txt
+
+      - name: Upload repaired release rehearsal
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-release-abi-floor-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 90
