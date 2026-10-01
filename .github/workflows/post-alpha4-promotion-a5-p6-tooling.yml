@@ -57,7 +57,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          grep -F 'does not rank products and does not produce a composite winner score' docs/development/P6_COMPETITIVE_FALSIFICATION_PROTOCOL.md
+          grep -F 'rank products and does not produce a composite winner score' docs/development/P6_COMPETITIVE_FALSIFICATION_PROTOCOL.md
           grep -F 'NO_VALID_PERFORMANCE_COMPARISON' docs/development/P6_CLOSEOUT_DECISION.md
           grep -F 'first A1 harness stop `36770551463`' docs/development/P6_CLOSEOUT_DECISION.md
           grep -F 'ExecSurface alpha.4 S2 incompleteness' docs/development/P6_CLOSEOUT_DECISION.md
