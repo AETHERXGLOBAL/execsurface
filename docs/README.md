@@ -10,6 +10,7 @@ This directory separates **current public guidance** from **engineering evidence
 - [GitHub Action](GITHUB_ACTION.md) — CI integration and stable Action usage.
 - [Troubleshooting](TROUBLESHOOTING.md) — environment, ptrace and evidence-health diagnostics.
 - [Examples](EXAMPLES.md) — command-line usage examples.
+- [Ecosystem Positioning](ECOSYSTEM_POSITIONING.md) — factual scope/interoperability map relative to adjacent runtime-security and provenance systems; not a winner ranking.
 
 ## Evaluation and external evidence
 
@@ -21,6 +22,12 @@ This directory separates **current public guidance** from **engineering evidence
 - GitHub issue `#114` — P8 evidence qualification and tracking.
 
 Negative, partial, unsupported, reproduction-failure and no-fit findings are retained as first-class evidence. A contact, referral, invitation, internal test or self-evaluation PASS is not independent validation by itself.
+
+## Contributor entry points
+
+New contributors can start from repository Issues labeled `good first issue` and `help wanted`. Current newcomer-scoped work includes deterministic examples, Python/pytest and Node.js/npm recipes, a minimal GitHub Action consumer example, and current-documentation auditing.
+
+Contributions must preserve product boundaries, negative evidence, fail-closed behavior and the distinction between internal/community engineering work and independent external validation. See [`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## Architecture and engineering
 
