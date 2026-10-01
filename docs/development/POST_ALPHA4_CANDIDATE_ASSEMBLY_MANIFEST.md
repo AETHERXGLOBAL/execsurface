@@ -5,7 +5,7 @@ Branch: `release/post-alpha4-candidate-assembly`
 Immutable base: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
 Promotion evidence closeout: `cef8c5b8acb3f3c9e0671c497ad04837709bb024`
 A8 protocol source: `5fc3bf3ad9c8074045eae45d57faa2e92340d855`
-Status: **A8-A1 CLOSED PASS — A8-A2 IMPLEMENTED / FORMATTING CORRECTION PENDING REPROOF**
+Status: **A8-A1 CLOSED PASS — A8-A2 IMPLEMENTED / FORMATTING-CORRECTED REPROOF RUNNING**
 
 ## Clean-base invariant
 
@@ -34,6 +34,7 @@ The A1 workflow is now a slice-stability integration regression gate: accepted S
 
 Preregistered protocol source: `7250002f3f7cb83f3f9ca930e8acedb524d57580`.
 Implementation source: `34c7060a58270f9bd8ed538640fcf696876e741c`.
+Formatting-only correction source: `112966e78730aea4e00296d34f2a46510fdb0b47`.
 Research evidence: P4 closeout `320c865d3e81071a8214ad726dca7a587b0fc479`; promotion A2 `d02151e8f2d1f6b0a6558d52da6f48e74763e0a5`.
 
 Admitted delta:
@@ -47,7 +48,7 @@ Hardening: no duplicated textual `proposition_id`; typed `ProofCarryingObservati
 
 Retained first A8-A2 execution:
 - run `36871810571`: provenance/scope/A1-slice/default-boundary PASS; authority-falsification job PASS including 16/16 A8-A2 attacks, D01-D06, A1 9/9, full feature model and Clippy; separate static/default job failed at rustfmt before its default regression, so closeout was skipped and the overall A8-A2 gate did **not** pass.
-- correction after this run is formatting-only in `authority_v3.rs` and `authority_v3_candidate.rs`. No test name, assertion, acceptance rule, authority rule, threshold, product semantic behavior or public boundary is changed.
+- correction `112966e78730aea4e00296d34f2a46510fdb0b47` is formatting-only in `authority_v3.rs` and `authority_v3_candidate.rs`. No test name, assertion, acceptance rule, authority rule, threshold, product semantic behavior or public boundary changed.
 
 A8-A2 remains pending until one full workflow run passes all jobs including rustfmt/default regression and closeout.
 
