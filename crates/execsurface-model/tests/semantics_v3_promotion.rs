@@ -63,10 +63,7 @@ fn requirement_with(
 }
 
 fn weak_requirement_with(required: CompletenessDimension) -> ProofRequirement {
-    requirement_with(
-        weak_path_guarantees(),
-        BTreeSet::from([required]),
-    )
+    requirement_with(weak_path_guarantees(), BTreeSet::from([required]))
 }
 
 #[test]
