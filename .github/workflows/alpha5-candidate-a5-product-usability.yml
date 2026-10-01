@@ -1,0 +1,254 @@
+name: Alpha5 candidate A5 product usability and packaging
+
+on:
+  push:
+    branches:
+      - integration/post-alpha4-promotion-candidate
+    paths:
+      - .github/workflows/alpha5-candidate-a5-product-usability.yml
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - action/**
+      - action.yml
+      - README.md
+      - docs/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha5-candidate-a5-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  ALPHA5_A4_FLOOR: 1ad4590ea75733d5e35a883fd88731297a69d3fe
+  PUBLIC_VERSION: v0.1.0-alpha.4
+  TARGET_TRIPLE: x86_64-unknown-linux-gnu
+
+jobs:
+  identity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Verify candidate order and immutable public anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'integration/post-alpha4-promotion-candidate'
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$ALPHA5_A4_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "$PUBLIC_VERSION"
+          if git show-ref --verify --quiet refs/tags/v0.1.0-alpha.5; then
+            echo 'alpha.5 tag must not exist before release decision' >&2
+            exit 1
+          fi
+
+  workspace-quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Workspace format and clippy are fatal
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --workspace --all-targets -- -D warnings
+      - name: Full workspace tests and docs
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets
+          cargo +$RUST_TOOLCHAIN test --locked --workspace --doc
+      - name: Release build
+        run: cargo +$RUST_TOOLCHAIN build --locked --release -p execsurface --bin execsurface
+
+  clean-cli-install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Package and clean path-install candidate CLI
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN package --locked -p execsurface --allow-dirty
+          cargo +$RUST_TOOLCHAIN install --locked --path crates/execsurface-cli --root "$RUNNER_TEMP/alpha5-cli"
+          "$RUNNER_TEMP/alpha5-cli/bin/execsurface" --help > "$RUNNER_TEMP/help.txt"
+          grep -F 'learn' "$RUNNER_TEMP/help.txt"
+          grep -F 'check' "$RUNNER_TEMP/help.txt"
+          grep -F 'doctor' "$RUNNER_TEMP/help.txt"
+      - name: Doctor PASS REVIEW and ERROR behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/alpha5-cli/bin/execsurface"
+          "$bin" doctor
+          work="$RUNNER_TEMP/alpha5-cli-smoke"
+          mkdir -p "$work"
+          cd "$work"
+          "$bin" learn -- /bin/bash -lc true
+          "$bin" check -- /bin/bash -lc true
+          set +e
+          review="$("$bin" check -- /bin/bash -lc 'true; /bin/echo alpha5-controlled-drift >/dev/null' 2>&1)"
+          review_rc=$?
+          error="$("$bin" check --baseline does-not-exist.lock.json -- /bin/bash -lc true 2>&1)"
+          error_rc=$?
+          set -e
+          test "$review_rc" -eq 10
+          grep -F 'ExecSurface: REVIEW' <<<"$review"
+          test "$error_rc" -eq 2
+          test -n "$error"
+
+  local-action-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Build candidate baseline learner
+        run: cargo build --locked -p execsurface --bin execsurface
+      - name: PASS through local Action
+        shell: bash
+        run: ./target/debug/execsurface learn --output alpha5-pass.lock.json -- /bin/bash -lc true
+      - name: Local Action PASS
+        id: pass
+        uses: ./
+        with:
+          command: 'true'
+          baseline: alpha5-pass.lock.json
+          upload-artifact: 'false'
+      - name: Assert PASS outputs
+        env:
+          VERDICT: ${{ steps.pass.outputs.verdict }}
+          EXIT_CODE: ${{ steps.pass.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = 'pass'
+          test "$EXIT_CODE" = '0'
+      - name: Local Action controlled REVIEW
+        id: review
+        uses: ./
+        with:
+          command: 'true; /bin/echo alpha5-action-drift >/dev/null'
+          baseline: alpha5-pass.lock.json
+          upload-artifact: 'false'
+      - name: Assert REVIEW outputs
+        env:
+          VERDICT: ${{ steps.review.outputs.verdict }}
+          EXIT_CODE: ${{ steps.review.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = 'review'
+          test "$EXIT_CODE" = '10'
+      - name: Local Action missing-baseline ERROR
+        id: error
+        continue-on-error: true
+        uses: ./
+        with:
+          command: 'true'
+          baseline: does-not-exist.lock.json
+          upload-artifact: 'false'
+      - name: Assert ERROR is enforced
+        env:
+          OUTCOME: ${{ steps.error.outcome }}
+          VERDICT: ${{ steps.error.outputs.verdict }}
+          EXIT_CODE: ${{ steps.error.outputs.exit-code }}
+        run: |
+          test "$OUTCOME" = 'failure'
+          test "$VERDICT" = 'error'
+          test "$EXIT_CODE" = '2'
+
+  public-alpha4-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Download checksum-verified immutable alpha.4
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="execsurface-${PUBLIC_VERSION}-${TARGET_TRIPLE}.tar.gz"
+          mkdir -p "$RUNNER_TEMP/public-alpha4"
+          cd "$RUNNER_TEMP/public-alpha4"
+          curl --fail --location --silent --show-error --output "$asset" "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${PUBLIC_VERSION}/${asset}"
+          curl --fail --location --silent --show-error --output "$asset.sha256" "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${PUBLIC_VERSION}/${asset}.sha256"
+          sha256sum -c "$asset.sha256"
+          tar -xzf "$asset"
+          bin="$RUNNER_TEMP/public-alpha4/execsurface-${PUBLIC_VERSION}-${TARGET_TRIPLE}/execsurface"
+          test -x "$bin"
+          test "$("$bin" --version)" = 'execsurface 0.1.0-alpha.4'
+          "$bin" doctor
+
+  reproducible-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Build twice in isolated target directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          CARGO_TARGET_DIR="$RUNNER_TEMP/build-a" cargo +$RUST_TOOLCHAIN build --locked --release -p execsurface --bin execsurface
+          CARGO_TARGET_DIR="$RUNNER_TEMP/build-b" cargo +$RUST_TOOLCHAIN build --locked --release -p execsurface --bin execsurface
+          sha256sum "$RUNNER_TEMP/build-a/release/execsurface" | tee build-a.sha256
+          sha256sum "$RUNNER_TEMP/build-b/release/execsurface" | tee build-b.sha256
+          a="$(awk '{print $1}' build-a.sha256)"
+          b="$(awk '{print $1}' build-b.sha256)"
+          test "$a" = "$b"
+          printf '%s\n' "$a" > reproducible-binary.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a5-reproducible-binary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reproducible-binary.sha256
+          if-no-files-found: error
+
+  closeout:
+    needs: [identity, workspace-quality, clean-cli-install, local-action-contract, public-alpha4-regression, reproducible-build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Record candidate-scoped product gate evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$ALPHA5_A4_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          mkdir -p evidence
+          {
+            echo 'decision_candidate=ALPHA5_A5_PRODUCT_USABILITY_PACKAGING_PASS'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "alpha5_a4_floor=${ALPHA5_A4_FLOOR}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo 'workspace_tests=pass'
+            echo 'clean_path_install=pass'
+            echo 'cli_contract=pass'
+            echo 'local_action_contract=pass'
+            echo 'public_alpha4_regression=pass'
+            echo 'isolated_build_reproducibility=pass'
+            echo 'release_authorized=false'
+            echo 'p8_external_validation_unchanged=true'
+          } | tee evidence/alpha5-a5-product-usability.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a5-product-usability-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/alpha5-a5-product-usability.txt
+          if-no-files-found: error
