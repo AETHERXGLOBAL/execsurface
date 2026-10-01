@@ -6,6 +6,17 @@ ExecSurface observes a command on supported Linux x86_64. The project command it
 
 The GitHub Action wraps its command input in `/bin/bash -lc`, so local learn/check examples below use the same wrapper.
 
+## Deterministic hello-drift smoke test
+
+Build the CLI, then run the repository-owned example from the project root:
+
+```bash
+cargo build --locked -p execsurface
+examples/hello-drift.sh target/debug/execsurface
+```
+
+The script uses a fresh temporary working directory and asserts that the unchanged command reports `PASS` with exit status 0. It then adds one `/bin/echo` process and asserts that ExecSurface reports `REVIEW` with exit status 10. The example requires the same Linux x86_64 ptrace support as the public CLI. For the full install and workflow walkthrough, see the [Five-Minute Start](QUICKSTART_5_MIN.md). This example demonstrates a behavior path; it is not independent security validation.
+
 ## Rust
 
 ```bash
