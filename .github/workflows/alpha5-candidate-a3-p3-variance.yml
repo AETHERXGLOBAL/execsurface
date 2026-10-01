@@ -1,0 +1,134 @@
+name: Alpha5 candidate A3 legitimate-variance anti-poisoning
+
+on:
+  push:
+    branches:
+      - integration/post-alpha4-promotion-candidate
+    paths:
+      - .github/workflows/alpha5-candidate-a3-p3-variance.yml
+      - experiments/p3-gcc-temp-grammar/**
+      - experiments/p3-v4-falsifier/**
+      - crates/execsurface-model/src/semantics_v3.rs
+      - crates/execsurface-model/tests/semantics_v3_promotion.rs
+      - crates/execsurface-model/tests/semantics_v3_rework.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha5-candidate-a3-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  ALPHA5_A2_FLOOR: 7a586ae87c0670ee5bdda19bd7b4af2721d7ca28
+
+jobs:
+  identity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Verify alpha5 order and immutable public boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'integration/post-alpha4-promotion-candidate'
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$ALPHA5_A2_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(grep -c '^fn a4_[0-9][0-9]_' experiments/p3-gcc-temp-grammar/tests/promotion_a4_variance.rs)" -eq 12
+          if git diff --name-only "$ALPHA5_A2_FLOOR"..HEAD | grep -qE '^crates/(execsurface-cli|execsurface-diff|execsurface-normalize|execsurface-observe|execsurface-policy)/' ; then
+            echo 'A3 anti-poisoning gate must not silently mutate public product crates' >&2
+            exit 1
+          fi
+
+  bounded-variance-falsification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Freeze formatting and warnings
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --all-targets -- -D warnings
+      - name: Execute exact 12-test legitimate-variance attack corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --test promotion_a4_variance -- --nocapture 2>&1 | tee alpha5-a3-variance.log
+          grep -q 'test result: ok. 12 passed; 0 failed' alpha5-a3-variance.log
+      - name: Replay GCC candidate unit corpus
+        run: cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --lib -- --nocapture
+
+  poisoning-falsifier:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Replay P3 poisoning and false-PASS attacks
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-v4-falsifier/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-v4-falsifier/Cargo.toml --all-targets -- --nocapture 2>&1 | tee alpha5-a3-poisoning.log
+
+  semantic-authority-reproof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Reprove repaired Semantics v3 authority boundary
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+
+  closeout:
+    needs: [identity, bounded-variance-falsification, poisoning-falsifier, semantic-authority-reproof]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Record candidate-scoped A3 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$ALPHA5_A2_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          mkdir -p evidence
+          {
+            echo 'decision_candidate=ALPHA5_A3_LEGITIMATE_VARIANCE_ANTI_POISONING_PASS'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "alpha5_a2_floor=${ALPHA5_A2_FLOOR}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo 'scope=gcc_ephemeral_identity_only'
+            echo 'frequency_authorizes=false'
+            echo 'similarity_authorizes=false'
+            echo 'raw_evidence_retained=true'
+            echo 'meaningful_drift_must_survive=true'
+            echo 'release_authorized=false'
+            echo 'p8_external_validation_unchanged=true'
+          } | tee evidence/alpha5-a3-p3-variance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a3-p3-variance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/alpha5-a3-p3-variance.txt
+          if-no-files-found: error
