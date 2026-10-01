@@ -1,0 +1,166 @@
+name: Post-alpha4 promotion A4 P3 legitimate variance
+
+on:
+  push:
+    branches: [integration/post-alpha4-promotion-candidate]
+    paths:
+      - docs/development/POST_ALPHA4_PROMOTION_A4_P3_VARIANCE_PROTOCOL.md
+      - experiments/p3-gcc-temp-grammar/**
+      - experiments/p3-v4-falsifier/**
+      - crates/execsurface-model/src/semantics_v3.rs
+      - crates/execsurface-model/tests/semantics_v3_promotion.rs
+      - crates/execsurface-model/tests/semantics_v3_rework.rs
+      - .github/workflows/post-alpha4-promotion-a4-p3-variance.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: post-alpha4-a4-p3-variance-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  A3_CANDIDATE_FLOOR: 3cfa9cd1e47a23e44a6024b61416b2b76942cfe9
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+
+jobs:
+  identity:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify ancestry, frozen protocol and immutable public boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'integration/post-alpha4-promotion-candidate'
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$A3_CANDIDATE_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          protocol='docs/development/POST_ALPHA4_PROMOTION_A4_P3_VARIANCE_PROTOCOL.md'
+          grep -F 'PREREGISTERED — P3 PROMOTION ELIGIBILITY ONLY / NO PUBLIC INTEGRATION AUTHORIZED' "$protocol"
+          grep -F 'Exactly 12 frozen A4 attacks/invariants' "$protocol"
+          grep -F 'No composite score and no partial-pass promotion.' "$protocol"
+          test "$(grep -c '^fn a4_[0-9][0-9]_' experiments/p3-gcc-temp-grammar/tests/promotion_a4_variance.rs)" -eq 12
+          if git diff --name-only "$A3_CANDIDATE_FLOOR"..HEAD | grep -qE '^crates/(execsurface-cli|execsurface-diff|execsurface-normalize|execsurface-observe|execsurface-policy)/' ; then
+            echo 'A4 must not change public product crates' >&2
+            exit 1
+          fi
+
+  bounded-variance-falsification:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Static gate
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --all-targets -- -D warnings
+      - name: Execute exact frozen A4 12-test corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --test promotion_a4_variance -- --nocapture 2>&1 | tee a4-variance.log
+          grep -q 'test result: ok. 12 passed; 0 failed' a4-variance.log
+      - name: Replay existing GCC candidate unit corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --lib -- --nocapture 2>&1 | tee p3-gcc-existing.log
+      - name: Upload frozen A4 logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-a4-variance-attacks-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            a4-variance.log
+            p3-gcc-existing.log
+          if-no-files-found: warn
+
+  prior-p3-falsifier-reproof:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Replay P3 V4 poisoning / false-PASS falsifier
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-v4-falsifier/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-v4-falsifier/Cargo.toml --all-targets -- --nocapture 2>&1 | tee p3-v4.log
+      - name: Upload prior-P3 replay
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-a4-p3-prior-reproof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: p3-v4.log
+          if-no-files-found: warn
+
+  semantic-authority-reproof:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Reprove repaired Semantics v3 admission boundary
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+
+  closeout:
+    needs: [identity, bounded-variance-falsification, prior-p3-falsifier-reproof, semantic-authority-reproof]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Record bounded A4 eligibility evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$A3_CANDIDATE_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          mkdir -p evidence
+          {
+            echo 'decision=POST_ALPHA4_PROMOTION_A4_P3_VARIANCE_ELIGIBLE_BOUNDED_CANDIDATE'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "a3_candidate_floor=${A3_CANDIDATE_FLOOR}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo 'scope=gcc_ephemeral_identity_only'
+            echo 'frequency_authorizes=false'
+            echo 'similarity_authorizes=false'
+            echo 'raw_evidence_retained=true'
+            echo 'meaningful_drift_must_survive=true'
+            echo 'public_promotion_authorized=false'
+            echo 'main_merge_authorized=false'
+            echo 'p8_closure=false'
+          } | tee evidence/post-alpha4-promotion-a4-p3-variance.txt
+      - name: Upload A4 closeout evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-promotion-a4-p3-variance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/post-alpha4-promotion-a4-p3-variance.txt
+          if-no-files-found: error
+          retention-days: 90
