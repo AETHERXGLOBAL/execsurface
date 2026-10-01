@@ -1,0 +1,221 @@
+name: Post-alpha4 promotion A5 P6 validation tooling
+
+on:
+  push:
+    branches: [integration/post-alpha4-promotion-candidate]
+    paths:
+      - docs/development/POST_ALPHA4_PROMOTION_A5_P6_TOOLING_PROTOCOL.md
+      - docs/development/P6_COMPETITIVE_FALSIFICATION_PROTOCOL.md
+      - docs/development/P6_CLOSEOUT_DECISION.md
+      - experiments/p6-promotion-tooling/**
+      - .github/workflows/post-alpha4-promotion-a5-p6-tooling.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: post-alpha4-a5-p6-tooling-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  A4_CANDIDATE_FLOOR: 3bb0749f08046cbe26de0d9117defc6c93466fa8
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  P6_CLOSEOUT_SOURCE: 2fd32bf61275e733ddfb11df4f382cde6deab74b
+  P6_RETAINED_HARNESS_STOP: '36770551463'
+
+jobs:
+  identity-and-governance:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify ancestry, preregistration and immutable public anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'integration/post-alpha4-promotion-candidate'
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$A4_CANDIDATE_FLOOR" HEAD
+          git merge-base --is-ancestor "$P6_CLOSEOUT_SOURCE" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          protocol='docs/development/POST_ALPHA4_PROMOTION_A5_P6_TOOLING_PROTOCOL.md'
+          grep -F 'PREREGISTERED — VALIDATION/TOOLING ONLY / NO RUNTIME FEATURE OR PUBLIC PROMOTION AUTHORIZED' "$protocol"
+          grep -F 'Exactly 12 frozen A5 attacks/invariants' "$protocol"
+          grep -F 'No composite score, no winner, no partial-pass promotion' "$protocol"
+          test "$(grep -c '^    def test_a5_[0-9][0-9]_' experiments/p6-promotion-tooling/test_a5_tooling.py)" -eq 12
+          if git diff --name-only "$A4_CANDIDATE_FLOOR"..HEAD | grep -qE '^crates/(execsurface-cli|execsurface-diff|execsurface-normalize|execsurface-observe|execsurface-policy)/' ; then
+            echo 'A5 must not change public product crates' >&2
+            exit 1
+          fi
+      - name: Verify original P6 non-ranking and negative-evidence boundaries remain present
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'does not rank products and does not produce a composite winner score' docs/development/P6_COMPETITIVE_FALSIFICATION_PROTOCOL.md
+          grep -F 'NO_VALID_PERFORMANCE_COMPARISON' docs/development/P6_CLOSEOUT_DECISION.md
+          grep -F 'first A1 harness stop `36770551463`' docs/development/P6_CLOSEOUT_DECISION.md
+          grep -F 'ExecSurface alpha.4 S2 incompleteness' docs/development/P6_CLOSEOUT_DECISION.md
+          grep -F 'Tetragon live `NOT_TESTABLE_YET` status' docs/development/P6_CLOSEOUT_DECISION.md
+          grep -F 'cicd-sensor unsigned copied-predicate mutability observation' docs/development/P6_CLOSEOUT_DECISION.md
+          grep -F 'No product speed ranking is authorized.' docs/development/P6_CLOSEOUT_DECISION.md
+      - name: Verify retained P6 harness stop still exists as failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$P6_RETAINED_HARNESS_STOP" > p6-negative-run.json
+          jq -e '.status == "completed" and .conclusion == "failure"' p6-negative-run.json >/dev/null
+
+  a5-tooling-falsification:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Static Python gate
+        working-directory: experiments/p6-promotion-tooling
+        run: |
+          set -euo pipefail
+          python3 -m py_compile evaluator.py test_a5_tooling.py
+      - name: Execute exact frozen A5 12-test corpus
+        working-directory: experiments/p6-promotion-tooling
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v test_a5_tooling.py 2>&1 | tee a5-tooling.log
+          grep -q '^Ran 12 tests' a5-tooling.log
+          grep -q '^OK$' a5-tooling.log
+      - name: Verify evaluator exposes no ranking or release-positive output
+        working-directory: experiments/p6-promotion-tooling
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from evaluator import REQUIRED_NEGATIVE_EVIDENCE, build_factual_matrix
+          row = {
+              'product':'Harden-Runner',
+              'proposition':'CP1_PROCESS_EXECUTION_IDENTITY',
+              'scenario':'S1',
+              'dimension':'actor_identity',
+              'semantic_contract':'observation-v1',
+              'classification':'OBSERVED_SUPPORTED',
+              'source_sha':'e14015d583714f6e62063499dc959a02595150a1',
+          }
+          matrix = build_factual_matrix([row], negative_evidence_ids=REQUIRED_NEGATIVE_EVIDENCE)
+          assert matrix['global_product_verdict'] is None
+          assert matrix['performance_ranking'] is None
+          assert matrix['semantic_authority_from_comparison'] is False
+          assert matrix['proof_admission_from_comparison'] is False
+          assert matrix['external_validation'] is False
+          assert matrix['release_authorized'] is False
+          PY
+      - name: Upload A5 attack log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-a5-p6-tooling-attacks-${{ github.run_id }}-${{ github.run_attempt }}
+          path: experiments/p6-promotion-tooling/a5-tooling.log
+          if-no-files-found: warn
+          retention-days: 90
+
+  semantic-authority-reproof:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Reprove repaired A1 Semantics v3
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+      - name: Reprove A2 proposition authority
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test promotion_a2_authority_sensitivity -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b_cross_proposition_falsification -- --nocapture
+      - name: Reprove A3 attestation cannot manufacture authority
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test promotion_a3_attestation_authority -- --nocapture
+
+  variance-reproof:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Reprove A4 bounded GCC variance corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --test promotion_a4_variance -- --nocapture 2>&1 | tee a4-reproof.log
+          grep -q 'test result: ok. 12 passed; 0 failed' a4-reproof.log
+      - name: Reprove P3 poisoning falsifier
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-v4-falsifier/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-v4-falsifier/Cargo.toml --all-targets -- --nocapture
+
+  closeout:
+    needs: [identity-and-governance, a5-tooling-falsification, semantic-authority-reproof, variance-reproof]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Record bounded A5 validation-tooling eligibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$A4_CANDIDATE_FLOOR" HEAD
+          git merge-base --is-ancestor "$P6_CLOSEOUT_SOURCE" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          mkdir -p evidence
+          {
+            echo 'decision=POST_ALPHA4_PROMOTION_A5_P6_VALIDATION_TOOLING_ELIGIBLE_BOUNDED_CANDIDATE'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "a4_candidate_floor=${A4_CANDIDATE_FLOOR}"
+            echo "p6_closeout_source=${P6_CLOSEOUT_SOURCE}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo 'scope=internal_validation_tooling_only'
+            echo 'composite_score=false'
+            echo 'overall_winner=false'
+            echo 'performance_ranking=false'
+            echo 'comparison_implies_semantic_authority=false'
+            echo 'comparison_implies_product_correctness=false'
+            echo 'negative_evidence_retained=true'
+            echo 'external_validation=false'
+            echo 'public_promotion_authorized=false'
+            echo 'main_merge_authorized=false'
+            echo 'p8_closure=false'
+          } | tee evidence/post-alpha4-promotion-a5-p6-tooling.txt
+      - name: Upload A5 closeout evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-promotion-a5-p6-tooling-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/post-alpha4-promotion-a5-p6-tooling.txt
+          if-no-files-found: error
+          retention-days: 90
