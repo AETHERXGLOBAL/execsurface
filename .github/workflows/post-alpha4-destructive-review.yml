@@ -44,10 +44,10 @@ jobs:
         run: |
           set -euo pipefail
           cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
-      - name: Reprove model all-targets
+      - name: Reprove model library tests without duplicating destructive integration tests
         run: |
           set -euo pipefail
-          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --all-targets
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --lib
 
   p4-authority-replay:
     runs-on: ubuntu-24.04
@@ -90,11 +90,29 @@ jobs:
       - name: Replay P5 A5 cross-attestation red-team corpus
         run: |
           set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
           cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test a5_graph_redteam -- --nocapture
+      - name: Replay P5 A3 negative interoperability corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a3_negative_interop -- --nocapture
+      - name: Replay P5 A2 SCAI-SVR binding corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_scai_svr_binding -- --nocapture
       - name: Replay P5 verifier-identity addendum
         run: |
           set -euo pipefail
-          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-scai-svr-binding/Cargo.toml --test verifier_identity_adequacy -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_verifier_identity_addendum -- --nocapture
+      - name: Replay P5 A1 runtime-trace mapping corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a1_runtime_trace_mapping -- --nocapture
+      - name: Replay P5 A0 attestation contract corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a0_attestation_contract -- --nocapture
 
   m11-fail-closed-replay:
     runs-on: ubuntu-24.04
