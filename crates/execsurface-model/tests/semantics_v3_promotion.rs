@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use execsurface_model::canonical::{CanonicalPath, PathClass, PathResolution};
 use execsurface_model::semantics_v3::{
     BackendSemanticProfile, CausalBinding, CompletenessDimension, CompletenessState,
-    EvidenceGuarantees, IdentityBasis, ObservationPoint, ProofCarryingObservation, ProofRequirement,
-    Proposition, TemporalBinding, SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION,
+    EvidenceGuarantees, IdentityBasis, ObservationPoint, ProofCarryingObservation,
+    ProofRequirement, Proposition, TemporalBinding, SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION,
 };
 use execsurface_model::{BackendMetadata, FileOperation, Observation};
 
@@ -73,7 +73,10 @@ fn a1_01_v2_shaped_payload_is_not_a_v3_proof_record() {
     });
     let bytes = serde_json::to_vec(&v2).expect("serialize v2 observation");
     let parsed = serde_json::from_slice::<ProofCarryingObservation>(&bytes);
-    assert!(parsed.is_err(), "v2 observation must not parse as a v3 proof record");
+    assert!(
+        parsed.is_err(),
+        "v2 observation must not parse as a v3 proof record"
+    );
 }
 
 #[test]
