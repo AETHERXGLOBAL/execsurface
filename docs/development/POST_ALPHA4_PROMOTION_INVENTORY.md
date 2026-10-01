@@ -15,7 +15,7 @@ No product-affecting row may start A0 as `ELIGIBLE_BOUNDED`.
 
 | Program | Research result | Status | Evidence source / boundary | Promotion note |
 |---|---|---|---|---|
-| P2 | Semantics v3: proposition-scoped evidence, explicit authority/completeness, proof-carrying observation, bounded compatibility work | UNASSESSED | Parent program #100; accepted bounded research on `development/post-alpha4-behavioral-integrity` | First product-affecting assessment because downstream contracts depend on it. No silent v2->v3 reinterpretation. |
+| P2 | Semantics v3: proposition-scoped evidence, explicit authority/completeness, proof-carrying observation, bounded compatibility work | ELIGIBLE_BOUNDED | A1 accepted run `36840921782`; artifact `11151432844`; decision `POST_ALPHA4_PROMOTION_A1_P2_ELIGIBLE_BOUNDED_FOR_CANDIDATE_IMPLEMENTATION`; retained failed run `36840824073` | Eligible only for a separately gated side-by-side candidate implementation. v2 remains v2; cross-schema default is `INCOMPARABLE_SCHEMA`; no public/default v3 or migration authorized. |
 | P3 | Legitimate-variance / ephemeral-identity work | UNASSESSED | Bounded research decision retained on parent branch | Must prove lower false REVIEW with zero new false PASS; frequency never authorizes behavior. |
 | P4 | Backend Adapter / Proposition Authority architecture | UNASSESSED | P4 closeout source `320c865d3e81071a8214ad726dca7a587b0fc479` | Promotion requires proposition-by-proposition compatibility; backend name never raises authority. |
 | P5 | Runtime attestation/provenance composition using existing standards | UNASSESSED | Final bounded decision `P5_EXISTING_STANDARDS_COMPOSITION_SUFFICIENT_BOUNDED`; closeout lineage includes `1f4df8f45a115a1638c997107e069c6acd74c51b` | Cryptographic validity remains separate from semantic authority; no custom-standard claim. |
@@ -31,16 +31,23 @@ No product-affecting row may start A0 as `ELIGIBLE_BOUNDED`.
 - Stable Action: `AETHERXGLOBAL/execsurface@v0.1`
 - At A0 freeze, both `v0.1.0-alpha.4` and `v0.1` resolve to the public release source above.
 
-## First assessment after A0
+## Closed assessment — A1 / P2
 
-A1 will evaluate **P2 Semantics v3 promotion eligibility only**.
+A1 established bounded eligibility for a **side-by-side candidate implementation only**.
 
-A1 must not implement public product changes before it freezes:
-- exact v2 -> v3 semantic delta;
-- compatibility/migration contract;
-- fail-closed invariants;
-- rollback/safe-disable boundary;
-- adversarial fixtures;
-- exact candidate API/schema surface.
+Frozen A1 boundaries:
+- no silent v2 -> v3 reinterpretation;
+- v2 artifacts remain under v2 parser/verifier/digest rules;
+- v3 proof semantics use an explicit distinct version domain;
+- v2/v3 cross-schema comparison defaults to `INCOMPARABLE_SCHEMA`;
+- no default PASS-eligible v2 -> v3 projection;
+- missing/incomplete/ambiguous/unsupported required evidence remains non-admissible;
+- backend names do not confer authority;
+- any future migration must be explicit, non-destructive and reacquire missing proof evidence;
+- public alpha.4, `main`, tags and stable `@v0.1` remain unchanged.
 
-If the P2 compatibility boundary cannot be made explicit without reinterpretation of alpha.4, A1 must return `DEFER` or `BLOCKED`, not weaken the gate.
+## Next assessment
+
+A2 evaluates **P4 Proposition Authority / Backend Adapter promotion eligibility** against the A1 version boundary.
+
+A2 must freeze exact proposition contracts and determine which P4 research adapters, if any, are eligible to feed a v3 candidate implementation. Unsupported proposition families must remain unsupported; backend identity must never substitute for proposition authority; success/failure/attempt distinctions must remain explicit.
