@@ -1,4 +1,4 @@
-name: Post-alpha4 candidate A8 A1 Semantics v3
+name: Post-alpha4 candidate A8 A1 Semantics v3 regression
 
 on:
   push:
@@ -11,17 +11,18 @@ permissions:
 env:
   RUST_TOOLCHAIN: 1.90.0
   ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  A8_A1_ACCEPTED_SOURCE: 1c65327e99aa62a3b42549764bebe6b5b29516e7
   PROMOTION_EVIDENCE_SOURCE: cef8c5b8acb3f3c9e0671c497ad04837709bb024
 
 jobs:
-  clean-provenance-and-scope:
+  clean-provenance-and-a1-slice:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify clean alpha.4 ancestry and immutable tags
+      - name: Verify clean alpha.4 ancestry, accepted A1 ancestry and immutable tags
         shell: bash
         run: |
           set -euo pipefail
@@ -29,28 +30,18 @@ jobs:
           git fetch --force --tags origin
           git merge-base --is-ancestor "$ALPHA4_SOURCE" HEAD
           test "$(git merge-base "$ALPHA4_SOURCE" HEAD)" = "$ALPHA4_SOURCE"
+          git merge-base --is-ancestor "$A8_A1_ACCEPTED_SOURCE" HEAD
           test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
           test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
-      - name: Verify exact A8 A1 admitted-file manifest
+      - name: Verify frozen A1 semantic/test slice is byte-identical to accepted source
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t changed < <(git diff --name-only "$ALPHA4_SOURCE"..HEAD | sort)
-          printf '%s\n' "${changed[@]}" | tee changed-files.txt
-          cat > expected-files.txt <<'EOF'
-          .github/workflows/post-alpha4-candidate-a8-a1-semantics-v3.yml
-          Cargo.lock
-          crates/execsurface-model/Cargo.toml
-          crates/execsurface-model/src/lib.rs
-          crates/execsurface-model/src/semantics_v3.rs
-          crates/execsurface-model/tests/semantics_v3_promotion.rs
-          crates/execsurface-model/tests/semantics_v3_rework.rs
-          docs/development/POST_ALPHA4_CANDIDATE_ASSEMBLY_MANIFEST.md
-          EOF
-          sed -i 's/^          //' expected-files.txt
-          sort -o expected-files.txt expected-files.txt
-          diff -u expected-files.txt changed-files.txt
-      - name: Prove default-off feature contract
+          git diff --exit-code "$A8_A1_ACCEPTED_SOURCE" HEAD -- \
+            crates/execsurface-model/src/semantics_v3.rs \
+            crates/execsurface-model/tests/semantics_v3_promotion.rs \
+            crates/execsurface-model/tests/semantics_v3_rework.rs
+      - name: Prove default-off feature and v2 schema contract still hold
         shell: bash
         run: |
           set -euo pipefail
@@ -115,7 +106,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: a8-a1-semantics-v3-falsification-${{ github.run_id }}-${{ github.run_attempt }}
+          name: a8-a1-regression-falsification-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             d01-d06.log
             a1.log
@@ -123,39 +114,37 @@ jobs:
           retention-days: 90
 
   closeout:
-    needs: [clean-provenance-and-scope, default-v2-regression, opt-in-v3-falsification]
+    needs: [clean-provenance-and-a1-slice, default-v2-regression, opt-in-v3-falsification]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Emit bounded A8 A1 evidence
+      - name: Emit A8 A1 integration-regression evidence
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p evidence
           {
-            echo 'decision=POST_ALPHA4_PROMOTION_A8_A1_SEMANTICS_V3_ELIGIBLE_BOUNDED_CLEAN_CANDIDATE'
+            echo 'decision=POST_ALPHA4_PROMOTION_A8_A1_INTEGRATION_REGRESSION_PASS'
             echo "candidate_sha=${GITHUB_SHA}"
+            echo "a8_a1_accepted_source=${A8_A1_ACCEPTED_SOURCE}"
             echo "alpha4_base=${ALPHA4_SOURCE}"
-            echo "promotion_evidence_source=${PROMOTION_EVIDENCE_SOURCE}"
-            echo 'clean_branch=true'
+            echo 'a1_semantic_slice_unchanged=true'
             echo 'semantics_v3_default_enabled=false'
             echo 'public_v2_default_unchanged=true'
-            echo 'cli_default_changed=false'
-            echo 'baseline_format_changed=false'
             echo 'd01_d06=6/6'
             echo 'a1_corpus=9/9'
             echo 'main_merge_authorized=false'
             echo 'public_release_authorized=false'
             echo 'stable_tag_movement_authorized=false'
             echo 'p8_closure=false'
-          } | tee evidence/a8-a1-clean-semantics-v3.txt
+          } | tee evidence/a8-a1-integration-regression.txt
       - name: Upload closeout evidence
         uses: actions/upload-artifact@v4
         with:
-          name: a8-a1-clean-semantics-v3-${{ github.run_id }}-${{ github.run_attempt }}
-          path: evidence/a8-a1-clean-semantics-v3.txt
+          name: a8-a1-integration-regression-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/a8-a1-integration-regression.txt
           if-no-files-found: error
           retention-days: 90
