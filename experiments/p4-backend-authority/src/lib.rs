@@ -314,33 +314,37 @@ mod tests {
 
     #[test]
     fn a0_path_attempt_cannot_satisfy_object_identity_requirement() {
+        let proposition = pathname_prop("/usr/bin/cat");
         let record = direct_record(
             "P4.PATH.ACCESS_ATTEMPT",
-            pathname_prop("/usr/bin/cat"),
+            proposition.clone(),
             lexical_guarantees(),
             "ptrace",
             'c',
         );
-        let requirement = ProofRequirement {
-            guarantees: object_guarantees(),
-            required_complete: BTreeSet::from([
+        let requirement = ProofRequirement::for_proposition(
+            proposition,
+            object_guarantees(),
+            BTreeSet::from([
                 CompletenessDimension::SessionScope,
                 CompletenessDimension::Capability,
             ]),
-        };
+        );
         assert!(!record.admissible_for(&requirement));
     }
 
     #[test]
     fn a0_backend_name_never_upgrades_weak_evidence() {
-        let requirement = ProofRequirement {
-            guarantees: object_guarantees(),
-            required_complete: BTreeSet::from([CompletenessDimension::SessionScope]),
-        };
+        let proposition = pathname_prop("/usr/bin/cat");
+        let requirement = ProofRequirement::for_proposition(
+            proposition.clone(),
+            object_guarantees(),
+            BTreeSet::from([CompletenessDimension::SessionScope]),
+        );
         for backend in ["ptrace", "tetragon", "bpf-lsm", "trusted-super-backend"] {
             let record = direct_record(
                 "P4.FILE.OPEN_OBJECT",
-                pathname_prop("/usr/bin/cat"),
+                proposition.clone(),
                 lexical_guarantees(),
                 backend,
                 'd',
@@ -361,18 +365,19 @@ mod tests {
         );
         let strong = direct_record(
             "P4.FILE.OPEN_OBJECT",
-            proposition,
+            proposition.clone(),
             object_guarantees(),
             "kernel-object-fixture",
             'f',
         );
-        let requirement = ProofRequirement {
-            guarantees: object_guarantees(),
-            required_complete: BTreeSet::from([
+        let requirement = ProofRequirement::for_proposition(
+            proposition,
+            object_guarantees(),
+            BTreeSet::from([
                 CompletenessDimension::SessionScope,
                 CompletenessDimension::Capability,
             ]),
-        };
+        );
         assert_eq!(
             compare_under_requirement(&weak, &strong, &requirement),
             ComparisonResult::RightOnly
