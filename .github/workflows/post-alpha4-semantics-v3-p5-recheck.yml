@@ -1,0 +1,68 @@
+name: Post-alpha4 Semantics v3 P5 attestation recheck
+
+on:
+  push:
+    branches: [integration/post-alpha4-semantics-v3-rework]
+    paths:
+      - .github/workflows/post-alpha4-semantics-v3-p5-recheck.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p5-attestation-recheck:
+    runs-on: ubuntu-24.04
+    env:
+      RUST_TOOLCHAIN: 1.90.0
+      P5_A3_FIXTURE: ${{ github.workspace }}/p5-a3-upstream.json
+      UPSTREAM_REPOSITORY: https://github.com/slsa-framework/slsa-verifier.git
+      UPSTREAM_COMMIT: 30d0be3bbab553fc51557377baba2f7572dfc212
+      UPSTREAM_PATH: verifiers/internal/gcb/testdata/v1.0-gcloud-container-github-single.json
+      UPSTREAM_BLOB_SHA: 7102e40887a758e01184ac79ca10cb34b7281627
+      ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+
+      - name: Fetch and verify pinned SLSA v1 fixture
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          git -C "$tmp" init -q
+          git -C "$tmp" remote add origin "$UPSTREAM_REPOSITORY"
+          git -C "$tmp" fetch -q --depth=1 origin "$UPSTREAM_COMMIT"
+          test "$(git -C "$tmp" rev-parse FETCH_HEAD)" = "$UPSTREAM_COMMIT"
+          test "$(git -C "$tmp" rev-parse "FETCH_HEAD:$UPSTREAM_PATH")" = "$UPSTREAM_BLOB_SHA"
+          git -C "$tmp" show "FETCH_HEAD:$UPSTREAM_PATH" > "$P5_A3_FIXTURE"
+          grep -q 'https://slsa.dev/provenance/v1' "$P5_A3_FIXTURE"
+
+      - name: Replay P5 A5 cross-attestation red-team
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test a5_graph_redteam -- --nocapture
+
+      - name: Replay pinned P5 A3 SLSA provenance binding
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml --test a3_slsa_provenance_binding -- --nocapture
+
+      - name: Replay P5 A2 A1 A0 composition
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_scai_svr_binding -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_verifier_identity_addendum -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a1_runtime_trace_mapping -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a0_standards_composition -- --nocapture
+
+      - name: Verify immutable public anchors
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
