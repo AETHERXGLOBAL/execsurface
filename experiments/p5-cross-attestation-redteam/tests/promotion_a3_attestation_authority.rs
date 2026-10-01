@@ -131,7 +131,13 @@ fn expected(input: &VerificationInput) -> ExpectedVerificationContext {
     }
 }
 
-fn accepted_graph(input: &VerificationInput) -> (execsurface_p5_attestation_provenance::VerificationBundle, ExpectedVerificationContext, Vec<GraphItem>) {
+fn accepted_graph(
+    input: &VerificationInput,
+) -> (
+    execsurface_p5_attestation_provenance::VerificationBundle,
+    ExpectedVerificationContext,
+    Vec<GraphItem>,
+) {
     let bundle = build_bundle(input).expect("fixture must build");
     let context = expected(input);
     let manifest = manifest_for_bundle(&bundle).expect("manifest must build");
@@ -167,7 +173,11 @@ fn a3_03_verified_provenance_cannot_launder_observer_loss_to_pass() {
 #[test]
 fn a3_04_cross_subject_provenance_replay_is_rejected() {
     let mut input = direct_complete_input();
-    input.slsa_provenance.as_mut().expect("provenance").subject_digest = labeled('9');
+    input
+        .slsa_provenance
+        .as_mut()
+        .expect("provenance")
+        .subject_digest = labeled('9');
     let error = build_bundle(&input).expect_err("cross-subject provenance must fail");
     assert_eq!(error.reason_code, "slsa_subject_mismatch");
 }
@@ -175,8 +185,11 @@ fn a3_04_cross_subject_provenance_replay_is_rejected() {
 #[test]
 fn a3_05_provenance_predicate_type_substitution_is_rejected() {
     let mut input = direct_complete_input();
-    input.slsa_provenance.as_mut().expect("provenance").predicate_type =
-        "https://example.invalid/fake-provenance/v1".to_owned();
+    input
+        .slsa_provenance
+        .as_mut()
+        .expect("provenance")
+        .predicate_type = "https://example.invalid/fake-provenance/v1".to_owned();
     let error = build_bundle(&input).expect_err("predicate substitution must fail");
     assert_eq!(error.reason_code, "slsa_predicate_type_mismatch");
 }
@@ -184,8 +197,11 @@ fn a3_05_provenance_predicate_type_substitution_is_rejected() {
 #[test]
 fn a3_06_malformed_provenance_statement_digest_is_rejected() {
     let mut input = direct_complete_input();
-    input.slsa_provenance.as_mut().expect("provenance").statement_digest =
-        "sha256:not-a-digest".to_owned();
+    input
+        .slsa_provenance
+        .as_mut()
+        .expect("provenance")
+        .statement_digest = "sha256:not-a-digest".to_owned();
     let error = build_bundle(&input).expect_err("malformed provenance digest must fail");
     assert_eq!(error.reason_code, "slsa_statement_digest_malformed");
 }
