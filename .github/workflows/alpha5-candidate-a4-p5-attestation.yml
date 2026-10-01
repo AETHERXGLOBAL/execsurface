@@ -1,0 +1,216 @@
+name: Alpha5 candidate A4 attestation and provenance authority
+
+on:
+  push:
+    branches:
+      - integration/post-alpha4-promotion-candidate
+    paths:
+      - .github/workflows/alpha5-candidate-a4-p5-attestation.yml
+      - experiments/p5-attestation-provenance/**
+      - experiments/p5-cross-attestation-redteam/**
+      - experiments/p5-slsa-provenance-binding/**
+      - experiments/p5-signed-attestation/**
+      - crates/execsurface-model/src/semantics_v3.rs
+      - crates/execsurface-model/tests/semantics_v3_promotion.rs
+      - crates/execsurface-model/tests/semantics_v3_rework.rs
+      - experiments/p4-backend-authority/**
+      - crates/execsurface-observe/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  id-token: read
+
+concurrency:
+  group: alpha5-candidate-a4-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  ALPHA5_A3_FLOOR: 917e7e2e902e87b91d299b590cff1cf7d0c15d81
+  P5_A5_NEGATIVE_SOURCE: a7753bee6cc9f145adc7823dd82837fa40cfca01
+  P5_A5_NEGATIVE_RUN: '36755962689'
+  P5_A3_UPSTREAM_REPOSITORY: https://github.com/slsa-framework/slsa-verifier.git
+  P5_A3_UPSTREAM_COMMIT: 30d0be3bbab553fc51557377baba2f7572dfc212
+  P5_A3_UPSTREAM_PATH: verifiers/internal/gcb/testdata/v1.0-gcloud-container-github-single.json
+  P5_A3_UPSTREAM_BLOB_SHA: 7102e40887a758e01184ac79ca10cb34b7281627
+  P5_A4_ACCEPTED_SOURCE: 862f0830511fe1421de20717187645d6e0a9a52e
+  A4_SUBJECT_PATH: experiments/p5-signed-attestation/subject.txt
+  A4_SIGNER_WORKFLOW: AETHERXGLOBAL/execsurface/.github/workflows/p5-a4-signed-attestation.yml
+  A4_SOURCE_REF: refs/heads/development/post-alpha4-behavioral-integrity
+  A4_PREDICATE_TYPE: https://slsa.dev/provenance/v1
+
+jobs:
+  identity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Verify alpha5 order and immutable public boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = 'integration/post-alpha4-promotion-candidate'
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$ALPHA5_A3_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          if git diff --name-only "$ALPHA5_A3_FLOOR"..HEAD | grep -q '^crates/' ; then
+            echo 'A4 attestation gate must not silently mutate product crates' >&2
+            exit 1
+          fi
+      - name: Verify retained negative evidence is still a real failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$P5_A5_NEGATIVE_RUN" > negative-run.json
+          jq -e --arg sha "$P5_A5_NEGATIVE_SOURCE" '.status == "completed" and .conclusion == "failure" and .head_sha == $sha' negative-run.json >/dev/null
+
+  attestation-redteam:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Static gates without warning relaxation
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p5-attestation-provenance/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --all-targets -- -D warnings
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+          cargo +$RUST_TOOLCHAIN fmt --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --all-targets -- -D warnings
+      - name: Execute frozen 12-attack semantic-authority corpus
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test promotion_a3_attestation_authority -- --nocapture 2>&1 | tee alpha5-a4-attestation.log
+          grep -q 'test result: ok. 12 passed; 0 failed' alpha5-a4-attestation.log
+      - name: Replay P5 A5 cross-attestation red-team 12 of 12
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test a5_graph_redteam -- --nocapture 2>&1 | tee alpha5-a4-p5-a5.log
+          grep -q 'test result: ok. 12 passed; 0 failed' alpha5-a4-p5-a5.log
+
+  standards-reproof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Restore and verify pinned upstream SLSA fixture
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          git -C "$tmp" init -q
+          git -C "$tmp" remote add origin "$P5_A3_UPSTREAM_REPOSITORY"
+          git -C "$tmp" fetch -q --depth=1 origin "$P5_A3_UPSTREAM_COMMIT"
+          test "$(git -C "$tmp" rev-parse FETCH_HEAD)" = "$P5_A3_UPSTREAM_COMMIT"
+          test "$(git -C "$tmp" rev-parse "FETCH_HEAD:$P5_A3_UPSTREAM_PATH")" = "$P5_A3_UPSTREAM_BLOB_SHA"
+          git -C "$tmp" show "FETCH_HEAD:$P5_A3_UPSTREAM_PATH" > p5-a3-upstream.json
+          grep -F 'https://slsa.dev/provenance/v1' p5-a3-upstream.json
+      - name: Reprove SLSA binding 12 of 12
+        env:
+          P5_A3_FIXTURE: ${{ github.workspace }}/p5-a3-upstream.json
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-slsa-provenance-binding/Cargo.toml --test a3_slsa_provenance_binding -- --nocapture 2>&1 | tee p5-a3.log
+          grep -q 'test result: ok. 12 passed; 0 failed' p5-a3.log
+      - name: Reprove standards composition A2 A1 A0
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_scai_svr_binding -- --nocapture 2>&1 | tee p5-a2.log
+          grep -q 'test result: ok. 14 passed; 0 failed' p5-a2.log
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_verifier_identity_addendum -- --nocapture 2>&1 | tee p5-a2-verifier.log
+          grep -q 'test result: ok. 4 passed; 0 failed' p5-a2-verifier.log
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a1_runtime_trace_mapping -- --nocapture 2>&1 | tee p5-a1.log
+          grep -q 'test result: ok. 12 passed; 0 failed' p5-a1.log
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a0_standards_composition -- --nocapture 2>&1 | tee p5-a0.log
+          grep -q 'test result: ok. 18 passed; 0 failed' p5-a0.log
+
+  sigstore-reverify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Reverify accepted GitHub Sigstore attestation independently
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "$A4_SUBJECT_PATH" \
+            --repo AETHERXGLOBAL/execsurface \
+            --signer-workflow "$A4_SIGNER_WORKFLOW" \
+            --source-digest "$P5_A4_ACCEPTED_SOURCE" \
+            --source-ref "$A4_SOURCE_REF" \
+            --predicate-type "$A4_PREDICATE_TYPE" \
+            --format json > sigstore-reverify.json
+          jq -e --arg sha "$P5_A4_ACCEPTED_SOURCE" 'length > 0 and any(.[]; .verificationResult.signature.certificate.githubWorkflowSHA == $sha and ((.verificationResult.verifiedTimestamps // []) | length > 0))' sigstore-reverify.json >/dev/null
+
+  semantic-chain-reproof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Reprove Semantics v3
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+      - name: Reprove P4 proposition authority and M11 fail-closed
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test promotion_a2_authority_sensitivity -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b_cross_proposition_falsification -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
+
+  closeout:
+    needs: [identity, attestation-redteam, standards-reproof, sigstore-reverify, semantic-chain-reproof]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Record candidate-scoped A4 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$ALPHA5_A3_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          mkdir -p evidence
+          {
+            echo 'decision_candidate=ALPHA5_A4_ATTESTATION_PROVENANCE_AUTHORITY_PASS'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "alpha5_a3_floor=${ALPHA5_A3_FLOOR}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo 'cryptographic_validity_implies_semantic_authority=false'
+            echo 'signature_validity_implies_semantic_authority=false'
+            echo 'provenance_presence_implies_semantic_authority=false'
+            echo 'signer_or_verifier_identity_implies_semantic_authority=false'
+            echo 'existing_standards_composition_retained=true'
+            echo 'release_authorized=false'
+            echo 'p8_external_validation_unchanged=true'
+          } | tee evidence/alpha5-a4-p5-attestation.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a4-p5-attestation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/alpha5-a4-p5-attestation.txt
+          if-no-files-found: error
