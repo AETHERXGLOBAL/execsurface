@@ -20,7 +20,6 @@ on:
 permissions:
   contents: read
   actions: read
-  id-token: read
 
 concurrency:
   group: alpha5-candidate-a4-${{ github.ref }}
