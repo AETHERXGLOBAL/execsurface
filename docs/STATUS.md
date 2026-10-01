@@ -7,7 +7,7 @@ This file states the **current public product state**. Historical milestone docu
 ## Current public product state
 
 - Current live `main`: resolve from the GitHub branch head at read time; documentation/evaluation commits may advance it independently of the immutable release source
-- Current public release: `v0.1.0-alpha.4`
+- Current public release: `v0.1.0-alpha.5`
 - Immutable alpha.4 release source: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
 - Stable GitHub Action channel `AETHERXGLOBAL/execsurface@v0.1`: `48e0b9a0707553349e75e97a9dfa096d13f9ab5d`
 - Public support scope: Linux x86_64
@@ -43,16 +43,16 @@ BPF-LSM/kernel-hook work remains managed/research-only and non-default. Alpha.4 
 
 Current public distribution surfaces:
 
-1. checksum-verifiable GitHub Release binary for `v0.1.0-alpha.4`;
+1. checksum-verifiable GitHub Release binary for `v0.1.0-alpha.5`;
 2. crates.io package installation for Rust users;
 3. GitHub Action stable channel `AETHERXGLOBAL/execsurface@v0.1`;
-4. immutable Action pin `AETHERXGLOBAL/execsurface@v0.1.0-alpha.4`.
+4. immutable Action pin `AETHERXGLOBAL/execsurface@v0.1.0-alpha.5`.
 
 ## Historical-roadmap note
 
 `ROADMAP.md` is cumulative milestone history. Statements inside earlier closed milestones such as M9.3 that called alpha.3 the current release describe the state **at that milestone's closure** and are not current product status.
 
-For current public facts, use this file, the README, the latest GitHub Release and `docs/releases/v0.1.0-alpha.4.md`.
+For current public facts, use this file, the README, the latest GitHub Release and `docs/releases/v0.1.0-alpha.5.md`.
 
 ## OpenSSF engagement
 

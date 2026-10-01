@@ -2,7 +2,7 @@
 
 **Purpose:** let an external engineer independently reproduce one unchanged-runtime PASS and one controlled runtime-drift REVIEW in roughly 5–10 minutes, with machine-readable evidence and without AETHER X assistance.
 
-**Current public release:** `v0.1.0-alpha.4`
+**Current public release:** `v0.1.0-alpha.5`
 
 **Current boundary:** Linux x86_64 Public Alpha. Native `ptrace` is the public default/reference observer. This evaluation is not a malware test, sandbox, EDR assessment, enforcement-system test, or proof of program safety.
 
@@ -24,7 +24,7 @@ A failure, unsupported environment, incomplete observation or unexpected result 
 No Rust toolchain is required for the primary evaluation path.
 
 ```bash
-VERSION=v0.1.0-alpha.4
+VERSION=v0.1.0-alpha.5
 TARGET=x86_64-unknown-linux-gnu
 ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
 
@@ -44,7 +44,7 @@ execsurface doctor
 Expected version:
 
 ```text
-execsurface 0.1.0-alpha.4
+execsurface 0.1.0-alpha.5
 ```
 
 Optional build-provenance verification when GitHub CLI attestation support is available:
@@ -60,7 +60,7 @@ A valid build attestation binds an artifact to a build source/workflow. It does 
 If Rust/Cargo is already installed:
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.4" --locked
+cargo install execsurface --version "=0.1.0-alpha.5" --locked
 execsurface --version
 execsurface doctor
 ```
@@ -183,7 +183,7 @@ Important boundaries:
 - no automatic hybrid selection or ptrace↔hybrid baseline interchangeability is authorized;
 - Linux x86_64 is the current public support scope.
 
-See `docs/architecture/PTRACE_VS_LSM_ARCHITECTURE_REVIEW.md` and `docs/releases/v0.1.0-alpha.4.md`.
+See `docs/architecture/PTRACE_VS_LSM_ARCHITECTURE_REVIEW.md` and `docs/releases/v0.1.0-alpha.5.md`.
 
 ## 9. What a successful evaluation establishes
 

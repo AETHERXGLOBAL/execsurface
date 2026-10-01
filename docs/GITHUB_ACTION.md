@@ -13,7 +13,7 @@ AETHERXGLOBAL/execsurface@v0.1
 For maximum pinning after this release, use:
 
 ```text
-AETHERXGLOBAL/execsurface@v0.1.0-alpha.4
+AETHERXGLOBAL/execsurface@v0.1.0-alpha.5
 ```
 
 Do not use `@main` as the normal consumer path.
