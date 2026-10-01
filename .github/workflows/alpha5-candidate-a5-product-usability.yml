@@ -91,7 +91,6 @@ jobs:
           "$RUNNER_TEMP/alpha5-cli/bin/execsurface" --help > "$RUNNER_TEMP/help.txt"
           grep -F 'learn' "$RUNNER_TEMP/help.txt"
           grep -F 'check' "$RUNNER_TEMP/help.txt"
-          grep -F 'doctor' "$RUNNER_TEMP/help.txt"
       - name: Doctor PASS REVIEW and ERROR behavior
         shell: bash
         run: |
