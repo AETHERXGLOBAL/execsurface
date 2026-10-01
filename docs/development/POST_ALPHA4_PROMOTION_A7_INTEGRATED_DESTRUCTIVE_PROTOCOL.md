@@ -70,6 +70,17 @@ Any reproducible path below is a material finding and blocks integrated eligibil
 
 The names, count, assertions and acceptance criteria are frozen before first execution. Harness-only corrections are allowed only when they do not alter scientific assertions, thresholds or candidate semantics. Every failed run remains retained.
 
+## Retained historical evidence locators
+
+This locator block was added after the first A7 execution solely to make the already-frozen `a7_14_historical_material_failures_remain_retained` invariant machine-checkable against the exact evidence identifiers. It does not alter any test name, assertion, threshold, acceptance criterion or candidate semantics.
+
+- A1 destructive material-gap run: `36845569114`;
+- P5-A5 retained negative run: `36755962689`;
+- P6 retained first A1 harness stop: `36770551463`;
+- P7 native arm64 negative-parity run: `36774237512`.
+
+First A7 execution `36865234821` remains retained as a failed run. Its executable Semantics/P4/P5/P3/P7/public fail-closed reproof jobs passed; the failure was confined to the A7 governance corpus before this exact-locator block existed.
+
 ## Mandatory executable reproof
 
 A7 must execute in the same candidate lineage:
