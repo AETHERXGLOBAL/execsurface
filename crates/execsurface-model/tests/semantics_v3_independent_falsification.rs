@@ -1,8 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use execsurface_model::canonical::{
-    CanonicalExecutable, CanonicalPath, OpenIntent, PathClass, PathResolution,
-};
+use execsurface_model::canonical::{CanonicalExecutable, CanonicalPath, PathClass, PathResolution};
 use execsurface_model::semantics_v3::{
     BackendSemanticProfile, CausalBinding, CompletenessDimension, CompletenessState,
     EvidenceGuarantees, IdentityBasis, ObservationPoint, ProofCarryingObservation,
@@ -35,7 +33,7 @@ fn proposition(actor: &str, operation: FileOperation, chain_tail: &str) -> Propo
         execution_chain: vec![exe("/bin/bash"), exe(chain_tail)],
         operation,
         target: path("$WORKSPACE/input.txt"),
-        open_intent: Some(OpenIntent::ReadOnly),
+        open_intent: None,
     }
 }
 
