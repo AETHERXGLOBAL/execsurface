@@ -1,0 +1,181 @@
+name: Alpha5 A6 scope-correction supplement
+
+on:
+  push:
+    branches:
+      - release/v0.1.0-alpha.5-hardening
+    paths:
+      - '.github/workflows/alpha5-a6-scope-correction-supplement.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  P6_SOURCE: 08a5a3775ef1618a50296c2b88f16bb93d332754
+  P7_SOURCE: 8b1a5c603e808bbf6fa1aa38e6340a35bc2082ec
+
+jobs:
+  historical-scope-replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify current immutable public anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = 'v0.1.0-alpha.4'
+      - name: Re-run current frozen 16-invariant integrated corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(grep -c '^    def test_a7_[0-9][0-9]_' scripts/post_alpha4_a7_integrated_falsifier.py)" -eq 16
+          python3 scripts/post_alpha4_a7_integrated_falsifier.py 2>&1 | tee current-integrated-16.log
+          grep -q 'Ran 16 tests' current-integrated-16.log
+          grep -q '^OK$' current-integrated-16.log
+      - name: Replay frozen P6 falsifier at exact P6 closeout source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "${P6_SOURCE}^{commit}"
+          test "$(git show -s --format=%s "$P6_SOURCE")" = 'Promotion A5: close P6 validation tooling and advance inventory'
+          git worktree add --detach "$RUNNER_TEMP/p6-history" "$P6_SOURCE"
+          (
+            cd "$RUNNER_TEMP/p6-history"
+            test "$(grep -c '^    def test_a5_[0-9][0-9]_' scripts/post_alpha4_a5_p6_falsifier.py)" -eq 12
+            python3 scripts/post_alpha4_a5_p6_falsifier.py 2>&1 | tee "$GITHUB_WORKSPACE/historical-p6.log"
+          )
+          grep -q 'Ran 12 tests' historical-p6.log
+          grep -q '^OK$' historical-p6.log
+      - name: Replay frozen P7 falsifier at exact P7 closeout source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "${P7_SOURCE}^{commit}"
+          test "$(git show -s --format=%s "$P7_SOURCE")" = 'Promotion A6: record bounded P7 platform-contract decision'
+          git worktree add --detach "$RUNNER_TEMP/p7-history" "$P7_SOURCE"
+          (
+            cd "$RUNNER_TEMP/p7-history"
+            test "$(grep -c '^    def test_a6_[0-9][0-9]_' scripts/post_alpha4_a6_p7_falsifier.py)" -eq 12
+            python3 scripts/post_alpha4_a6_p7_falsifier.py 2>&1 | tee "$GITHUB_WORKSPACE/historical-p7.log"
+          )
+          grep -q 'Ran 12 tests' historical-p7.log
+          grep -q '^OK$' historical-p7.log
+      - name: Upload historical-scope evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a6-historical-scope-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            current-integrated-16.log
+            historical-p6.log
+            historical-p7.log
+          if-no-files-found: warn
+          retention-days: 90
+
+  current-semantics-metamorphic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Static model gate
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-model --all-targets -- -D warnings
+      - name: Repaired Semantics-v3 and metamorphic replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+          test "$(grep -c '^fn m[0-9][0-9]_' crates/execsurface-model/tests/alpha5_metamorphic.rs)" -eq 8
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test alpha5_metamorphic -- --nocapture 2>&1 | tee metamorphic-8.log
+          grep -q 'test result: ok. 8 passed; 0 failed' metamorphic-8.log
+      - name: Upload metamorphic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a6-supplement-metamorphic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: metamorphic-8.log
+          if-no-files-found: warn
+          retention-days: 90
+
+  current-full-workspace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Full static gate
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --workspace --all-targets -- -D warnings
+      - name: Full workspace tests
+        run: cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets -- --nocapture
+      - name: Release build and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN build --locked --release --workspace
+          cargo +$RUST_TOOLCHAIN package --locked -p execsurface --allow-dirty
+          git diff --exit-code -- Cargo.lock
+
+  closeout:
+    needs: [historical-scope-replay, current-semantics-metamorphic, current-full-workspace]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Record supplement result without erasing first failed A6 run
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            echo 'classification=ALPHA5_A6_SCOPE_CORRECTION_SUPPLEMENT_PASS_INTERNAL_ONLY'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo 'first_failed_a6_run=36892462480'
+            echo 'first_failure_class=HARNESS_SCOPE_AND_STATIC_FORMATTING'
+            echo "p6_historical_source=${P6_SOURCE}"
+            echo "p7_historical_source=${P7_SOURCE}"
+            echo 'frozen_p6_tests_modified=false'
+            echo 'frozen_p7_tests_modified=false'
+            echo 'frozen_integrated_16_modified=false'
+            echo 'metamorphic_assertions_modified=false'
+            echo 'public_release_authorized=false'
+            echo 'p8_external_validation_closed=false'
+          } | tee evidence/alpha5-a6-scope-correction.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a6-scope-correction-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/alpha5-a6-scope-correction.txt
+          if-no-files-found: error
+          retention-days: 90
