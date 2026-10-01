@@ -1,0 +1,171 @@
+name: Post-alpha4 promotion A7 integrated destructive closeout
+
+on:
+  push:
+    branches: [integration/post-alpha4-promotion-candidate]
+    paths:
+      - docs/development/POST_ALPHA4_PROMOTION_A7_INTEGRATED_DESTRUCTIVE_PROTOCOL.md
+      - scripts/post_alpha4_a7_integrated_falsifier.py
+      - .github/workflows/post-alpha4-promotion-a7-integrated-destructive.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: post-alpha4-a7-integrated-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  A6_DECISION_FLOOR: 8b1a5c603e808bbf6fa1aa38e6340a35bc2082ec
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+
+jobs:
+  identity-governance:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Verify frozen A7 boundary and immutable public anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$A6_DECISION_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          grep -F 'PREREGISTERED — INTEGRATED DESTRUCTIVE CLOSEOUT / NO PUBLIC RELEASE AUTHORIZED' docs/development/POST_ALPHA4_PROMOTION_A7_INTEGRATED_DESTRUCTIVE_PROTOCOL.md
+          grep -F 'Exactly 16 frozen integrated invariants' docs/development/POST_ALPHA4_PROMOTION_A7_INTEGRATED_DESTRUCTIVE_PROTOCOL.md
+          test "$(grep -c '^    def test_a7_[0-9][0-9]_' scripts/post_alpha4_a7_integrated_falsifier.py)" -eq 16
+      - name: Execute exact frozen A7 governance corpus
+        run: |
+          set -euo pipefail
+          python3 scripts/post_alpha4_a7_integrated_falsifier.py 2>&1 | tee a7-integrated.log
+          grep -q 'Ran 16 tests' a7-integrated.log
+          grep -q '^OK$' a7-integrated.log
+      - name: Upload integrated falsifier log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-a7-integrated-falsifier-${{ github.run_id }}-${{ github.run_attempt }}
+          path: a7-integrated.log
+          if-no-files-found: warn
+
+  semantics-p4:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Reprove repaired Semantics v3
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+      - name: Reprove P4 authority and cross-proposition boundaries
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test promotion_a2_authority_sensitivity -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b_cross_proposition_falsification -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b0_success_evidence -- --nocapture
+      - name: Reprove bounded live authority corpora
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b1_ptrace_open_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b2_ptrace_rename_delete_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b3_ptrace_connect_live -- --nocapture
+
+  p5-cross-layer:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Reprove P5 attestation authority and substitution resistance
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test promotion_a3_attestation_authority -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test a5_graph_redteam -- --nocapture
+      - name: Reprove core standards binding
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_scai_svr_binding -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a1_runtime_trace_mapping -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a0_standards_composition -- --nocapture
+
+  variance-platform:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Replay P3 poisoning falsifier
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-v4-falsifier/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-v4-falsifier/Cargo.toml --all-targets -- --nocapture
+      - name: Replay P7 GitLab and self-hosted contracts
+        working-directory: experiments/p7-platform-ci
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v test_gitlab_context_adapter.py
+          python3 -m unittest -v test_self_hosted_evidence_contract.py
+          python3 -m unittest -v test_self_hosted_package.py
+
+  public-failclosed:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Reprove public shared-FD fail-closed boundary
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
+      - name: Recheck retained negative markers and public version domain
+        run: |
+          set -euo pipefail
+          grep -F '36845569114' docs/development/POST_ALPHA4_PROMOTION_A1_REQUALIFICATION_PROTOCOL.md docs/reviews/POST_ALPHA4_DESTRUCTIVE_REVIEW_RESULT.md || true
+          grep -F '36755962689' docs/development/POST_ALPHA4_PROMOTION_INVENTORY.md docs/development/P5_CLOSEOUT_DECISION.md
+          grep -F '36770551463' docs/development/P6_CLOSEOUT_DECISION.md
+          grep -F '36774237512' docs/development/P7_CLOSEOUT_DECISION.md
+          grep -F 'pub const RAW_OBSERVATION_SCHEMA_VERSION: u32 = 2;' crates/execsurface-model/src/lib.rs
+          grep -F 'pub const SEMANTICS_V3_PROTOTYPE_SCHEMA_VERSION: u32 = 3;' crates/execsurface-model/src/semantics_v3.rs
+
+  closeout:
+    needs: [identity-governance, semantics-p4, p5-cross-layer, variance-platform, public-failclosed]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Record bounded A7 result
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          git merge-base --is-ancestor "$A6_DECISION_FLOOR" HEAD
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          mkdir -p evidence
+          {
+            echo 'decision=POST_ALPHA4_PROMOTION_A7_INTEGRATED_CANDIDATE_SURVIVES_BOUNDED_INTERNAL'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo 'integrated_material_gap_found=false'
+            echo 'cross_layer_authority_laundering=false'
+            echo 'negative_evidence_retained=true'
+            echo 'arm64_support=false'
+            echo 'public_release_authorized=false'
+            echo 'main_merge_authorized=false'
+            echo 'p8_closure=false'
+          } | tee evidence/post-alpha4-promotion-a7-integrated.txt
+      - name: Upload A7 closeout evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-alpha4-promotion-a7-integrated-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/post-alpha4-promotion-a7-integrated.txt
+          if-no-files-found: error
+          retention-days: 90
