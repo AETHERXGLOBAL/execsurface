@@ -1,0 +1,339 @@
+name: Alpha5 A6 integrated destructive closeout
+
+on:
+  push:
+    branches:
+      - release/v0.1.0-alpha.5-hardening
+    paths:
+      - '.github/workflows/alpha5-a6-integrated-destructive.yml'
+      - 'crates/**'
+      - 'experiments/**'
+      - 'scripts/post_alpha4_a5_p6_falsifier.py'
+      - 'scripts/post_alpha4_a6_p7_falsifier.py'
+      - 'scripts/post_alpha4_a7_integrated_falsifier.py'
+      - '.github/m12-fixtures/**'
+      - 'docs/release/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  CURRENT_PUBLIC: v0.1.0-alpha.4
+
+concurrency:
+  group: alpha5-a6-destructive-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  governance-integrated-falsifier:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Verify immutable public boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "$CURRENT_PUBLIC"
+      - name: Execute exact frozen 16-invariant integrated corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(grep -c '^    def test_a7_[0-9][0-9]_' scripts/post_alpha4_a7_integrated_falsifier.py)" -eq 16
+          python3 scripts/post_alpha4_a7_integrated_falsifier.py 2>&1 | tee a6-integrated-16.log
+          grep -q 'Ran 16 tests' a6-integrated-16.log
+          grep -q '^OK$' a6-integrated-16.log
+      - name: Replay P6 and P7 falsifier contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/post_alpha4_a5_p6_falsifier.py 2>&1 | tee a6-p6.log
+          python3 scripts/post_alpha4_a6_p7_falsifier.py 2>&1 | tee a6-p7.log
+      - name: Upload governance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a6-governance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            a6-integrated-16.log
+            a6-p6.log
+            a6-p7.log
+          if-no-files-found: warn
+
+  semantics-metamorphic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Static model gates
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-model --all-targets -- -D warnings
+      - name: Replay repaired and promotion corpora
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_rework -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test semantics_v3_promotion -- --nocapture
+      - name: Execute Alpha5 metamorphic falsifier
+        run: |
+          set -euo pipefail
+          test "$(grep -c '^fn m[0-9][0-9]_' crates/execsurface-model/tests/alpha5_metamorphic.rs)" -eq 8
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --test alpha5_metamorphic -- --nocapture 2>&1 | tee alpha5-metamorphic.log
+          grep -q 'test result: ok. 8 passed; 0 failed' alpha5-metamorphic.log
+      - name: Upload metamorphic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a6-metamorphic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: alpha5-metamorphic.log
+          if-no-files-found: warn
+
+  p4-p5-cross-layer:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: P4 proposition/backend authority attacks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-backend-authority/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test promotion_a2_authority_sensitivity -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b_cross_proposition_falsification -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b0_success_evidence -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b1_ptrace_open_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b2_ptrace_rename_delete_live -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-backend-authority/Cargo.toml --test b3_ptrace_connect_live -- --nocapture
+      - name: Tetragon imported-evidence substitution attacks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p4-external-trace-import/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p4-external-trace-import/Cargo.toml --test tetragon_import -- --nocapture
+      - name: P5 cross-attestation and standards-binding attacks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test promotion_a3_attestation_authority -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-cross-attestation-redteam/Cargo.toml --test a5_graph_redteam -- --nocapture
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p5-attestation-provenance/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_scai_svr_binding -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a2_verifier_identity_addendum -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a1_runtime_trace_mapping -- --nocapture
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p5-attestation-provenance/Cargo.toml --test a0_standards_composition -- --nocapture
+
+  variance-poisoning:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+      - name: Exact 12-test legitimate-variance corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml
+          test "$(grep -c '^fn a4_[0-9][0-9]_' experiments/p3-gcc-temp-grammar/tests/promotion_a4_variance.rs)" -eq 12
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-gcc-temp-grammar/Cargo.toml --test promotion_a4_variance -- --nocapture
+      - name: Poisoning and false-PASS falsifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN generate-lockfile --manifest-path experiments/p3-v4-falsifier/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --locked --manifest-path experiments/p3-v4-falsifier/Cargo.toml --all-targets -- --nocapture
+
+  m11-m12-adversarial:
+    name: M11/M12 adversarial / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Toolchain/kernel evidence
+        run: |
+          set -euo pipefail
+          uname -a
+          rustc --version --verbose
+          cargo --version
+          cc --version
+      - name: Compile adversarial fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/path_toctou_target.c -o "$RUNNER_TEMP/m12-path-toctou"
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/fd_share_race_target.c -o "$RUNNER_TEMP/m12-fd-share-race"
+          test -x "$RUNNER_TEMP/m12-path-toctou"
+          test -x "$RUNNER_TEMP/m12-fd-share-race"
+      - name: Claim-boundary sentinels
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'pathname access attempts,' README.md
+          grep -F 'observed execution-surface drift under its recorded observer and policy' README.md
+          grep -F 'Incomplete evidence cannot silently become PASS.' README.md
+          grep -F 'eBPF/BPF-LSM work remains research-only/non-default' README.md
+      - name: M11 shared-FD fail-closed regression
+        run: cargo test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
+      - name: M12 PATH-TOCTOU/shared-FD adversarial suite
+        shell: bash
+        env:
+          M12_PATH_TOCTOU_BIN: ${{ runner.temp }}/m12-path-toctou
+          M12_FD_SHARE_BIN: ${{ runner.temp }}/m12-fd-share-race
+          M12_PATH_RUNS: '300'
+          M12_RESULT_DIR: ${{ runner.temp }}/alpha5-m12-results
+        run: |
+          set -euo pipefail
+          mkdir -p "$M12_RESULT_DIR"
+          cargo test --locked -p execsurface-observe --test m12_adversarial -- --test-threads=1 --nocapture
+          test -s "$M12_RESULT_DIR/path-toctou.json"
+          test -s "$M12_RESULT_DIR/shared-fd.json"
+          cat "$M12_RESULT_DIR/path-toctou.json"
+          cat "$M12_RESULT_DIR/shared-fd.json"
+      - name: Existing ptrace regression
+        run: cargo test --locked -p execsurface-observe --test ptrace_linux
+      - name: Upload M12 attack evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-m12-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/alpha5-m12-results
+          if-no-files-found: warn
+          retention-days: 90
+
+  full-workspace-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install pinned Rust components
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup component add --toolchain "$RUST_TOOLCHAIN" rustfmt clippy
+      - name: Full static gate
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --workspace --all-targets -- -D warnings
+      - name: Full workspace tests
+        run: cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets -- --nocapture
+      - name: Release build and package verification
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN build --locked --release --workspace
+          cargo +$RUST_TOOLCHAIN package --locked -p execsurface --allow-dirty
+          git diff --exit-code -- Cargo.lock
+
+  integrated-distribution-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Install candidate exactly from source
+        run: cargo install --locked --path crates/execsurface-cli --root "$RUNNER_TEMP/alpha5-a6"
+      - name: Attack zero-assistance developer path
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/alpha5-a6/bin/execsurface"
+          "$bin" --help | tee help.txt
+          grep -F 'execsurface doctor' help.txt
+          grep -F 'execsurface init' help.txt
+          grep -F 'execsurface learn' help.txt
+          grep -F 'execsurface check' help.txt
+          "$bin" doctor
+          work="$RUNNER_TEMP/alpha5-a6-smoke"
+          mkdir -p "$work"
+          cd "$work"
+          "$bin" learn -- /bin/bash -lc true
+          "$bin" check -- /bin/bash -lc true
+          set +e
+          output="$("$bin" check -- /bin/bash -lc 'true; /bin/echo controlled-drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 10
+          grep -F 'ExecSurface: REVIEW' <<<"$output"
+
+  negative-evidence-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Preserve known negative evidence and non-promotion boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F '36755962689' docs/development/POST_ALPHA4_PROMOTION_INVENTORY.md docs/development/P5_CLOSEOUT_DECISION.md
+          grep -F '36770551463' docs/development/P6_CLOSEOUT_DECISION.md
+          grep -F '36774237512' docs/development/P7_CLOSEOUT_DECISION.md
+          grep -Ei 'arm64.*(not|non|unsupported|negative|blocked)|not.*arm64' docs/development/P7_CLOSEOUT_DECISION.md
+          grep -F 'P8 external validation' docs/release/ALPHA5_HARDENING_EXECUTION.md
+
+  closeout:
+    needs:
+      - governance-integrated-falsifier
+      - semantics-metamorphic
+      - p4-p5-cross-layer
+      - variance-poisoning
+      - m11-m12-adversarial
+      - full-workspace-regression
+      - integrated-distribution-smoke
+      - negative-evidence-boundary
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with: {fetch-depth: 0, persist-credentials: false}
+      - name: Record bounded integrated destructive result
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          test "$(git rev-parse 'v0.1.0-alpha.4^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          mkdir -p evidence
+          {
+            echo 'decision=ALPHA5_A6_INTEGRATED_DESTRUCTIVE_PASS_INTERNAL_ONLY'
+            echo "candidate_sha=${GITHUB_SHA}"
+            echo "public_alpha4_sha=${ALPHA4_SOURCE}"
+            echo 'metamorphic_semantics_attacks=8'
+            echo 'frozen_integrated_invariants=16'
+            echo 'm12_ubuntu_22_04=true'
+            echo 'm12_ubuntu_24_04=true'
+            echo 'negative_evidence_retained=true'
+            echo 'tests_weakened=false'
+            echo 'public_release_authorized=false'
+            echo 'stable_action_move_authorized=false'
+            echo 'p8_external_validation_closed=false'
+          } | tee evidence/alpha5-a6-integrated-destructive.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alpha5-a6-closeout-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/alpha5-a6-integrated-destructive.txt
+          if-no-files-found: error
+          retention-days: 90
