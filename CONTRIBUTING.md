@@ -2,6 +2,22 @@
 
 ExecSurface prioritizes precision, reproducibility, explicit limitations, and evidence-preserving engineering.
 
+## New to ExecSurface?
+
+Start with repository Issues labeled `good first issue` and `help wanted`.
+
+Current newcomer-scoped entry points include:
+
+- #120 — deterministic `hello-drift` PASS → REVIEW example;
+- #121 — Python/pytest integration recipe with a deterministic fixture;
+- #122 — Node.js/npm integration recipe with controlled runtime drift;
+- #123 — minimal GitHub Action consumer example pinned to Alpha.5;
+- #124 — audit stale current-version references without rewriting historical evidence.
+
+These tasks are intentionally bounded so contributors can improve usability and integrations without silently changing runtime semantics, evidence authority, support claims or release guarantees.
+
+Independent Alpha.5 evaluation and adversarial findings belong in [Issue #118](https://github.com/AETHERXGLOBAL/execsurface/issues/118). A contribution or self-test is valuable engineering work, but it is not automatically independent external validation.
+
 ## Before opening a change
 
 Use an issue or ADR first for changes that affect:
