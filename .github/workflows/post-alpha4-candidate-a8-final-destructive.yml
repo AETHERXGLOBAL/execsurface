@@ -1,0 +1,320 @@
+name: Post-alpha4 candidate A8 final integrated destructive closeout
+
+on:
+  push:
+    branches: [release/post-alpha4-candidate-assembly]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: a8-final-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: 1.90.0
+  ALPHA4_SOURCE: 48e0b9a0707553349e75e97a9dfa096d13f9ab5d
+  ALPHA4_TAG: v0.1.0-alpha.4
+
+jobs:
+  integrated-semantic-stack:
+    name: Cross-layer semantic / authority / attestation / variance destruction
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact clean candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Pin Rust 1.90.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+          components: rustfmt,clippy
+
+      - name: Destructive governance boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          test "$(git merge-base "$ALPHA4_SOURCE" HEAD)" = "$ALPHA4_SOURCE"
+          test -z "$(git rev-list --merges "$ALPHA4_SOURCE"..HEAD)"
+          test "$(git rev-parse "$ALPHA4_TAG^{commit}")" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          grep -Fx "base=$ALPHA4_SOURCE" .a8-assembly-start
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "$ALPHA4_TAG"
+          grep -F 'version = "0.1.0-alpha.4"' Cargo.toml
+
+      - name: Static quality gates
+        run: |
+          cargo +$RUST_TOOLCHAIN fmt --all -- --check
+          cargo +$RUST_TOOLCHAIN clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+      - name: Reprove repaired D01-D06 and original A1 corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test semantics_v3_rework -- --nocapture 2>&1 | tee d01-d06.log
+          grep -q 'test result: ok. 6 passed; 0 failed' d01-d06.log
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test semantics_v3_promotion -- --nocapture 2>&1 | tee a1.log
+          grep -q 'test result: ok. 9 passed; 0 failed' a1.log
+
+      - name: Reprove proposition authority corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test authority_v3_candidate -- --nocapture 2>&1 | tee authority.log
+          grep -q 'test result: ok. 16 passed; 0 failed' authority.log
+
+      - name: Reprove attestation substitution corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test attestation_v3_candidate -- --nocapture 2>&1 | tee attestation.log
+          grep -q 'test result: ok. 14 passed; 0 failed' attestation.log
+
+      - name: Execute new integrated cross-layer falsifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-model --features semantics-v3 --test a8_integrated_cross_layer_candidate -- --nocapture 2>&1 | tee integrated.log
+          grep -q 'test result: ok. 10 passed; 0 failed' integrated.log
+
+      - name: Reprove bounded GCC variance anti-poisoning corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-normalize --features gcc-ephemeral-v4 --test gcc_ephemeral_v4_candidate -- --nocapture 2>&1 | tee variance.log
+          grep -q 'test result: ok. 12 passed; 0 failed' variance.log
+
+      - name: Default-off and complete all-feature regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --no-deps --format-version 1 > metadata.json
+          jq -e '.packages[] | select(.name == "execsurface-model") | .features.default == [] and .features["semantics-v3"] == []' metadata.json >/dev/null
+          jq -e '.packages[] | select(.name == "execsurface-normalize") | .features.default == [] and .features["gcc-ephemeral-v4"] == []' metadata.json >/dev/null
+          cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets
+          cargo +$RUST_TOOLCHAIN test --locked --workspace --all-targets --all-features
+
+      - name: Upload semantic destructive logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-final-semantic-stack-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            d01-d06.log
+            a1.log
+            authority.log
+            attestation.log
+            integrated.log
+            variance.log
+          if-no-files-found: warn
+          retention-days: 90
+
+  kernel-adversarial:
+    name: M11/M12 fail-closed / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Pin Rust 1.90.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+          components: rustfmt,clippy
+
+      - name: Record environment
+        run: |
+          uname -a
+          rustc --version --verbose
+          cargo --version
+          cc --version
+
+      - name: Compile bounded adversarial fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/path_toctou_target.c -o "$RUNNER_TEMP/m12-path-toctou"
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/fd_share_race_target.c -o "$RUNNER_TEMP/m12-fd-share-race"
+          test -x "$RUNNER_TEMP/m12-path-toctou"
+          test -x "$RUNNER_TEMP/m12-fd-share-race"
+
+      - name: Reprove M11 shared-FD fail-closed boundary
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m11_shared_fd_ambiguity -- --nocapture
+
+      - name: Reprove M12 PATH-TOCTOU and shared-FD adversarial corpus
+        shell: bash
+        env:
+          M12_PATH_TOCTOU_BIN: ${{ runner.temp }}/m12-path-toctou
+          M12_FD_SHARE_BIN: ${{ runner.temp }}/m12-fd-share-race
+          M12_PATH_RUNS: '300'
+          M12_RESULT_DIR: ${{ runner.temp }}/m12-adversarial-results
+        run: |
+          set -euo pipefail
+          mkdir -p "$M12_RESULT_DIR"
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test m12_adversarial -- --test-threads=1 --nocapture
+          test -s "$M12_RESULT_DIR/path-toctou.json"
+          test -s "$M12_RESULT_DIR/shared-fd.json"
+          cat "$M12_RESULT_DIR/path-toctou.json"
+          cat "$M12_RESULT_DIR/shared-fd.json"
+
+      - name: Existing ptrace lifecycle regression
+        run: cargo +$RUST_TOOLCHAIN test --locked -p execsurface-observe --test ptrace_linux
+
+      - name: Observer lint and lock integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN clippy --locked -p execsurface-observe --all-targets -- -D warnings
+          git diff --exit-code -- Cargo.lock
+          test -z "$(git status --porcelain -- Cargo.lock)"
+
+      - name: Upload kernel adversarial evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-final-kernel-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/m12-adversarial-results
+          if-no-files-found: warn
+          retention-days: 90
+
+  product-boundary:
+    name: Exact candidate package / CLI / v2 / public-boundary destruction
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact candidate with tags
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Pin Rust 1.90.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+
+      - name: Freeze stable public channel and claim boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "$ALPHA4_TAG^{commit}")" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "$ALPHA4_TAG"
+          grep -F 'Public alpha currently supports Linux x86_64 only' action/install.sh
+          ! grep -Eiq 'arm64.*(supported|production|ready)|aarch64.*(supported|production|ready)' action.yml
+
+      - name: Frozen v2 serialization and anti-reinterpretation
+        run: |
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-baseline digest_serialization_vector_is_frozen
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface-baseline legacy_lock_schema_is_rejected_instead_of_reinterpreted
+
+      - name: Public CLI contract
+        run: |
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface --test learn_linux
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface --test check_linux
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface --test policy_linux
+          cargo +$RUST_TOOLCHAIN test --locked -p execsurface --test self_service_linux
+
+      - name: Package and install exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN package --locked -p execsurface --allow-dirty
+          root="$RUNNER_TEMP/a8-final-install"
+          cargo +$RUST_TOOLCHAIN install --locked --path crates/execsurface-cli --root "$root"
+          bin="$root/bin/execsurface"
+          test -x "$bin"
+          test "$("$bin" --version)" = 'execsurface 0.1.0-alpha.4'
+          "$bin" doctor
+          work="$RUNNER_TEMP/a8-final-cli"
+          mkdir -p "$work"
+          cd "$work"
+          "$bin" learn -- /bin/bash -lc true
+          "$bin" check -- /bin/bash -lc true
+          set +e
+          output="$("$bin" check -- /bin/bash -lc 'true; /bin/echo destructive-drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 10
+          grep -F 'ExecSurface: REVIEW' <<<"$output"
+
+      - name: Release build and lockfile integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN build --locked --workspace --release
+          git diff --exit-code -- Cargo.lock
+          test -z "$(git status --porcelain -- Cargo.lock)"
+
+  closeout:
+    name: Emit bounded internal closeout only
+    needs: [integrated-semantic-stack, kernel-adversarial, product-boundary]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact successful candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Recheck immutable anchors and emit final evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          test "$(git merge-base "$ALPHA4_SOURCE" HEAD)" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse "$ALPHA4_TAG^{commit}")" = "$ALPHA4_SOURCE"
+          test "$(git rev-parse 'v0.1^{commit}')" = "$ALPHA4_SOURCE"
+          mkdir -p evidence
+          lock_digest="$(sha256sum Cargo.lock | awk '{print $1}')"
+          action_digest="$(sha256sum action.yml | awk '{print $1}')"
+          cat > evidence/a8-final-closeout.txt <<EOF
+          decision=POST_ALPHA4_PROMOTION_A8_INTERNAL_CANDIDATE_ASSEMBLED_BOUNDED_RELEASE_BLOCKED_P8
+          candidate_sha=${GITHUB_SHA}
+          public_alpha4_sha=${ALPHA4_SOURCE}
+          public_release=${ALPHA4_TAG}
+          stable_action=v0.1
+          repaired_d01_d06=6/6
+          original_a1=9/9
+          authority_corpus=16/16
+          attestation_corpus=14/14
+          integrated_cross_layer=10/10
+          gcc_variance_corpus=12/12
+          m11_shared_fd_fail_closed=true
+          m12_path_toctou_shared_fd_ubuntu_22_04=true
+          m12_path_toctou_shared_fd_ubuntu_24_04=true
+          ptrace_regression=true
+          v2_default_unchanged=true
+          semantics_v3_default_enabled=false
+          gcc_variance_default_enabled=false
+          arm64_support_claim=false
+          negative_evidence_retained=true
+          public_release_authorized=false
+          main_merge_authorized=false
+          stable_tag_movement_authorized=false
+          p8_external_validation_complete=false
+          cargo_lock_sha256=${lock_digest}
+          action_yml_sha256=${action_digest}
+          EOF
+          cat evidence/a8-final-closeout.txt
+
+      - name: Upload final bounded closeout evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: a8-final-bounded-closeout-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/a8-final-closeout.txt
+          if-no-files-found: error
+          retention-days: 90
