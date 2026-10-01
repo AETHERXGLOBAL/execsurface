@@ -6,9 +6,7 @@ use execsurface_model::authority_v3::{
     compare_under_requirement, AuthorityRecord, AuthorityState, ComparisonResult,
     EvidenceReference, PropositionCompleteness,
 };
-use execsurface_model::canonical::{
-    CanonicalExecutable, CanonicalPath, PathClass, PathResolution,
-};
+use execsurface_model::canonical::{CanonicalExecutable, CanonicalPath, PathClass, PathResolution};
 use execsurface_model::semantics_v3::{
     BackendSemanticProfile, CausalBinding, CompletenessDimension, CompletenessState,
     EvidenceGuarantees, IdentityBasis, ObservationPoint, ProofCarryingObservation,
@@ -38,7 +36,10 @@ fn executable(value: &str, family: &str) -> CanonicalExecutable {
 fn attempt_proposition(target: &str) -> Proposition {
     Proposition::FilePathnameAttemptObserved {
         actor: Some(executable("/usr/bin/cat", "cat")),
-        execution_chain: vec![executable("/bin/bash", "bash"), executable("/usr/bin/cat", "cat")],
+        execution_chain: vec![
+            executable("/bin/bash", "bash"),
+            executable("/usr/bin/cat", "cat"),
+        ],
         operation: FileOperation::Open,
         target: path(target),
         open_intent: None,
@@ -70,7 +71,11 @@ fn strong_guarantees() -> EvidenceGuarantees {
     }
 }
 
-fn proof(proposition: Proposition, guarantees: EvidenceGuarantees, backend: &str) -> ProofCarryingObservation {
+fn proof(
+    proposition: Proposition,
+    guarantees: EvidenceGuarantees,
+    backend: &str,
+) -> ProofCarryingObservation {
     let mut proof = ProofCarryingObservation::new(
         proposition,
         guarantees,
@@ -150,7 +155,9 @@ fn a2_03_ambiguous_complete_is_rejected() {
         AuthorityState::Ambiguous,
         PropositionCompleteness::Complete,
     );
-    value.reason_codes.insert("object_identity_conflict".to_owned());
+    value
+        .reason_codes
+        .insert("object_identity_conflict".to_owned());
     assert!(value.validate().is_err());
 }
 
@@ -214,7 +221,10 @@ fn a2_08_derived_bounded_without_derivation_is_rejected() {
 
 #[test]
 fn a2_09_malformed_or_non_hex_digest_is_rejected() {
-    for digest in ["sha256:short".to_owned(), format!("sha256:{}", "z".repeat(64))] {
+    for digest in [
+        "sha256:short".to_owned(),
+        format!("sha256:{}", "z".repeat(64)),
+    ] {
         let mut value = record(
             attempt_proposition("$WORKSPACE/input.txt"),
             weak_guarantees(),
@@ -296,7 +306,11 @@ fn a2_14_different_typed_propositions_never_compare_equivalent() {
         PropositionCompleteness::Complete,
     );
     assert_eq!(
-        compare_under_requirement(&left, &right, &requirement(left_proposition, weak_guarantees())),
+        compare_under_requirement(
+            &left,
+            &right,
+            &requirement(left_proposition, weak_guarantees())
+        ),
         ComparisonResult::DifferentProposition
     );
 }
@@ -320,7 +334,10 @@ fn a2_15_reason_code_serialization_is_deterministic() {
     );
     second.reason_codes.insert("alpha".to_owned());
     second.reason_codes.insert("zeta".to_owned());
-    assert_eq!(serde_json::to_vec(&first).unwrap(), serde_json::to_vec(&second).unwrap());
+    assert_eq!(
+        serde_json::to_vec(&first).unwrap(),
+        serde_json::to_vec(&second).unwrap()
+    );
 }
 
 #[test]

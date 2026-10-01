@@ -93,7 +93,9 @@ impl AuthorityRecord {
         if self.authority == AuthorityState::AttemptOnly
             && !Self::is_explicit_attempt(&self.proof.proposition)
         {
-            return Err("attempt_only authority requires an explicit attempt proposition".to_owned());
+            return Err(
+                "attempt_only authority requires an explicit attempt proposition".to_owned(),
+            );
         }
 
         if self.authority == AuthorityState::DerivedBounded
@@ -116,7 +118,9 @@ impl AuthorityRecord {
             && self.completeness == PropositionCompleteness::Complete
             && matches!(
                 self.authority,
-                AuthorityState::Direct | AuthorityState::DerivedBounded | AuthorityState::AttemptOnly
+                AuthorityState::Direct
+                    | AuthorityState::DerivedBounded
+                    | AuthorityState::AttemptOnly
             )
             && self.proof.satisfies(requirement)
     }
