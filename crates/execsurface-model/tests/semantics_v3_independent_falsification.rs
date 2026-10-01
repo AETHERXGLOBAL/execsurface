@@ -109,7 +109,8 @@ fn f01_deserialized_requirement_without_expected_proposition_fails_closed() {
         },
         "required_complete": ["session_scope"]
     }"#;
-    let requirement: ProofRequirement = serde_json::from_str(json).expect("parse legacy-shaped requirement");
+    let requirement: ProofRequirement =
+        serde_json::from_str(json).expect("parse legacy-shaped requirement");
     assert!(requirement.expected_proposition.is_none());
     assert!(!record_for(base_proposition()).satisfies(&requirement));
 }
