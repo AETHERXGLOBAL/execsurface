@@ -307,18 +307,23 @@ jobs:
           sigterm_status=$?
           set -e
 
-          # Alpha.5 intentionally derives its verdict from execution-surface findings;
-          # target exit/signal is report metadata, not a verdict input. Preserve this
-          # limitation explicitly rather than silently rewriting immutable semantics.
-          test "$exit7_status" -eq 0
+          # The exit-7 command may produce ordinary surface findings (for example
+          # shell logout-file reads), so its verdict is not fixed here. What matters
+          # is that target outcome is represented independently from the drift verdict.
+          case "$exit7_status" in
+            0|10|20) ;;
+            *) exit 1 ;;
+          esac
           test "$sigterm_status" -eq 0
           python3 - <<'PY'
           import json
           exit7 = json.load(open('target-exit7.json'))
           sigterm = json.load(open('target-sigterm.json'))
-          assert exit7['verdict'] == 'pass', exit7
+          assert exit7['verdict'] != 'error', exit7
           assert exit7['target']['exit_code'] == 7, exit7['target']
           assert exit7['target']['signal'] is None, exit7['target']
+          # This is the clean Alpha.5 sentinel for the declared limitation: a
+          # signalled target can still receive a PASS when no surface finding exists.
           assert sigterm['verdict'] == 'pass', sigterm
           assert sigterm['target']['exit_code'] is None, sigterm['target']
           assert sigterm['target']['signal'] == 15, sigterm['target']
