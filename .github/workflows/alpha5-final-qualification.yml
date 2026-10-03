@@ -173,7 +173,7 @@ jobs:
             '
 
   stress-and-fail-closed:
-    name: Public artifact / stress + corruption injection
+    name: Public artifact / stress + corruption + limitation sentinel
     runs-on: ubuntu-24.04
     timeout-minutes: 35
 
@@ -293,7 +293,7 @@ jobs:
           expect_error_2 unknown-policy-field check --baseline baseline.json --policy unknown-field-policy.json -- /bin/bash -lc true
           expect_error_2 missing-policy check --baseline baseline.json --policy missing-policy.json -- /bin/bash -lc true
 
-      - name: Prove terminated and externally timed-out execution never becomes PASS
+      - name: Preserve Alpha.5 target-outcome verdict limitation
         shell: bash
         run: |
           set -euo pipefail
@@ -301,19 +301,41 @@ jobs:
           cd "$work"
 
           set +e
-          terminated_output="$("$ALPHA5_BIN" check --baseline baseline.json -- /bin/bash -lc 'kill -TERM $$' 2>&1)"
-          terminated_status=$?
+          "$ALPHA5_BIN" check --baseline baseline.json --json-output target-exit7.json -- /bin/bash -lc 'exit 7' > target-exit7.stdout 2>&1
+          exit7_status=$?
+          "$ALPHA5_BIN" check --baseline baseline.json --json-output target-sigterm.json -- /bin/bash -lc 'kill -TERM $$' > target-sigterm.stdout 2>&1
+          sigterm_status=$?
           set -e
-          printf 'terminated exit=%s\n%s\n' "$terminated_status" "$terminated_output" >> failure-injection.log
-          test "$terminated_status" -ne 0
-          ! grep -Fq 'ExecSurface: PASS' <<<"$terminated_output"
+
+          # Alpha.5 intentionally derives its verdict from execution-surface findings;
+          # target exit/signal is report metadata, not a verdict input. Preserve this
+          # limitation explicitly rather than silently rewriting immutable semantics.
+          test "$exit7_status" -eq 0
+          test "$sigterm_status" -eq 0
+          python3 - <<'PY'
+          import json
+          exit7 = json.load(open('target-exit7.json'))
+          sigterm = json.load(open('target-sigterm.json'))
+          assert exit7['verdict'] == 'pass', exit7
+          assert exit7['target']['exit_code'] == 7, exit7['target']
+          assert exit7['target']['signal'] is None, exit7['target']
+          assert sigterm['verdict'] == 'pass', sigterm
+          assert sigterm['target']['exit_code'] is None, sigterm['target']
+          assert sigterm['target']['signal'] == 15, sigterm['target']
+          PY
           sha256sum -c baseline.before-failure-injection.sha256 >/dev/null
 
+      - name: Prove external interruption of ExecSurface cannot complete as PASS
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alpha5-stress-work"
+          cd "$work"
           set +e
           timeout_output="$(timeout --signal=TERM --kill-after=2s 2s "$ALPHA5_BIN" check --baseline baseline.json -- /bin/bash -lc 'sleep 60' 2>&1)"
           timeout_status=$?
           set -e
-          printf 'timeout exit=%s\n%s\n' "$timeout_status" "$timeout_output" >> failure-injection.log
+          printf 'observer-timeout exit=%s\n%s\n' "$timeout_status" "$timeout_output" >> failure-injection.log
           test "$timeout_status" -ne 0
           ! grep -Fq 'ExecSurface: PASS' <<<"$timeout_output"
           sha256sum -c baseline.before-failure-injection.sha256 >/dev/null
