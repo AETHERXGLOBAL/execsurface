@@ -425,8 +425,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          stable="$(git ls-remote --refs https://github.com/AETHERXGLOBAL/execsurface.git refs/tags/v0.1 | awk '{print $1}')"
-          immutable="$(git ls-remote --refs https://github.com/AETHERXGLOBAL/execsurface.git refs/tags/v0.1.0-alpha.5 | awk '{print $1}')"
+          # Both release-channel refs are annotated tags; compare their peeled commit identities,
+          # not the distinct tag-object identities returned by --refs.
+          stable="$(git ls-remote https://github.com/AETHERXGLOBAL/execsurface.git 'refs/tags/v0.1^{}' | awk '{print $1}')"
+          immutable="$(git ls-remote https://github.com/AETHERXGLOBAL/execsurface.git 'refs/tags/v0.1.0-alpha.5^{}' | awk '{print $1}')"
           test -n "$stable"
           test -n "$immutable"
           test "$stable" = "$immutable"
