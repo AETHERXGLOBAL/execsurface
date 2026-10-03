@@ -2,7 +2,7 @@
 
 ## Public channel
 
-The public-alpha Action channel is:
+The Final Supported Alpha Action channel is:
 
 ```text
 AETHERXGLOBAL/execsurface@v0.1
@@ -34,6 +34,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run the target command as its own correctness gate
+        run: cargo test --locked
       - name: ExecSurface runtime drift
         id: execsurface
         uses: AETHERXGLOBAL/execsurface@v0.1
@@ -43,9 +45,11 @@ jobs:
           policy: execsurface-policy.json
           fail-on-review: "false"
           upload-artifact: "true"
-      - name: Show verdict
+      - name: Show ExecSurface verdict
         run: echo "ExecSurface verdict: ${{ steps.execsurface.outputs.verdict }}"
 ```
+
+The separate target-command step above is intentional. In Alpha.5, ExecSurface evaluates execution-surface drift; it does not turn the wrapped target's native exit code or signal into the ExecSurface verdict.
 
 ## Binary installation inside the Action
 
@@ -65,15 +69,31 @@ execsurface learn -- /bin/bash -lc 'cargo test --locked'
 
 Without an explicit policy, unmatched drift is REVIEW. PASS succeeds; REVIEW succeeds by default; `fail-on-review=true` makes REVIEW fail; BLOCK fails; ERROR fails.
 
+### Alpha.5 target-outcome boundary
+
+The Alpha.5 target command's native `exit_code` / terminating `signal` is retained in the structured report, but it is **report metadata rather than a verdict input**.
+
+Consequences:
+
+- `ExecSurface: PASS` means there was no policy-relevant execution-surface drift finding;
+- it does **not** prove the wrapped target command succeeded;
+- a nonzero or signalled target can still receive PASS if its observed surface has no review/block finding;
+- run/gate a command such as `cargo test`, `pytest` or a build separately when its success is itself required;
+- do not use the Action's `exit-code` output as the target command's native exit status.
+
+This immutable Alpha.5 behavior is recorded as issue `#143`. Any future target-outcome enforcement must be introduced as a versioned contract change rather than silently changing Alpha.5 semantics.
+
 ## Outputs
 
 - `verdict`
-- `exit-code`
+- `exit-code` — **ExecSurface verdict code** (`0`, `2`, `10`, `20`), not the target command's native exit code
 - `report-json`
 - `summary-markdown`
 - `artifact-url`
 - `artifact-digest`
 - `sarif-status`
+
+The target command's native exit/signal can be inspected in the structured report where available.
 
 ## SARIF
 
@@ -92,4 +112,6 @@ ExecSurface does not require PR-comment write permission.
 
 ## Security boundary
 
-A PASS means the recorded comparison and policy did not identify review/block drift. It does not prove the program is safe.
+A PASS means the recorded comparison and policy did not identify review/block execution-surface drift. It does not prove the target command succeeded, and it does not prove the program is safe.
+
+See [Current Status](STATUS.md) for the Final Supported Alpha scope and declared limitations.
