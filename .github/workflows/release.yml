@@ -203,9 +203,30 @@ jobs:
       - name: Learn baseline
         run: execsurface learn --output "$GITHUB_WORKSPACE/immutable.lock.json" -- /bin/bash -lc true
 
-      - name: Prove immutable Action tag
+      - name: Checkout exact Action source from immutable release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          path: release-action
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact Action source identity and force published-install path
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          action_dir="$GITHUB_WORKSPACE/release-action"
+          test -f "$action_dir/action.yml"
+          test -f "$action_dir/action/release-tag.txt"
+          test "$(git -C "$action_dir" rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(tr -d '[:space:]' < "$action_dir/action/release-tag.txt")" = "$TAG"
+          rm -rf "$action_dir/.git"
+          test ! -e "$action_dir/.git"
+
+      - name: Prove exact immutable Action source
         id: immutable
-        uses: AETHERXGLOBAL/execsurface@v0.1.0-alpha.4
+        uses: ./release-action
         with:
           command: "true"
           baseline: immutable.lock.json
@@ -231,7 +252,11 @@ jobs:
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           set -euo pipefail
-          test "$TAG" = "v0.1.0-alpha.4"
+          if [[ ! "$TAG" =~ ^v0\.1\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Refusing to move v0.1 for out-of-line release tag: $TAG" >&2
+            exit 1
+          fi
+          test "$TAG" = "$(tr -d '[:space:]' < action/release-tag.txt)"
           release_sha="$(git rev-list -n1 "$TAG")"
           test "$release_sha" = "$GITHUB_SHA"
           git config user.name "github-actions[bot]"
