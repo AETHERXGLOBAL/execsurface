@@ -16,6 +16,16 @@ ExecSurface advances only through evidence-preserving changes:
 - research backends are not promoted to public authority without proposition-specific evidence;
 - public claims remain bounded to what the released artifact and qualified evidence establish.
 
+## P9 — Production readiness & v1.0 qualification
+
+**OPEN / ACTIVE**
+
+The production-readiness program is tracked in issue `#129` and the frozen qualification contract is `docs/PRODUCTION_READINESS.md`.
+
+The program does not authorize a stable-release claim from internal CI alone. Production qualification requires independent external evidence, a stable compatibility contract, public-consumer reliability, repository/supply-chain controls, real-workload evidence, and an evidence-qualified release candidate.
+
+P8 remains the external-evidence authority for the independent validation portion of P9. Repository-administration controls that cannot be applied through the connected automation remain explicit blockers rather than being treated as complete by documentation.
+
 ## R1 — Post-release independent validation
 
 **OPEN / ACTIVE**
