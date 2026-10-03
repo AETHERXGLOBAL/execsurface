@@ -1,0 +1,522 @@
+name: Alpha.5 Final Qualification
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/alpha5-final-qualification.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/alpha5-final-qualification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: read
+
+concurrency:
+  group: alpha5-final-qualification-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  ALPHA5_TAG: v0.1.0-alpha.5
+  ALPHA5_ASSET: execsurface-v0.1.0-alpha.5-x86_64-unknown-linux-gnu.tar.gz
+  ALPHA5_VERSION: 0.1.0-alpha.5
+
+jobs:
+  published-artifact-host-matrix:
+    name: Published artifact / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+
+    steps:
+      - name: Record host identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          cat /etc/os-release
+          ldd --version | head -n 1
+
+      - name: Download and verify exact Alpha.5 public artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/alpha5-host"
+          mkdir -p "$root"
+          cd "$root"
+          gh release download "$ALPHA5_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ALPHA5_ASSET" \
+            --pattern "$ALPHA5_ASSET.sha256"
+          sha256sum -c "$ALPHA5_ASSET.sha256"
+          gh attestation verify "$ALPHA5_ASSET" -R "$GITHUB_REPOSITORY"
+          python3 - "$ALPHA5_ASSET" <<'PY'
+          import sys, tarfile
+          from pathlib import PurePosixPath
+          archive = sys.argv[1]
+          with tarfile.open(archive, 'r:gz') as tf:
+              members = tf.getmembers()
+              assert members, 'archive is empty'
+              for member in members:
+                  p = PurePosixPath(member.name)
+                  assert not p.is_absolute(), member.name
+                  assert '..' not in p.parts, member.name
+                  assert not member.isdev(), member.name
+          PY
+          tar -xzf "$ALPHA5_ASSET"
+          binary="$root/execsurface-${ALPHA5_TAG}-x86_64-unknown-linux-gnu/execsurface"
+          test -x "$binary"
+          test "$("$binary" --version)" = "execsurface $ALPHA5_VERSION"
+          echo "ALPHA5_BIN=$binary" >> "$GITHUB_ENV"
+
+      - name: Doctor and repeated bounded host smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alpha5-host-work"
+          mkdir -p "$work"
+          cd "$work"
+          "$ALPHA5_BIN" doctor
+          "$ALPHA5_BIN" learn --output baseline.json -- /bin/bash -lc true
+          sha256sum baseline.json > baseline.sha256
+
+          for attempt in $(seq 1 10); do
+            output="$("$ALPHA5_BIN" check --baseline baseline.json -- /bin/bash -lc true 2>&1)"
+            test "$?" -eq 0
+            grep -F 'ExecSurface: PASS' <<<"$output"
+            sha256sum -c baseline.sha256
+          done
+
+          for attempt in $(seq 1 10); do
+            set +e
+            output="$("$ALPHA5_BIN" check --baseline baseline.json -- /bin/bash -lc 'true; /bin/echo alpha5-host-drift >/dev/null' 2>&1)"
+            status=$?
+            set -e
+            test "$status" -eq 10
+            grep -F 'ExecSurface: REVIEW' <<<"$output"
+            sha256sum -c baseline.sha256
+          done
+
+  distro-userland-matrix:
+    name: Container userland / Debian 12 + Fedora 42
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Download checksum-verified Alpha.5 artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/alpha5-distro"
+          mkdir -p "$root"
+          cd "$root"
+          curl --fail --location --silent --show-error \
+            -o "$ALPHA5_ASSET" \
+            "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${ALPHA5_TAG}/${ALPHA5_ASSET}"
+          curl --fail --location --silent --show-error \
+            -o "$ALPHA5_ASSET.sha256" \
+            "https://github.com/AETHERXGLOBAL/execsurface/releases/download/${ALPHA5_TAG}/${ALPHA5_ASSET}.sha256"
+          sha256sum -c "$ALPHA5_ASSET.sha256"
+          tar -xzf "$ALPHA5_ASSET"
+          echo "DISTRO_ROOT=$root" >> "$GITHUB_ENV"
+
+      - name: Exercise Debian 12 userland with explicit ptrace capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull debian:12-slim
+          docker run --rm --platform linux/amd64 \
+            --cap-add SYS_PTRACE --security-opt seccomp=unconfined \
+            -v "$DISTRO_ROOT:/opt/alpha5:ro" \
+            debian:12-slim /bin/bash -lc '
+              set -euo pipefail
+              uname -a
+              cat /etc/os-release
+              binary=/opt/alpha5/execsurface-v0.1.0-alpha.5-x86_64-unknown-linux-gnu/execsurface
+              test "$($binary --version)" = "execsurface 0.1.0-alpha.5"
+              $binary doctor
+              mkdir -p /tmp/execsurface-fq && cd /tmp/execsurface-fq
+              $binary learn --output baseline.json -- /bin/bash -lc true
+              $binary check --baseline baseline.json -- /bin/bash -lc true
+            '
+
+      - name: Exercise Fedora 42 userland with explicit ptrace capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull fedora:42
+          docker run --rm --platform linux/amd64 \
+            --cap-add SYS_PTRACE --security-opt seccomp=unconfined \
+            -v "$DISTRO_ROOT:/opt/alpha5:ro" \
+            fedora:42 /bin/bash -lc '
+              set -euo pipefail
+              uname -a
+              cat /etc/os-release
+              binary=/opt/alpha5/execsurface-v0.1.0-alpha.5-x86_64-unknown-linux-gnu/execsurface
+              test "$($binary --version)" = "execsurface 0.1.0-alpha.5"
+              $binary doctor
+              mkdir -p /tmp/execsurface-fq && cd /tmp/execsurface-fq
+              $binary learn --output baseline.json -- /bin/bash -lc true
+              $binary check --baseline baseline.json -- /bin/bash -lc true
+            '
+
+  stress-and-fail-closed:
+    name: Public artifact / stress + corruption + limitation sentinel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - name: Materialize exact public Alpha.5 binary
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/alpha5-stress"
+          mkdir -p "$root"
+          cd "$root"
+          gh release download "$ALPHA5_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ALPHA5_ASSET" \
+            --pattern "$ALPHA5_ASSET.sha256"
+          sha256sum -c "$ALPHA5_ASSET.sha256"
+          gh attestation verify "$ALPHA5_ASSET" -R "$GITHUB_REPOSITORY"
+          tar -xzf "$ALPHA5_ASSET"
+          binary="$root/execsurface-${ALPHA5_TAG}-x86_64-unknown-linux-gnu/execsurface"
+          test -x "$binary"
+          echo "ALPHA5_BIN=$binary" >> "$GITHUB_ENV"
+
+      - name: Run 250 PASS and 100 REVIEW repetitions
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alpha5-stress-work"
+          mkdir -p "$work"
+          cd "$work"
+          "$ALPHA5_BIN" doctor
+          "$ALPHA5_BIN" learn --output baseline.json -- /bin/bash -lc true
+          sha256sum baseline.json > baseline.sha256
+
+          for attempt in $(seq 1 250); do
+            output="$("$ALPHA5_BIN" check --baseline baseline.json -- /bin/bash -lc true 2>&1)"
+            status=$?
+            if [ "$status" -ne 0 ] || ! grep -Fq 'ExecSurface: PASS' <<<"$output"; then
+              printf 'PASS flake at iteration %s (exit %s)\n%s\n' "$attempt" "$status" "$output" >&2
+              exit 1
+            fi
+            sha256sum -c baseline.sha256 >/dev/null
+          done
+
+          for attempt in $(seq 1 100); do
+            set +e
+            output="$("$ALPHA5_BIN" check --baseline baseline.json -- /bin/bash -lc 'true; /bin/echo alpha5-controlled-drift >/dev/null' 2>&1)"
+            status=$?
+            set -e
+            if [ "$status" -ne 10 ] || ! grep -Fq 'ExecSurface: REVIEW' <<<"$output"; then
+              printf 'REVIEW flake at iteration %s (exit %s)\n%s\n' "$attempt" "$status" "$output" >&2
+              exit 1
+            fi
+            sha256sum -c baseline.sha256 >/dev/null
+          done
+
+      - name: Build malformed and unsupported inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alpha5-stress-work"
+          cd "$work"
+          cp baseline.json unsupported-baseline.json
+          python3 - <<'PY'
+          import json
+          p = 'unsupported-baseline.json'
+          data = json.load(open(p))
+          data['schema_version'] = 999
+          with open(p, 'w') as f:
+              json.dump(data, f)
+              f.write('\n')
+          PY
+          printf '{broken json\n' > malformed-baseline.json
+          printf '{broken json\n' > malformed-policy.json
+          cat > unsupported-policy.json <<'JSON'
+          {
+            "schema_version": 999,
+            "default_action": "review",
+            "rules": []
+          }
+          JSON
+          cat > unknown-field-policy.json <<'JSON'
+          {
+            "schema_version": 2,
+            "default_action": "review",
+            "rules": [],
+            "unexpected_field": true
+          }
+          JSON
+          sha256sum baseline.json > baseline.before-failure-injection.sha256
+
+      - name: Prove corrupt or missing inputs fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alpha5-stress-work"
+          cd "$work"
+
+          expect_error_2() {
+            name="$1"
+            shift
+            set +e
+            output="$("$ALPHA5_BIN" "$@" 2>&1)"
+            status=$?
+            set -e
+            printf '%s: exit=%s\n%s\n' "$name" "$status" "$output" >> failure-injection.log
+            test "$status" -eq 2
+            ! grep -Fq 'ExecSurface: PASS' <<<"$output"
+            sha256sum -c baseline.before-failure-injection.sha256 >/dev/null
+          }
+
+          expect_error_2 missing-baseline check --baseline missing-baseline.json -- /bin/bash -lc true
+          expect_error_2 malformed-baseline check --baseline malformed-baseline.json -- /bin/bash -lc true
+          expect_error_2 unsupported-baseline check --baseline unsupported-baseline.json -- /bin/bash -lc true
+          expect_error_2 malformed-policy check --baseline baseline.json --policy malformed-policy.json -- /bin/bash -lc true
+          expect_error_2 unsupported-policy check --baseline baseline.json --policy unsupported-policy.json -- /bin/bash -lc true
+          expect_error_2 unknown-policy-field check --baseline baseline.json --policy unknown-field-policy.json -- /bin/bash -lc true
+          expect_error_2 missing-policy check --baseline baseline.json --policy missing-policy.json -- /bin/bash -lc true
+
+      - name: Preserve Alpha.5 target-outcome verdict limitation
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alpha5-stress-work"
+          cd "$work"
+
+          set +e
+          "$ALPHA5_BIN" check --baseline baseline.json --json-output target-exit7.json -- /bin/bash -lc 'exit 7' > target-exit7.stdout 2>&1
+          exit7_status=$?
+          "$ALPHA5_BIN" check --baseline baseline.json --json-output target-sigterm.json -- /bin/bash -lc 'kill -TERM $$' > target-sigterm.stdout 2>&1
+          sigterm_status=$?
+          set -e
+
+          # The exit-7 command may produce ordinary surface findings (for example
+          # shell logout-file reads), so its verdict is not fixed here. What matters
+          # is that target outcome is represented independently from the drift verdict.
+          case "$exit7_status" in
+            0|10|20) ;;
+            *) exit 1 ;;
+          esac
+          test "$sigterm_status" -eq 0
+          python3 - <<'PY'
+          import json
+          exit7 = json.load(open('target-exit7.json'))
+          sigterm = json.load(open('target-sigterm.json'))
+          assert exit7['verdict'] != 'error', exit7
+          assert exit7['target']['exit_code'] == 7, exit7['target']
+          assert exit7['target']['signal'] is None, exit7['target']
+          # This is the clean Alpha.5 sentinel for the declared limitation: a
+          # signalled target can still receive a PASS when no surface finding exists.
+          assert sigterm['verdict'] == 'pass', sigterm
+          assert sigterm['target']['exit_code'] is None, sigterm['target']
+          assert sigterm['target']['signal'] == 15, sigterm['target']
+          PY
+          sha256sum -c baseline.before-failure-injection.sha256 >/dev/null
+
+      - name: Prove external interruption of ExecSurface cannot complete as PASS
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alpha5-stress-work"
+          cd "$work"
+          set +e
+          timeout_output="$(timeout --signal=TERM --kill-after=2s 2s "$ALPHA5_BIN" check --baseline baseline.json -- /bin/bash -lc 'sleep 60' 2>&1)"
+          timeout_status=$?
+          set -e
+          printf 'observer-timeout exit=%s\n%s\n' "$timeout_status" "$timeout_output" >> failure-injection.log
+          test "$timeout_status" -ne 0
+          ! grep -Fq 'ExecSurface: PASS' <<<"$timeout_output"
+          sha256sum -c baseline.before-failure-injection.sha256 >/dev/null
+
+      - name: Upload stress and failure evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alpha5-final-stress-${{ github.run_id }}
+          path: ${{ runner.temp }}/alpha5-stress-work
+          if-no-files-found: error
+          retention-days: 30
+
+  frozen-source-redteam:
+    name: Frozen Alpha.5 source / adversarial replay / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout immutable Alpha.5 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v0.1.0-alpha.5
+          persist-credentials: false
+
+      - name: Verify source identity and host
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "9e73b925d55557e33de1b0813995609aaefdc037"
+          uname -a
+          cat /etc/os-release
+          rustc --version --verbose
+          cargo --version
+
+      - name: Compile adversarial fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/path_toctou_target.c -o "$RUNNER_TEMP/execsurface-path-toctou"
+          cc -O2 -std=c11 -pthread .github/m12-fixtures/fd_share_race_target.c -o "$RUNNER_TEMP/execsurface-fd-share-race"
+
+      - name: Run 300-path adversarial replay and shared-FD falsifier
+        shell: bash
+        env:
+          M12_PATH_TOCTOU_BIN: ${{ runner.temp }}/execsurface-path-toctou
+          M12_FD_SHARE_BIN: ${{ runner.temp }}/execsurface-fd-share-race
+          M12_PATH_RUNS: '300'
+          M12_RESULT_DIR: ${{ runner.temp }}/alpha5-frozen-adversarial
+        run: |
+          set -euo pipefail
+          mkdir -p "$M12_RESULT_DIR"
+          cargo test --locked -p execsurface-observe --test m12_adversarial -- --test-threads=1 --nocapture
+          test -s "$M12_RESULT_DIR/path-toctou.json"
+          test -s "$M12_RESULT_DIR/shared-fd.json"
+
+      - name: Run ptrace regression and full frozen workspace suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p execsurface-observe --test ptrace_linux
+          cargo test --locked --workspace --all-targets
+          git diff --exit-code -- Cargo.lock
+          test -z "$(git status --porcelain -- Cargo.lock)"
+
+      - name: Upload frozen-source adversarial evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: alpha5-frozen-redteam-${{ matrix.os }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/alpha5-frozen-adversarial
+          if-no-files-found: warn
+          retention-days: 30
+
+  distribution-and-action:
+    name: Registry + stable Action + zero-contact path
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout public documentation surface
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Exact crates.io clean install
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/alpha5-registry"
+          cargo install execsurface --version "=$ALPHA5_VERSION" --locked --root "$root"
+          binary="$root/bin/execsurface"
+          test "$("$binary" --version)" = "execsurface $ALPHA5_VERSION"
+          "$binary" doctor
+          work="$RUNNER_TEMP/alpha5-registry-work"
+          mkdir -p "$work"
+          cd "$work"
+          "$binary" learn --output "$GITHUB_WORKSPACE/final-alpha5-action.lock.json" -- /bin/bash -lc true
+          "$binary" check --baseline "$GITHUB_WORKSPACE/final-alpha5-action.lock.json" -- /bin/bash -lc true
+          sha256sum "$GITHUB_WORKSPACE/final-alpha5-action.lock.json" > "$RUNNER_TEMP/final-alpha5-action.lock.sha256"
+
+      - name: Verify stable v0.1 tag equals immutable Alpha.5 tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Both release-channel refs are annotated tags; compare their peeled commit identities,
+          # not the distinct tag-object identities returned by --refs.
+          stable="$(git ls-remote https://github.com/AETHERXGLOBAL/execsurface.git 'refs/tags/v0.1^{}' | awk '{print $1}')"
+          immutable="$(git ls-remote https://github.com/AETHERXGLOBAL/execsurface.git 'refs/tags/v0.1.0-alpha.5^{}' | awk '{print $1}')"
+          test -n "$stable"
+          test -n "$immutable"
+          test "$stable" = "$immutable"
+          test "$immutable" = "9e73b925d55557e33de1b0813995609aaefdc037"
+
+      - name: Stable Action PASS
+        id: stable_pass
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "true"
+          baseline: final-alpha5-action.lock.json
+          upload-artifact: "true"
+          artifact-name: final-alpha5-action-pass
+
+      - name: Assert stable Action outputs and baseline immutability
+        shell: bash
+        env:
+          VERDICT: ${{ steps.stable_pass.outputs.verdict }}
+          EXIT_CODE: ${{ steps.stable_pass.outputs.exit-code }}
+          REPORT_JSON: ${{ steps.stable_pass.outputs.report-json }}
+          SUMMARY_MARKDOWN: ${{ steps.stable_pass.outputs.summary-markdown }}
+          ARTIFACT_URL: ${{ steps.stable_pass.outputs.artifact-url }}
+          ARTIFACT_DIGEST: ${{ steps.stable_pass.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          test "$VERDICT" = pass
+          test "$EXIT_CODE" = 0
+          test -s "$REPORT_JSON"
+          test -s "$SUMMARY_MARKDOWN"
+          test -n "$ARTIFACT_URL"
+          test -n "$ARTIFACT_DIGEST"
+          sha256sum -c "$RUNNER_TEMP/final-alpha5-action.lock.sha256"
+
+      - name: Stable Action ERROR fails closed
+        id: stable_error
+        continue-on-error: true
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "true"
+          baseline: definitely-missing-final-alpha5.lock.json
+          upload-artifact: "false"
+
+      - name: Assert stable Action fail-closed error contract
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.stable_error.outcome }}
+          VERDICT: ${{ steps.stable_error.outputs.verdict }}
+          EXIT_CODE: ${{ steps.stable_error.outputs.exit-code }}
+        run: |
+          set -euo pipefail
+          test "$OUTCOME" = failure
+          test "$VERDICT" = error
+          test "$EXIT_CODE" = 2
+          sha256sum -c "$RUNNER_TEMP/final-alpha5-action.lock.sha256"
+
+      - name: README claim-boundary and install-path sentinels
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'Linux x86_64' README.md
+          grep -F 'v0.1.0-alpha.5' README.md
+          grep -F 'cargo install execsurface --version "=0.1.0-alpha.5" --locked' README.md
+          grep -F 'AETHERXGLOBAL/execsurface@v0.1' README.md
+          grep -F 'Incomplete evidence cannot silently become PASS.' README.md
