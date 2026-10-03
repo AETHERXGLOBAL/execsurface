@@ -203,23 +203,26 @@ jobs:
       - name: Learn baseline
         run: execsurface learn --output "$GITHUB_WORKSPACE/immutable.lock.json" -- /bin/bash -lc true
 
-      - name: Materialize exact Action source from immutable release tag
+      - name: Checkout exact Action source from immutable release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          path: release-action
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact Action source identity and force published-install path
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.release.outputs.tag }}
         run: |
           set -euo pipefail
           action_dir="$GITHUB_WORKSPACE/release-action"
-          mkdir -p "$action_dir"
-          curl --fail --location --silent --show-error \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/tarball/$TAG" \
-            | tar -xz --strip-components=1 -C "$action_dir"
           test -f "$action_dir/action.yml"
           test -f "$action_dir/action/release-tag.txt"
-          test ! -d "$action_dir/.git"
+          test "$(git -C "$action_dir" rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(tr -d '[:space:]' < "$action_dir/action/release-tag.txt")" = "$TAG"
+          rm -rf "$action_dir/.git"
+          test ! -e "$action_dir/.git"
 
       - name: Prove exact immutable Action source
         id: immutable
