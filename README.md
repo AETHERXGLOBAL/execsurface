@@ -9,16 +9,18 @@
   <a href="https://github.com/AETHERXGLOBAL/execsurface/releases"><img alt="Release" src="https://img.shields.io/github/v/release/AETHERXGLOBAL/execsurface?include_prereleases&label=release"></a>
   <img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue">
   <img alt="Linux x86_64" src="https://img.shields.io/badge/platform-Linux%20x86__64-informational">
-  <img alt="Public Alpha" src="https://img.shields.io/badge/status-Public%20Alpha-yellow">
+  <img alt="Final Supported Alpha" src="https://img.shields.io/badge/status-Final%20Supported%20Alpha-yellow">
 </p>
 
 ExecSurface learns an accepted **runtime execution surface**, runs the same command later, and reports execution behavior that appeared, disappeared, or changed.
 
 It is intended for CI pipelines, dependencies, developer tools and AI-assisted workflows where source review alone does not show every runtime effect.
 
-> **Public Alpha:** Linux x86_64 only. Current public release: **v0.1.0-alpha.5**.
+> **Final Supported Alpha:** **v0.1.0-alpha.5** is the supported finished Alpha release for the documented Linux x86_64 + native `ptrace` product boundary.
 >
 > **Self-service:** no signup, API key, meeting, or AETHER X approval is required.
+>
+> **Important Alpha.5 boundary:** an ExecSurface PASS is a drift-verdict PASS, not proof that the wrapped target command itself exited successfully. See [What a result means](#what-a-result-means) and [Current Status](docs/STATUS.md).
 
 ## Why developers use it
 
@@ -84,7 +86,7 @@ execsurface --version
 execsurface doctor
 ```
 
-The current public release is a prerelease, so request the exact prerelease version explicitly. The crates.io channel is published only after the immutable GitHub release and stable Action gates succeed. See [crates.io Publishing](docs/CRATES_IO_PUBLISHING.md).
+The current supported Alpha release is still a SemVer prerelease, so request the exact prerelease version explicitly. The crates.io channel is published only after the immutable GitHub release and stable Action gates succeed. See [crates.io Publishing](docs/CRATES_IO_PUBLISHING.md).
 
 ### C. Add it to a GitHub Actions project
 
@@ -96,13 +98,15 @@ execsurface init --command "cargo test --locked" --github-actions
 
 `init` creates a starter policy and workflow. It **does not run your target command** and does not create a baseline automatically.
 
-The generated workflow uses the stable public-alpha Action channel:
+The generated workflow uses the stable Final Supported Alpha Action channel:
 
 ```text
 AETHERXGLOBAL/execsurface@v0.1
 ```
 
 Do not use `@main` as the normal consumer path. See the **[GitHub Action guide](docs/GITHUB_ACTION.md)**.
+
+If the wrapped command's own success matters—for example `cargo test`, `pytest` or a build—keep that command as its own CI gate as well. In Alpha.5, target exit/signal is report metadata and does not by itself change the ExecSurface drift verdict.
 
 ## First real project
 
@@ -123,10 +127,12 @@ If `doctor` fails, follow the action it prints and see **[Troubleshooting](docs/
 
 | Result | Exit code | Meaning |
 |---|---:|---|
-| PASS | 0 | comparison/evaluation completed with no review/block finding |
+| PASS | 0 | comparison/evaluation completed with no review/block execution-surface finding |
 | ERROR | 2 | evidence/comparison/policy could not be established |
 | REVIEW | 10 | one or more findings require review |
 | BLOCK | 20 | one or more findings matched blocking policy |
+
+**Alpha.5 target-outcome boundary:** these exit codes are ExecSurface verdict codes. The wrapped target command's native exit code or terminating signal is retained in the structured report but is **not verdict-bearing in Alpha.5**. Therefore `ExecSurface: PASS` does not mean the wrapped target command succeeded. A nonzero or signalled target can still receive PASS when there is no policy-relevant execution-surface finding. Keep the target command's own success/failure gate when correctness of that command matters. This immutable Alpha.5 limitation is tracked in **[Issue #143](https://github.com/AETHERXGLOBAL/execsurface/issues/143)**.
 
 ExecSurface does **not** infer that drift is malicious. It reports observed drift and evaluates the explicit policy you selected.
 
@@ -147,6 +153,7 @@ It is **not** antivirus, EDR, malware detection, a sandbox, or a proof that a pr
 The governing boundaries are:
 
 - **NO EXECUTION-SURFACE DRIFT ≠ PROGRAM IS SAFE**
+- **EXECSURFACE PASS ≠ TARGET COMMAND SUCCEEDED**
 - **OBSERVED BEHAVIOR ≠ ALL POSSIBLE BEHAVIOR**
 - **NO OBSERVED NETWORK ≠ NETWORK ACCESS IS IMPOSSIBLE**
 - **TRACE COMPLETENESS DEPENDS ON THE OBSERVATION BACKEND**
@@ -155,21 +162,23 @@ The default evidence boundary excludes file contents, environment values, stdin,
 
 The public correctness-reference backend is native `ptrace`. eBPF/BPF-LSM work remains research-only/non-default and is not the public PASS/learn/check backend.
 
-See **[Security Policy](SECURITY.md)** and **[Troubleshooting](docs/TROUBLESHOOTING.md)**.
+See **[Security Policy](SECURITY.md)**, **[Current Status](docs/STATUS.md)** and **[Troubleshooting](docs/TROUBLESHOOTING.md)**.
 
 ## Baseline is not policy
 
 The baseline answers what canonical execution surface was accepted. The policy answers what drift should be allowed, reviewed or blocked. A new baseline is not automatically an approval decision.
 
-## Independent evaluation
+## Qualification and independent evaluation
 
-Alpha.5 is publicly released and remains open to independent post-release review. Use [Self-Service Start](docs/SELF_SERVICE_START.md), [Five-Minute Start](docs/QUICKSTART_5_MIN.md), [Independent Evaluation](docs/INDEPENDENT_EVALUATION.md), and [Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md).
+Alpha.5 has completed the repository's bounded Final Supported Alpha qualification for Linux x86_64 + native `ptrace`. The qualification exercised the exact published artifact, Ubuntu 22.04/24.04, Debian 12/Fedora 42 userlands, repeated PASS/REVIEW stress, fail-closed corruption cases, immutable-source adversarial replay, crates.io and the stable Action. See **[Current Status](docs/STATUS.md)** for exact run IDs and limitations.
 
-Public findings can be reported through **[Issue #118 — Alpha.5 Independent External Validation & Post-Release Review](https://github.com/AETHERXGLOBAL/execsurface/issues/118)**. Negative, partial, unsupported-environment, usability and performance-problem results are welcome. A self-evaluation PASS is not evidence of independent adoption or validation.
+Independent external validation remains open as additional evidence rather than a blocker to this bounded supported-Alpha state. Use [Self-Service Start](docs/SELF_SERVICE_START.md), [Five-Minute Start](docs/QUICKSTART_5_MIN.md), [Independent Evaluation](docs/INDEPENDENT_EVALUATION.md), and [Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md).
+
+Public findings can be reported through **[Issue #118 — Alpha.5 Independent External Validation & Post-Release Review](https://github.com/AETHERXGLOBAL/execsurface/issues/118)**. Negative, partial, unsupported-environment, usability and performance-problem results are welcome. Internal qualification is not evidence of independent adoption or external validation.
 
 ## Distribution and verification
 
-The public alpha distribution surfaces are:
+The supported Alpha distribution surfaces are:
 
 - checksum-verified GitHub Release binary for Linux x86_64;
 - exact prerelease install `cargo install execsurface --version "=0.1.0-alpha.5" --locked` for Rust users;
