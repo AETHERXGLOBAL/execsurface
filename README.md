@@ -20,6 +20,34 @@ It is intended for CI pipelines, dependencies, developer tools and AI-assisted w
 >
 > **Self-service:** no signup, API key, meeting, or AETHER X approval is required.
 
+## Why developers use it
+
+A dependency update, build script, test command or AI-assisted tool can change runtime behavior without making that behavior obvious in the code diff you are reviewing.
+
+ExecSurface gives you a deliberately narrow workflow:
+
+```text
+learn accepted runtime behavior
+            ↓
+run the command again
+            ↓
+compare observed execution surfaces
+            ↓
+PASS / REVIEW / BLOCK / ERROR
+```
+
+Typical questions it helps answer:
+
+- Did this command start launching a new executable?
+- Did a dependency begin touching new paths?
+- Did a workflow start connecting to a new destination?
+- Did runtime behavior disappear or change after an update?
+- Is the observation incomplete enough that a clean PASS would be unjustified?
+
+If that problem is relevant to your work, try the **[Five-Minute Start](docs/QUICKSTART_5_MIN.md)**, browse the **[good first issues](https://github.com/AETHERXGLOBAL/execsurface/issues?q=is%3Aissue+is%3Aopen+%22Good+first+issue%22)**, or join the **[Discussions](https://github.com/AETHERXGLOBAL/execsurface/discussions)**.
+
+If you find the project useful, a GitHub **Star** helps other developers discover it. External criticism, failed reproductions and counterexamples are equally useful to the project.
+
 ## Start here
 
 Choose the path that matches your environment.
