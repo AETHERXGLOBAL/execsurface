@@ -1,0 +1,59 @@
+# Copy this file to .github/workflows/execsurface.yml in a consumer repository.
+# One-time setup: execsurface init --command "git diff --check" --github-actions
+# Create a baseline explicitly with:
+#   execsurface learn --output execsurface.lock.json -- /bin/bash -lc "git diff --check"
+# Review and commit the baseline deliberately; this workflow only checks it.
+# Stable public-alpha channel: @v0.1
+# Immutable Alpha.5 review pin: replace @v0.1 with @v0.1.0-alpha.5.
+# Full behavior and limitations: ../docs/GITHUB_ACTION.md
+
+name: ExecSurface
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  execsurface:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the consumer repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check the explicitly reviewed baseline
+        id: execsurface
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "git diff --check"
+          baseline: execsurface.lock.json
+          fail-on-review: "true"
+          upload-artifact: "false"
+
+      - name: Report the ExecSurface verdict
+        if: always()
+        shell: bash
+        env:
+          VERDICT: ${{ steps.execsurface.outputs.verdict }}
+          EXIT_CODE: ${{ steps.execsurface.outputs.exit-code }}
+        run: |
+          case "$VERDICT" in
+            pass)
+              echo "ExecSurface: PASS"
+              ;;
+            review)
+              echo "::warning::ExecSurface: REVIEW (fail-on-review is enabled; exit $EXIT_CODE)"
+              ;;
+            block)
+              echo "::error::ExecSurface: BLOCK (exit $EXIT_CODE)"
+              exit 20
+              ;;
+            error)
+              echo "::error::ExecSurface: ERROR (exit $EXIT_CODE)"
+              exit 2
+              ;;
+            *)
+              echo "::error::ExecSurface returned an unknown verdict"
+              exit 2
+              ;;
+          esac
