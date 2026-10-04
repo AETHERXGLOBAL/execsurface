@@ -394,7 +394,7 @@ fn g3_12_external_snapshots_cannot_change_or_strengthen_bridge_output() {
     // input to the bridge and therefore cannot affect the proof record.
     let external_snapshot_a = b"before";
     let external_snapshot_b = b"substituted-after";
-    assert_ne!(external_snapshot_a.as_slice(), external_snapshot_b.as_slice());
+    assert_ne!(\n        external_snapshot_a.as_slice(),\n        external_snapshot_b.as_slice()\n    );
     assert_eq!(first, second);
 
     let json = serde_json::to_string(&first).expect("serialize proof");
