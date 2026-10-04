@@ -316,7 +316,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          evidence="$RUNNER_TEMP/target-failure-out/typed-evidence.json"
+          evidence="$RUNNER_TEMP/bad-schema-out/typed-evidence.json"
           python3 scripts/p8_a3_typed_evidence_mutation_redteam.py "$evidence"             > "$RUNNER_TEMP/mutation-report.json"
           grep -F '"decision": "MUTATION_REDTEAM_PASS"' "$RUNNER_TEMP/mutation-report.json"
           grep -F '"rejected": 27' "$RUNNER_TEMP/mutation-report.json"
