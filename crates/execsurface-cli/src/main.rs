@@ -1,4 +1,5 @@
 mod self_service;
+mod typed_evidence;
 
 use std::collections::BTreeMap;
 use std::env;
@@ -15,7 +16,7 @@ use execsurface_baseline::{
 use execsurface_diff::{diff, CandidateSnapshot, DiffReport};
 use execsurface_model::RawEventKind;
 use execsurface_normalize::{canonicalize, canonicalize_executable, NormalizationConfig};
-use execsurface_observe::{observe_command, CommandSpec};
+use execsurface_observe::{observe_command, observe_command_with_backend, CommandSpec};
 use execsurface_policy::{
     builtin_review_policy, error_report, evaluate, FindingAction, Policy, Verdict, VerdictReport,
 };
@@ -81,6 +82,7 @@ enum ObserveBackend {
 #[derive(Debug)]
 struct ObserveArgs {
     backend: ObserveBackend,
+    evidence_output: Option<PathBuf>,
     program: OsString,
     command_args: Vec<OsString>,
 }
@@ -90,10 +92,21 @@ fn run_observe(args: &[OsString]) -> Result<(), String> {
     match parsed.backend {
         ObserveBackend::Ptrace => {
             let spec = CommandSpec::new(parsed.program).args(parsed.command_args);
-            let observation = observe_command(&spec).map_err(|error| error.to_string())?;
-            let json = serde_json::to_string_pretty(&observation)
-                .map_err(|error| format!("cannot serialize observation: {error}"))?;
-            println!("{json}");
+            if let Some(path) = parsed.evidence_output.as_ref() {
+                let observed =
+                    observe_command_with_backend(&spec).map_err(|error| error.to_string())?;
+                typed_evidence::write_report(path, &observed)?;
+                let json = serde_json::to_string_pretty(&observed.observation)
+                    .map_err(|error| format!("cannot serialize observation: {error}"))?;
+                println!("{json}");
+            } else {
+                // Preserve the legacy no-flag path exactly: the existing public
+                // raw Observation return and stdout serialization remain in use.
+                let observation = observe_command(&spec).map_err(|error| error.to_string())?;
+                let json = serde_json::to_string_pretty(&observation)
+                    .map_err(|error| format!("cannot serialize observation: {error}"))?;
+                println!("{json}");
+            }
             Ok(())
         }
         ObserveBackend::ExperimentalLibbpf { collector } => {
@@ -245,6 +258,7 @@ fn validate_experimental_libbpf_report(report: &serde_json::Value) -> Result<(),
 fn parse_observe_args(args: &[OsString]) -> Result<ObserveArgs, String> {
     let mut backend = "ptrace".to_owned();
     let mut collector = None;
+    let mut evidence_output = None;
     let mut index = 0usize;
 
     while index < args.len() {
@@ -263,15 +277,23 @@ fn parse_observe_args(args: &[OsString]) -> Result<ObserveArgs, String> {
                     }
                     ObserveBackend::Ptrace
                 }
-                "experimental-libbpf" => ObserveBackend::ExperimentalLibbpf {
-                    collector: collector.ok_or_else(|| {
-                        usage("--backend experimental-libbpf requires --collector PATH")
-                    })?,
-                },
+                "experimental-libbpf" => {
+                    if evidence_output.is_some() {
+                        return Err(usage(
+                            "--evidence-output is currently supported only with the ptrace backend",
+                        ));
+                    }
+                    ObserveBackend::ExperimentalLibbpf {
+                        collector: collector.ok_or_else(|| {
+                            usage("--backend experimental-libbpf requires --collector PATH")
+                        })?,
+                    }
+                }
                 other => return Err(usage(&format!("unknown observe backend: {other}"))),
             };
             return Ok(ObserveArgs {
                 backend,
+                evidence_output,
                 program,
                 command_args,
             });
@@ -284,6 +306,17 @@ fn parse_observe_args(args: &[OsString]) -> Result<ObserveArgs, String> {
             }
             "--collector" => {
                 collector = Some(PathBuf::from(option_value(args, index, "--collector")?));
+                index += 2;
+            }
+            "--evidence-output" => {
+                if evidence_output.is_some() {
+                    return Err(usage("duplicate --evidence-output"));
+                }
+                evidence_output = Some(PathBuf::from(option_value(
+                    args,
+                    index,
+                    "--evidence-output",
+                )?));
                 index += 2;
             }
             other => return Err(usage(&format!("unknown observe option: {other}"))),
@@ -924,7 +957,7 @@ fn path_string(value: &OsStr) -> String {
 
 fn usage(error: &str) -> String {
     format!(
-        "{error}\n\nusage:\n  execsurface observe -- COMMAND [ARGS...]\n  execsurface observe --backend experimental-libbpf --collector PATH -- COMMAND [ARGS...]\n  execsurface learn [OPTIONS] -- COMMAND [ARGS...]\n\nobserve options:\n  --backend NAME      ptrace (default) or experimental-libbpf\n  --collector PATH    explicit companion path; required for experimental-libbpf\n\nlearn options:\n  --output PATH       output lockfile (default: execsurface.lock.json)\n  --overwrite         explicitly replace an existing lockfile\n  --label LABEL       privacy-safe logical command label\n  --workspace PATH    declared workspace root\n  --home PATH         declared home root\n  --tmp PATH          declared temp root; repeatable\n  --run-tmp PATH      declared run-specific temp root\n  --cache NAME=PATH   declared named cache root; repeatable
+        "{error}\n\nusage:\n  execsurface observe -- COMMAND [ARGS...]\n  execsurface observe --backend experimental-libbpf --collector PATH -- COMMAND [ARGS...]\n  execsurface learn [OPTIONS] -- COMMAND [ARGS...]\n\nobserve options:\n  --backend NAME      ptrace (default) or experimental-libbpf\n  --collector PATH    explicit companion path; required for experimental-libbpf\n  --evidence-output PATH\n                      experimental typed evidence file for ptrace; raw stdout is unchanged\n\nlearn options:\n  --output PATH       output lockfile (default: execsurface.lock.json)\n  --overwrite         explicitly replace an existing lockfile\n  --label LABEL       privacy-safe logical command label\n  --workspace PATH    declared workspace root\n  --home PATH         declared home root\n  --tmp PATH          declared temp root; repeatable\n  --run-tmp PATH      declared run-specific temp root\n  --cache NAME=PATH   declared named cache root; repeatable
 
 check options:
   --baseline PATH     baseline lockfile (default: execsurface.lock.json)
@@ -940,4 +973,65 @@ check options:
   --run-tmp PATH      declared run-specific temp root
   --cache NAME=PATH   declared named cache root; repeatable"
     )
+}
+
+#[cfg(test)]
+mod p8_a3_observe_cli_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_observe_parse_has_no_evidence_output() {
+        let args = vec![OsString::from("--"), OsString::from("/bin/true")];
+        let parsed = parse_observe_args(&args).expect("legacy parse");
+        assert!(parsed.evidence_output.is_none());
+        assert!(matches!(parsed.backend, ObserveBackend::Ptrace));
+    }
+
+    #[test]
+    fn evidence_output_is_explicit_and_ptrace_scoped() {
+        let args = vec![
+            OsString::from("--evidence-output"),
+            OsString::from("evidence.json"),
+            OsString::from("--"),
+            OsString::from("/bin/true"),
+        ];
+        let parsed = parse_observe_args(&args).expect("evidence parse");
+        assert_eq!(
+            parsed.evidence_output.as_deref(),
+            Some(std::path::Path::new("evidence.json"))
+        );
+        assert!(matches!(parsed.backend, ObserveBackend::Ptrace));
+    }
+
+    #[test]
+    fn evidence_output_rejects_experimental_libbpf_backend() {
+        let args = vec![
+            OsString::from("--backend"),
+            OsString::from("experimental-libbpf"),
+            OsString::from("--collector"),
+            OsString::from("/tmp/collector"),
+            OsString::from("--evidence-output"),
+            OsString::from("evidence.json"),
+            OsString::from("--"),
+            OsString::from("/bin/true"),
+        ];
+        let error = parse_observe_args(&args).expect_err("must reject");
+        assert!(
+            error.contains("--evidence-output is currently supported only with the ptrace backend")
+        );
+    }
+
+    #[test]
+    fn duplicate_evidence_output_is_rejected() {
+        let args = vec![
+            OsString::from("--evidence-output"),
+            OsString::from("one.json"),
+            OsString::from("--evidence-output"),
+            OsString::from("two.json"),
+            OsString::from("--"),
+            OsString::from("/bin/true"),
+        ];
+        let error = parse_observe_args(&args).expect_err("must reject duplicate");
+        assert!(error.contains("duplicate --evidence-output"));
+    }
 }

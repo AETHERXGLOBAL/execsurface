@@ -1,0 +1,178 @@
+name: P8 A3 typed evidence output
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/execsurface-observe/src/lib.rs"
+      - "crates/execsurface-cli/src/main.rs"
+      - "crates/execsurface-cli/src/typed_evidence.rs"
+      - ".github/workflows/p8-a3-typed-evidence-output.yml"
+      - "docs/development/P8_A3_TYPED_EVIDENCE_OUTPUT_RESULT.md"
+
+permissions:
+  contents: read
+
+jobs:
+  experimental-evidence-output:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Toolchain evidence
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Static gates
+        run: |
+          cargo fmt --check
+          cargo clippy -p execsurface -p execsurface-observe --all-targets -- -D warnings
+
+      - name: Unit gates
+        run: |
+          cargo test -p execsurface -- --nocapture
+          cargo test -p execsurface-observe -- --nocapture
+
+      - name: Build candidate
+        run: cargo build --locked -p execsurface
+
+      - name: E0 legacy no-flag raw shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/p8-a3-evidence"
+          mkdir -p "$work"
+          target/debug/execsurface observe -- /bin/true > "$work/legacy-raw.json"
+          python3 - "$work/legacy-raw.json" <<'PY'
+          import json, sys
+          raw=json.load(open(sys.argv[1]))
+          assert set(raw) == {"schema_version","backend","complete","outcome","events","warnings"}, raw.keys()
+          assert raw["schema_version"] == 2
+          assert "report_kind" not in raw
+          assert "collection_health" not in raw
+          PY
+
+      - name: E1 E2 same-run envelope and successful write semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/p8-a3-evidence"
+          target="$work/target.bin"
+          evidence="$work/evidence.json"
+          raw="$work/raw-with-evidence.json"
+          target/debug/execsurface observe --evidence-output "$evidence" --             /bin/sh -c "printf bridge > '$target'" > "$raw"
+
+          python3 - "$raw" "$evidence" "$target" <<'PY'
+          import json, sys
+          raw=json.load(open(sys.argv[1]))
+          evidence=json.load(open(sys.argv[2]))
+          target=sys.argv[3]
+
+          assert evidence["schema_version"] == 1
+          assert evidence["report_kind"] == "typed_observation_evidence"
+          assert evidence["stability"] == "experimental"
+          assert evidence["raw_observation"] == raw
+          assert evidence["collection_health"]["state"] == "complete"
+          assert "verdict" not in evidence
+          assert raw["schema_version"] == 2
+          assert set(raw) == {"schema_version","backend","complete","outcome","events","warnings"}
+
+          matches=[
+              effect for effect in evidence["effects"]
+              if effect["proposition"] == "file_fd_write_effect_observed"
+              and effect["target"] == target
+          ]
+          assert matches, evidence["effects"]
+          effect=matches[0]
+          assert "successful_operation_result" in effect["guarantees"]["temporal_bindings"]
+          assert "runtime_fd_path_correlated" in effect["guarantees"]["identity_bases"]
+
+          forbidden_keys={
+              "verdict","bytes_transferred","byte_count",
+              "beforeRoot","afterRoot","preStateDigest","postStateDigest",
+              "authority","signature","custody"
+          }
+          def keys(value):
+              if isinstance(value,dict):
+                  for k,v in value.items():
+                      yield k
+                      yield from keys(v)
+              elif isinstance(value,list):
+                  for v in value:
+                      yield from keys(v)
+          present=set(keys(evidence))
+          assert not (present & forbidden_keys), present & forbidden_keys
+          PY
+
+      - name: E3 malformed combinations and output failure fail explicitly
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/p8-a3-evidence"
+
+          set +e
+          target/debug/execsurface observe             --backend experimental-libbpf             --collector /tmp/not-used             --evidence-output "$work/should-not-exist.json"             -- /bin/true > "$work/libbpf.stdout" 2> "$work/libbpf.stderr"
+          libbpf_rc=$?
+
+          target/debug/execsurface observe             --evidence-output "$work"             -- /bin/true > "$work/output-failure.stdout" 2> "$work/output-failure.stderr"
+          output_rc=$?
+          set -e
+
+          test "$libbpf_rc" -eq 2
+          test "$output_rc" -eq 2
+          grep -F -- "--evidence-output is currently supported only with the ptrace backend" "$work/libbpf.stderr"
+          grep -F -- "cannot write typed evidence report" "$work/output-failure.stderr"
+          test ! -e "$work/should-not-exist.json"
+
+      - name: E4 evidence-file privacy sentinel
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/p8-a3-evidence"
+          sentinel="P8_A3_PRIVATE_ARGV_SENTINEL_7f1b903c"
+          target/debug/execsurface observe             --evidence-output "$work/privacy-evidence.json"             -- /bin/true "$sentinel" > "$work/privacy-raw.json"
+          if grep -F "$sentinel" "$work/privacy-evidence.json"; then
+            echo "argv-only sentinel leaked into typed evidence" >&2
+            exit 1
+          fi
+
+      - name: E6 Probity-style bounded consumer replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/p8-a3-evidence"
+          python3 - "$work/evidence.json" <<'PY'
+          import json, sys
+          e=json.load(open(sys.argv[1]))
+          assert e["raw_observation"]["schema_version"] == 2
+          assert e["collection_health"]["state"] == "complete"
+          assert any(
+              x["proposition"] == "file_fd_write_effect_observed"
+              and "successful_operation_result" in x["guarantees"]["temporal_bindings"]
+              for x in e["effects"]
+          )
+          nonclaims=set(e["does_not_assert"])
+          for expected in {
+              "exact_transferred_byte_count",
+              "file_contents",
+              "before_after_state_roots",
+              "custody",
+              "trusted_time",
+              "signature_as_behavioral_authority",
+              "causal_source_code_provenance",
+          }:
+              assert expected in nonclaims
+          PY
+
+      - name: Retain bounded evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p8-a3-typed-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/p8-a3-evidence/
+          if-no-files-found: error
+          retention-days: 90
