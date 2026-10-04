@@ -146,4 +146,4 @@ The candidate would aim to expose proposition-scoped guarantees such as `success
 
 The candidate remains unapproved until G3 adversarial tests show that raw-v2 facts can be mapped into typed guarantees without authority inflation or completeness laundering.
 
-Next gate: **G3 failure-first adversarial mapping matrix**.
+Next gate: **G3 failure-first adversarial mapping matrix**.\n\nG3 implementation is tracked in PR #147 and the dedicated `p8_a3_typed_bridge_redteam` test target.
