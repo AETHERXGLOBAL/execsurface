@@ -1,0 +1,339 @@
+name: P8 A3.5 external trial packet
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/p8-a3-5-external-trial-pack.yml"
+      - ".github/ISSUE_TEMPLATE/typed-evidence-trial.yml"
+      - "docs/external/P8_A3_TYPED_EVIDENCE_EXTERNAL_TRIAL.md"
+      - "docs/external/P8_A3_TYPED_EVIDENCE_TRIAL_MANIFEST.json"
+      - "docs/external/P8_A3_TYPED_EVIDENCE_TRIAL_REPORT_TEMPLATE.md"
+      - "scripts/p8_a3_external_trial_capture.py"
+      - "scripts/p8_a3_typed_evidence_reference_consumer.py"
+      - "scripts/p8_a3_typed_evidence_mutation_redteam.py"
+
+permissions:
+  contents: read
+
+jobs:
+  packet-rehearsal:
+    name: Packet rehearsal / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Static packet integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile             scripts/p8_a3_external_trial_capture.py             scripts/p8_a3_typed_evidence_reference_consumer.py             scripts/p8_a3_typed_evidence_mutation_redteam.py
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          frozen="cea214244d7efe05fea2108a5f5d8ed6287d9a3f"
+          manifest=json.loads(Path("docs/external/P8_A3_TYPED_EVIDENCE_TRIAL_MANIFEST.json").read_text())
+          assert manifest["packet_id"] == "P8-A3.5-EXTERNAL-TYPED-EVIDENCE-TRIAL-v1"
+          assert manifest["product_target"]["source_sha"] == frozen
+          assert manifest["claims"]["external_validation_claimed"] is False
+          assert manifest["claims"]["p8_a1_satisfied"] is False
+          assert manifest["claims"]["p8_a4_satisfied"] is False
+          assert manifest["claims"]["p9_5_satisfied"] is False
+          guide=Path("docs/external/P8_A3_TYPED_EVIDENCE_EXTERNAL_TRIAL.md").read_text()
+          assert frozen in guide
+          assert "preserve the first result" in guide.lower()
+          PY
+
+      - name: Materialize exact frozen target and synthetic evaluator workload
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$RUNNER_TEMP/execsurface-typed-target"
+          workload="$RUNNER_TEMP/evaluator-workload"
+          git worktree add --detach "$target" cea214244d7efe05fea2108a5f5d8ed6287d9a3f
+          test "$(git -C "$target" rev-parse HEAD)" = "cea214244d7efe05fea2108a5f5d8ed6287d9a3f"
+          mkdir -p "$workload"
+          cat > "$workload/workload.sh" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          printf '%s\n' "$1"
+          printf '%s\n' "$P8_A3_ENV_SENTINEL"
+          printf '%s\n' "$2" >&2
+          printf 'AETHER-X-INTERNAL-REHEARSAL\n' > observed-output.txt
+          SH
+          chmod +x "$workload/workload.sh"
+
+      - name: T5 internal rehearsal is executable but disqualified as self-evidence
+        shell: bash
+        env:
+          P8_A3_ENV_SENTINEL: P8_A3_5_ENV_SECRET_7e9d
+        run: |
+          set -euo pipefail
+          packet_sha="$(git rev-parse HEAD)"
+          target="$RUNNER_TEMP/execsurface-typed-target"
+          workload="$RUNNER_TEMP/evaluator-workload"
+          out="$RUNNER_TEMP/trial-output"
+
+          python3 scripts/p8_a3_external_trial_capture.py             --expected-packet-sha "$packet_sha"             --target-source "$target"             --workdir "$workload"             --output-dir "$out"             --rehearsal-self-evidence             -- "$workload/workload.sh"               P8_A3_5_ARGV_SECRET_a219               P8_A3_5_STDERR_SECRET_c82e
+
+          python3 - "$out/trial-summary.json" "$out/consumer-report.json" <<'PY'
+          import json, sys
+          summary=json.load(open(sys.argv[1]))
+          consumer=json.load(open(sys.argv[2]))
+          assert summary["status"] == "TRIAL_CAPTURE_COMPLETE_UNQUALIFIED"
+          assert summary["qualification_state"] == "DISQUALIFIED_SELF_EVIDENCE"
+          assert summary["external_evidence_claimed"] is False
+          assert summary["p8_a1_claimed"] is False
+          assert summary["p8_a4_claimed"] is False
+          assert summary["p9_5_claimed"] is False
+          assert summary["product_target_sha"] == "cea214244d7efe05fea2108a5f5d8ed6287d9a3f"
+          assert set(summary["stages"].values()) == {"pass"}
+          assert summary["target_outcome"]["exit_code"] == 0
+          assert consumer["decision"] == "EXPERIMENTAL_TYPED_EVIDENCE_V1_ACCEPTED_BOUNDED"
+          PY
+
+          for sentinel in             P8_A3_5_ENV_SECRET_7e9d             P8_A3_5_ARGV_SECRET_a219             P8_A3_5_STDERR_SECRET_c82e; do
+            if grep -R -F "$sentinel" "$out"; then
+              echo "privacy sentinel leaked into retained trial output: $sentinel" >&2
+              exit 1
+            fi
+          done
+
+          evidence_sha="$(sha256sum "$out/typed-evidence.json" | awk '{print $1}')"
+          recorded_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["evidence_sha256"].split(":",1)[1])' "$out/trial-summary.json")"
+          test "$evidence_sha" = "$recorded_sha"
+
+      - name: Retain internal rehearsal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p8-a3-5-rehearsal-${{ matrix.os }}-${{ github.sha }}
+          path: ${{ runner.temp }}/trial-output/
+          if-no-files-found: warn
+          retention-days: 90
+
+  packet-red-team:
+    name: Packet red team / ubuntu-24.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare exact target and external-style workload directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$RUNNER_TEMP/target"
+          workload="$RUNNER_TEMP/workload"
+          git worktree add --detach "$target" cea214244d7efe05fea2108a5f5d8ed6287d9a3f
+          mkdir -p "$workload"
+
+      - name: T3 reject wrong target source before workload execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          packet_sha="$(git rev-parse HEAD)"
+          workload="$RUNNER_TEMP/workload"
+          out="$RUNNER_TEMP/wrong-target"
+          marker="$workload/wrong-target-ran"
+
+          set +e
+          python3 scripts/p8_a3_external_trial_capture.py             --expected-packet-sha "$packet_sha"             --target-source "$GITHUB_WORKSPACE"             --workdir "$workload"             --output-dir "$out"             -- /bin/sh -c "touch '$marker'"
+          rc=$?
+          set -e
+
+          test "$rc" -eq 2
+          test ! -e "$marker"
+          python3 - "$out/trial-summary.json" <<'PY'
+          import json, sys
+          s=json.load(open(sys.argv[1]))
+          assert s["failure_code"] == "wrong-target-source"
+          assert s["status"] == "TRIAL_CAPTURE_FAILED_PRESERVE_INITIAL_RESULT"
+          assert s["external_evidence_claimed"] is False
+          PY
+
+      - name: T3 reject dirty frozen target before workload execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          packet_sha="$(git rev-parse HEAD)"
+          target="$RUNNER_TEMP/target"
+          workload="$RUNNER_TEMP/workload"
+          out="$RUNNER_TEMP/dirty-target"
+          marker="$workload/dirty-target-ran"
+
+          printf '\nP8-A3.5 dirty sentinel\n' >> "$target/README.md"
+          set +e
+          python3 scripts/p8_a3_external_trial_capture.py             --expected-packet-sha "$packet_sha"             --target-source "$target"             --workdir "$workload"             --output-dir "$out"             -- /bin/sh -c "touch '$marker'"
+          rc=$?
+          set -e
+          git -C "$target" checkout -- README.md
+
+          test "$rc" -eq 2
+          test ! -e "$marker"
+          python3 - "$out/trial-summary.json" <<'PY'
+          import json, sys
+          s=json.load(open(sys.argv[1]))
+          assert s["failure_code"] == "target-worktree-dirty"
+          PY
+
+      - name: T3 reject missing schema and internal workload directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          packet_sha="$(git rev-parse HEAD)"
+          target="$RUNNER_TEMP/target"
+          workload="$RUNNER_TEMP/workload"
+
+          set +e
+          python3 scripts/p8_a3_external_trial_capture.py             --expected-packet-sha "$packet_sha"             --target-source "$target"             --workdir "$workload"             --schema "$RUNNER_TEMP/missing-schema.json"             --output-dir "$RUNNER_TEMP/missing-schema-out"             -- /bin/true
+          missing_rc=$?
+
+          python3 scripts/p8_a3_external_trial_capture.py             --expected-packet-sha "$packet_sha"             --target-source "$target"             --workdir "$target"             --output-dir "$RUNNER_TEMP/internal-workdir-out"             -- /bin/true
+          internal_rc=$?
+          set -e
+
+          test "$missing_rc" -eq 2
+          test "$internal_rc" -eq 2
+          python3 - <<'PY'
+          import json, os
+          root=os.environ["RUNNER_TEMP"]
+          a=json.load(open(root+"/missing-schema-out/trial-summary.json"))
+          b=json.load(open(root+"/internal-workdir-out/trial-summary.json"))
+          assert a["failure_code"] == "schema-missing"
+          assert b["failure_code"] == "workload-directory-is-internal"
+          PY
+
+      - name: T3 invalid schema must make independent consumer reject
+        shell: bash
+        run: |
+          set -euo pipefail
+          packet_sha="$(git rev-parse HEAD)"
+          target="$RUNNER_TEMP/target"
+          workload="$RUNNER_TEMP/workload"
+          bad_schema="$RUNNER_TEMP/bad-schema.json"
+          out="$RUNNER_TEMP/bad-schema-out"
+
+          python3 - "$bad_schema" <<'PY'
+          import json, sys
+          p="schemas/execsurface-typed-evidence-experimental-v1.schema.json"
+          schema=json.load(open(p))
+          schema["properties"]["report_kind"]["const"]="tampered-report-kind"
+          json.dump(schema, open(sys.argv[1],"w"), indent=2)
+          PY
+
+          set +e
+          python3 scripts/p8_a3_external_trial_capture.py             --expected-packet-sha "$packet_sha"             --target-source "$target"             --workdir "$workload"             --schema "$bad_schema"             --output-dir "$out"             -- /bin/sh -c "printf trial > consumer-rejection.bin"
+          rc=$?
+          set -e
+
+          test "$rc" -eq 2
+          python3 - "$out/trial-summary.json" <<'PY'
+          import json, sys
+          s=json.load(open(sys.argv[1]))
+          assert s["failure_code"] == "consumer-rejected"
+          assert s["observe_exit_code"] == 0
+          assert s["consumer_exit_code"] == 2
+          PY
+
+      - name: T3 target failure is preserved rather than rewritten as trial failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          packet_sha="$(git rev-parse HEAD)"
+          target="$RUNNER_TEMP/target"
+          workload="$RUNNER_TEMP/workload"
+          out="$RUNNER_TEMP/target-failure-out"
+
+          python3 scripts/p8_a3_external_trial_capture.py             --expected-packet-sha "$packet_sha"             --target-source "$target"             --workdir "$workload"             --output-dir "$out"             --rehearsal-self-evidence             -- /bin/sh -c "exit 7"
+
+          python3 - "$out/trial-summary.json" <<'PY'
+          import json, sys
+          s=json.load(open(sys.argv[1]))
+          assert s["status"] == "TRIAL_CAPTURE_COMPLETE_UNQUALIFIED"
+          assert s["qualification_state"] == "DISQUALIFIED_SELF_EVIDENCE"
+          assert s["observe_exit_code"] == 0
+          assert s["target_outcome"]["exit_code"] == 7
+          PY
+
+      - name: T3 collision failure is preserved
+        shell: bash
+        run: |
+          set -euo pipefail
+          packet_sha="$(git rev-parse HEAD)"
+          target="$RUNNER_TEMP/target"
+          workload="$RUNNER_TEMP/workload"
+          out="$RUNNER_TEMP/collision-out"
+          evidence="$out/typed-evidence.json"
+
+          set +e
+          python3 scripts/p8_a3_external_trial_capture.py             --expected-packet-sha "$packet_sha"             --target-source "$target"             --workdir "$workload"             --output-dir "$out"             -- /bin/sh -c "printf 'WORKLOAD-OWNED' > '$evidence'"
+          rc=$?
+          set -e
+
+          test "$rc" -eq 2
+          test "$(cat "$evidence")" = "WORKLOAD-OWNED"
+          python3 - "$out/trial-summary.json" <<'PY'
+          import json, sys
+          s=json.load(open(sys.argv[1]))
+          assert s["failure_code"] == "observe-failed"
+          assert s["observe_exit_code"] == 2
+          PY
+
+      - name: T3 output directory reuse cannot overwrite initial result
+        shell: bash
+        run: |
+          set -euo pipefail
+          packet_sha="$(git rev-parse HEAD)"
+          target="$RUNNER_TEMP/target"
+          workload="$RUNNER_TEMP/workload"
+          out="$RUNNER_TEMP/target-failure-out"
+          before="$(sha256sum "$out/trial-summary.json" | awk '{print $1}')"
+
+          set +e
+          python3 scripts/p8_a3_external_trial_capture.py             --expected-packet-sha "$packet_sha"             --target-source "$target"             --workdir "$workload"             --output-dir "$out"             -- /bin/true
+          rc=$?
+          set -e
+
+          test "$rc" -eq 2
+          after="$(sha256sum "$out/trial-summary.json" | awk '{print $1}')"
+          test "$before" = "$after"
+
+      - name: T3 real artifact mutation corpus remains fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/target-failure-out/typed-evidence.json"
+          python3 scripts/p8_a3_typed_evidence_mutation_redteam.py "$evidence"             > "$RUNNER_TEMP/mutation-report.json"
+          grep -F '"decision": "MUTATION_REDTEAM_PASS"' "$RUNNER_TEMP/mutation-report.json"
+          grep -F '"rejected": 27' "$RUNNER_TEMP/mutation-report.json"
+
+      - name: Retain internal red-team evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p8-a3-5-pack-redteam-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/wrong-target/
+            ${{ runner.temp }}/dirty-target/
+            ${{ runner.temp }}/missing-schema-out/
+            ${{ runner.temp }}/internal-workdir-out/
+            ${{ runner.temp }}/bad-schema-out/
+            ${{ runner.temp }}/target-failure-out/
+            ${{ runner.temp }}/collision-out/
+            ${{ runner.temp }}/mutation-report.json
+          if-no-files-found: warn
+          retention-days: 90
