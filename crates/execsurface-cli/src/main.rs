@@ -288,7 +288,7 @@ fn parse_observe_args(args: &[OsString]) -> Result<ObserveArgs, String> {
                             usage("--backend experimental-libbpf requires --collector PATH")
                         })?,
                     }
-                },
+                }
                 other => return Err(usage(&format!("unknown observe backend: {other}"))),
             };
             return Ok(ObserveArgs {
@@ -975,17 +975,13 @@ check options:
     )
 }
 
-
 #[cfg(test)]
 mod p8_a3_observe_cli_tests {
     use super::*;
 
     #[test]
     fn legacy_observe_parse_has_no_evidence_output() {
-        let args = vec![
-            OsString::from("--"),
-            OsString::from("/bin/true"),
-        ];
+        let args = vec![OsString::from("--"), OsString::from("/bin/true")];
         let parsed = parse_observe_args(&args).expect("legacy parse");
         assert!(parsed.evidence_output.is_none());
         assert!(matches!(parsed.backend, ObserveBackend::Ptrace));
@@ -1020,7 +1016,9 @@ mod p8_a3_observe_cli_tests {
             OsString::from("/bin/true"),
         ];
         let error = parse_observe_args(&args).expect_err("must reject");
-        assert!(error.contains("--evidence-output is currently supported only with the ptrace backend"));
+        assert!(
+            error.contains("--evidence-output is currently supported only with the ptrace backend")
+        );
     }
 
     #[test]
