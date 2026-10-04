@@ -8,6 +8,8 @@ on:
       - '.github/m12-fixtures/**'
       - '.github/workflows/adversarial-regression.yml'
       - 'crates/execsurface-observe/**'
+      - 'crates/execsurface-cli/src/main.rs'
+      - 'crates/execsurface-cli/src/typed_evidence.rs'
       - 'README.md'
   pull_request:
     branches:
