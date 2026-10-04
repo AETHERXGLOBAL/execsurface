@@ -147,3 +147,134 @@ The candidate would aim to expose proposition-scoped guarantees such as `success
 The candidate remains unapproved until G3 adversarial tests show that raw-v2 facts can be mapped into typed guarantees without authority inflation or completeness laundering.
 
 Next gate: **G3 failure-first adversarial mapping matrix**.\n\nG3 implementation is tracked in PR #147 and the dedicated `p8_a3_typed_bridge_redteam` test target.
+
+
+## G3 — Failure-first typed-bridge red team
+
+Accepted source before closeout:
+`baf2e8803ec40e2eafdee9341521010924f7291b`
+
+Accepted run:
+`37195863962`
+
+Static gates:
+- `cargo fmt --check`: PASS
+- Clippy `-D warnings`: PASS
+
+Adversarial corpus:
+**13/13 PASS**
+
+The matrix retained and passed attacks covering:
+
+1. positive control with bounded successful-write semantics only;
+2. failed/zero-byte write with no fd-effect cannot be promoted;
+3. short positive write cannot become an exact byte-count claim;
+4. repeated writes are not collapsed into one effect;
+5. warning + successful target exit remains non-promotable;
+6. truncation/incomplete observation fails closed;
+7. path substitution fails the bound proof requirement;
+8. process/TID binding mismatch is rejected;
+9. shared-FD ambiguity cannot be laundered into complete health;
+10. binary/source identity mismatch is rejected;
+11. backend naming cannot upgrade evidence authority;
+12. external before/after snapshots cannot strengthen the bridge output;
+13. a warning cannot be ignored even if a synthetic input leaves `complete=true`.
+
+### Retained negative harness evidence
+
+Two earlier attempts failed **before the scientific corpus ran**:
+
+- run `37195753954`: formatting-only failure;
+- run `37195788264`: escaped-newline harness defect exposed by format parsing.
+
+No test assertion, authority rule, completeness requirement, threshold, or semantic expectation was weakened to obtain the accepted result.
+
+Decision:
+
+`P8_A3_G3_TYPED_BRIDGE_REDTEAM_PASS_BOUNDED`
+
+## G4 — Architecture decision
+
+The preregistered outcome is:
+
+`REPORT_LAYER_TYPED_HEALTH_BRIDGE`
+
+This is selected over the alternatives for the tested scope.
+
+### Why not `RAW_SCHEMA_NEXT_CANDIDATE`
+
+The external need can be satisfied without changing the immutable Alpha.5 raw-v2 evidence contract. Numeric write byte counts and file contents are not required to express the bounded semantic fact that a retained fd-write event followed successful positive-byte I/O.
+
+### Why not `SEMANTICS_V3_PUBLIC_PROMOTION_CANDIDATE`
+
+The research v3 model is useful and directly relevant, but the external finding does not justify promoting the whole v3 research surface into the public product. Only a narrow typed report/evidence projection is justified by current evidence.
+
+### Why not `NO_PRODUCT_CHANGE_EXTERNAL_ADAPTER_SUFFICIENT`
+
+Probity's external companion proves that an adapter is possible, but it also demonstrates avoidable duplication: a consumer must reconstruct health and successful-effect semantics that ExecSurface already knows internally. A narrow first-party report bridge is therefore materially useful.
+
+### Selected boundary
+
+The candidate bridge may expose only facts already justified by the producer's bounded observer semantics, such as:
+
+- producer/backend semantic profile;
+- typed collection health/completeness;
+- proposition-scoped successful-operation guarantee;
+- runtime-fd path-correlation identity basis;
+- explicit ambiguity/unsupported states;
+- stable limitation codes.
+
+It must not add:
+
+- file contents;
+- before/after state roots;
+- custody;
+- trusted time;
+- signatures as behavioral authority;
+- causal source-code provenance;
+- exact transferred byte counts unless separately observed and justified;
+- automatic public-v3 baseline migration.
+
+Decision:
+
+`P8_A3_G4_REPORT_LAYER_TYPED_HEALTH_BRIDGE_SELECTED_BOUNDED`
+
+## G5 — Compatibility / anti-drift
+
+Accepted checks on the same research change set:
+
+- full CI run `37195864075`: **SUCCESS**
+- P9.3 Compatibility Contract run `37195863982`: **SUCCESS**
+- immutable Alpha.5 gap reproduction run `37195863981`: **SUCCESS**
+- G3 typed-bridge red-team run `37195863962`: **SUCCESS**
+
+The research-only bridge test does not change:
+
+- raw observation schema v2;
+- baseline schema/digest semantics;
+- policy schema or matcher meanings;
+- PASS/ERROR/REVIEW/BLOCK exit meanings;
+- current GitHub Action contract;
+- public Linux x86_64 + native ptrace support boundary;
+- Alpha.5 metadata-only privacy contract.
+
+Decision:
+
+`P8_A3_G5_COMPATIBILITY_ANTI_DRIFT_PASS_BOUNDED`
+
+## Final gate decision
+
+`P8_A3_INTEROPERABILITY_GAP_REPRODUCED_AND_BOUNDED_PATH_SELECTED`
+
+The external finding is accepted and reproduced. The selected response is a narrow **report-layer typed-health/evidence bridge**, not a raw-schema rewrite and not full Semantics v3 promotion.
+
+This closes the research decision gate only. It does **not** constitute:
+
+- product integration approval;
+- vNext release approval;
+- P8 A5 closeout;
+- A1 zero-assistance reproduction;
+- A4 external real-workload evidence;
+- production adoption.
+
+A separate implementation gate must build and attack a minimal research-only bridge before any public API or release decision.
