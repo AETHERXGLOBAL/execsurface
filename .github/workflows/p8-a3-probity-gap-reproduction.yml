@@ -1,0 +1,71 @@
+name: P8 A3 Probity gap reproduction
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/p8_a3_probity_gap_reproduction.py"
+      - ".github/workflows/p8-a3-probity-gap-reproduction.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce-alpha5-gap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Retrieve immutable Alpha.5 release artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://github.com/AETHERXGLOBAL/execsurface/releases/download/v0.1.0-alpha.5/execsurface-v0.1.0-alpha.5-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL "$url" -o alpha5.tar.gz
+          echo "6a27ee3245acec67fc153cca3f6715f4395eadcf8c6358b415ecc6a9347efdb7  alpha5.tar.gz" | sha256sum -c -
+          tar -xzf alpha5.tar.gz
+          binary="execsurface-v0.1.0-alpha.5-x86_64-unknown-linux-gnu/execsurface"
+          echo "11d1f70d3e6bd6526eff4889b90cba4a0ad95ce09d489643e7f3b703e455f646  $binary" | sha256sum -c -
+          "$binary" --version
+          "$binary" doctor
+
+      - name: Pin immutable Alpha.5 source model
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="9e73b925d55557e33de1b0813995609aaefdc037"
+          curl -fsSL "https://raw.githubusercontent.com/AETHERXGLOBAL/execsurface/$source_sha/crates/execsurface-model/src/lib.rs" -o alpha5-model-lib.rs
+          curl -fsSL "https://raw.githubusercontent.com/AETHERXGLOBAL/execsurface/$source_sha/crates/execsurface-observe/src/linux_ptrace.rs" -o alpha5-linux-ptrace.rs
+          echo "26b9f431249a3cce574f27a1048699334d776d15ec1c0d8fe4e9f4271f92bb85  alpha5-model-lib.rs" | sha256sum -c -
+          echo "afda9661804ae99dffd7116adc91cbc1672256da29ec0b29556f38a5702b6d03  alpha5-linux-ptrace.rs" | sha256sum -c -
+
+      - name: Reproduce raw-schema interoperability gap
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/p8_a3_probity_gap_reproduction.py \
+            --binary execsurface-v0.1.0-alpha.5-x86_64-unknown-linux-gnu/execsurface \
+            --output p8-a3-g1-report.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("p8-a3-g1-report.json"))
+          assert report["decision"] == "P8_A3_G1_GAP_REPRODUCED_BOUNDED"
+          assert report["successfulWriteResultOrByteCountCarried"] is False
+          assert report["typedCollectionHealthEnvelopePresent"] is False
+          print(json.dumps(report, indent=2, sort_keys=True))
+          PY
+
+      - name: Retain reproduction evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p8-a3-probity-gap-${{ github.sha }}
+          path: |
+            p8-a3-g1-report.json
+            alpha5-model-lib.rs
+            alpha5-linux-ptrace.rs
+          if-no-files-found: error
+          retention-days: 90
