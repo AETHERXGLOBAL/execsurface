@@ -462,15 +462,30 @@ pub fn observe_command_with_options(
     spec: &CommandSpec,
     options: ObserveOptions,
 ) -> Result<Observation, ObserveError> {
+    Ok(observe_command_with_backend_options(spec, options)?.observation)
+}
+
+/// Experimental workspace-internal access to the typed backend handoff.
+///
+/// This does not change the legacy `observe_command` return contract. It exists
+/// so a separately gated consumer can project evidence already known by the
+/// selected observer without reconstructing collection health from serialized
+/// raw-v2 JSON.
+pub fn observe_command_with_backend(
+    spec: &CommandSpec,
+) -> Result<BackendObservation, ObserveError> {
+    observe_command_with_backend_options(spec, ObserveOptions::default())
+}
+
+pub fn observe_command_with_backend_options(
+    spec: &CommandSpec,
+    options: ObserveOptions,
+) -> Result<BackendObservation, ObserveError> {
     let _session_guard = OBSERVE_LOCK.lock().map_err(|_| {
         ObserveError::Protocol("observer session serialization lock was poisoned".to_owned())
     })?;
 
-    // Preserve the existing public behavior: callers still select no backend,
-    // ptrace remains the default/reference path, and the return type is the
-    // existing Observation schema. The richer M8 handoff remains internal
-    // until backend selection semantics are separately accepted.
-    Ok(PTRACE_BACKEND.observe(spec, options)?.observation)
+    PTRACE_BACKEND.observe(spec, options)
 }
 
 #[cfg(test)]
