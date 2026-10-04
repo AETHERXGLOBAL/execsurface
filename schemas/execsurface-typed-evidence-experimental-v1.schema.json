@@ -1,0 +1,428 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AETHERXGLOBAL/execsurface/schemas/execsurface-typed-evidence-experimental-v1.schema.json",
+  "title": "ExecSurface Experimental Typed Observation Evidence v1",
+  "description": "Experimental/non-stable consumer contract for the opt-in typed observation-evidence file. This is not a verdict schema and creates no stable-v1 promise.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "report_kind",
+    "stability",
+    "backend",
+    "collection_health",
+    "unsupported_capabilities",
+    "effects",
+    "limitations",
+    "does_not_assert",
+    "raw_observation"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "report_kind": {
+      "const": "typed_observation_evidence"
+    },
+    "stability": {
+      "const": "experimental"
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "implementation_version",
+        "platform",
+        "architecture",
+        "privacy_profile"
+      ],
+      "properties": {
+        "profile": {
+          "const": "linux-ptrace-metadata-v2"
+        },
+        "implementation_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "platform": {
+          "const": "linux"
+        },
+        "architecture": {
+          "const": "x86_64"
+        },
+        "privacy_profile": {
+          "const": "metadata-only-v1"
+        }
+      }
+    },
+    "collection_health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "warning_codes"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "complete",
+            "incomplete_loss",
+            "incomplete_limit",
+            "incomplete_capability",
+            "incomplete_ambiguity",
+            "error"
+          ]
+        },
+        "warning_codes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "unsupported_capabilities": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "process_spawn_lineage",
+          "process_exec_occurrence",
+          "process_exec_path_identity",
+          "process_exit",
+          "path_access_intent",
+          "successful_open_fd_identity",
+          "open_path_identity",
+          "fd_read_write_effect",
+          "fd_dup_close_lifecycle",
+          "fork_fd_inheritance",
+          "close_on_exec",
+          "rename_delete_effects",
+          "network_connect_destination",
+          "trace_time_relative_path",
+          "causal_executable_chain",
+          "loss_truncation_visibility"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "effects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fd_write_effect"
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "does_not_assert": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "policy_verdict",
+          "vulnerability_free",
+          "exact_transferred_byte_count",
+          "file_contents",
+          "before_after_state_roots",
+          "custody",
+          "trusted_time",
+          "signature_as_behavioral_authority",
+          "causal_source_code_provenance"
+        ]
+      },
+      "uniqueItems": true,
+      "minItems": 9,
+      "maxItems": 9,
+      "allOf": [
+        {
+          "contains": {
+            "const": "policy_verdict"
+          }
+        },
+        {
+          "contains": {
+            "const": "vulnerability_free"
+          }
+        },
+        {
+          "contains": {
+            "const": "exact_transferred_byte_count"
+          }
+        },
+        {
+          "contains": {
+            "const": "file_contents"
+          }
+        },
+        {
+          "contains": {
+            "const": "before_after_state_roots"
+          }
+        },
+        {
+          "contains": {
+            "const": "custody"
+          }
+        },
+        {
+          "contains": {
+            "const": "trusted_time"
+          }
+        },
+        {
+          "contains": {
+            "const": "signature_as_behavioral_authority"
+          }
+        },
+        {
+          "contains": {
+            "const": "causal_source_code_provenance"
+          }
+        }
+      ]
+    },
+    "raw_observation": {
+      "$ref": "#/$defs/raw_observation"
+    }
+  },
+  "$defs": {
+    "guarantees": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observation_points",
+        "identity_bases",
+        "temporal_bindings",
+        "causal_bindings"
+      ],
+      "properties": {
+        "observation_points": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "derived_runtime_fd_state",
+              "syscall_result_post_operation"
+            ]
+          },
+          "allOf": [
+            {
+              "contains": {
+                "const": "derived_runtime_fd_state"
+              }
+            },
+            {
+              "contains": {
+                "const": "syscall_result_post_operation"
+              }
+            }
+          ]
+        },
+        "identity_bases": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "runtime_fd_path_correlated"
+            }
+          ],
+          "minItems": 1,
+          "maxItems": 1
+        },
+        "temporal_bindings": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "successful_operation_result"
+            }
+          ],
+          "minItems": 1,
+          "maxItems": 1
+        },
+        "causal_bindings": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "const": "state_machine_correlated"
+            }
+          ],
+          "minItems": 1,
+          "maxItems": 1
+        }
+      }
+    },
+    "fd_write_effect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proposition",
+        "actor",
+        "target",
+        "guarantees"
+      ],
+      "properties": {
+        "proposition": {
+          "const": "file_fd_write_effect_observed"
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "guarantees": {
+          "$ref": "#/$defs/guarantees"
+        }
+      }
+    },
+    "raw_backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "platform",
+        "architecture",
+        "capabilities",
+        "limitations"
+      ],
+      "properties": {
+        "name": {
+          "const": "linux-ptrace-metadata-v2"
+        },
+        "platform": {
+          "const": "linux"
+        },
+        "architecture": {
+          "const": "x86_64"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "raw_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exit_code",
+        "signal"
+      ],
+      "properties": {
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "signal": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    "raw_warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "tid",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tid": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "raw_event": {
+      "type": "object",
+      "required": [
+        "sequence",
+        "tid",
+        "event_type"
+      ],
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tid": {
+          "type": "integer"
+        },
+        "event_type": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "raw_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "backend",
+        "complete",
+        "outcome",
+        "events",
+        "warnings"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "backend": {
+          "$ref": "#/$defs/raw_backend"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "outcome": {
+          "$ref": "#/$defs/raw_outcome"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/raw_event"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/raw_warning"
+          }
+        }
+      }
+    }
+  }
+}
