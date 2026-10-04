@@ -236,8 +236,7 @@ fn path_identity(path: &Path) -> Result<PathBuf, String> {
 
     let absolute = lexical_absolute(path)?;
     let parent = absolute.parent().unwrap_or_else(|| Path::new("/"));
-    let resolved_parent =
-        std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    let resolved_parent = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
     let name = absolute
         .file_name()
         .ok_or_else(|| format!("evidence output path has no file name: {}", path.display()))?;
