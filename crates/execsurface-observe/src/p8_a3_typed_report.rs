@@ -304,10 +304,7 @@ mod tests {
         input.completeness = CollectionCompleteness::IncompleteAmbiguity;
 
         let report = build_typed_report(&input).expect("bounded incomplete report");
-        assert_eq!(
-            report["collection_health"]["state"],
-            "incomplete_ambiguity"
-        );
+        assert_eq!(report["collection_health"]["state"], "incomplete_ambiguity");
         assert_eq!(report["collection_health"]["pass_eligible"], false);
         assert_eq!(
             report["collection_health"]["warning_codes"][0],
@@ -432,8 +429,7 @@ mod tests {
         assert!(effects.iter().any(|effect| {
             effect["proposition"] == "file_fd_write_effect_observed"
                 && effect["target"] == target.to_string_lossy().as_ref()
-                && effect["guarantees"]["temporal_bindings"][0]
-                    == "successful_operation_result"
+                && effect["guarantees"]["temporal_bindings"][0] == "successful_operation_result"
         }));
 
         let _ = fs::remove_file(target);
