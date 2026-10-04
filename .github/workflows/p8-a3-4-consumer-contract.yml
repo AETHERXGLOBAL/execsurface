@@ -1,0 +1,65 @@
+name: P8 A3.4 consumer contract red team
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/p8-a3-4-consumer-contract.yml"
+      - "crates/execsurface-cli/src/main.rs"
+      - "crates/execsurface-cli/src/typed_evidence.rs"
+      - "schemas/execsurface-typed-evidence-experimental-v1.schema.json"
+      - "scripts/p8_a3_typed_evidence_reference_consumer.py"
+      - "scripts/p8_a3_typed_evidence_mutation_redteam.py"
+      - "docs/development/P8_A3_4_CONSUMER_CONTRACT_RESULT.md"
+
+permissions:
+  contents: read
+
+jobs:
+  c4-collision-failure-first:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Build candidate
+        run: cargo build --locked -p execsurface
+
+      - name: C4 evidence-output path must not overwrite workload state
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/p8-a3-4-collision"
+          mkdir -p "$work"
+          collision="$work/workload-owned.bin"
+
+          set +e
+          target/debug/execsurface observe \
+            --evidence-output "$collision" \
+            -- /bin/sh -c "printf 'WORKLOAD-STATE' > '$collision'" \
+            > "$work/stdout.txt" 2> "$work/stderr.txt"
+          rc=$?
+          set -e
+
+          printf 'execsurface_rc=%s\n' "$rc"
+          printf 'post_run_bytes='
+          cat "$collision" || true
+          printf '\n'
+
+          # Gate requirement: collision must be rejected and the workload's
+          # bytes must survive. Current main is expected to fail this attack;
+          # retain that failure before any fix.
+          test "$rc" -eq 2
+          test "$(cat "$collision")" = "WORKLOAD-STATE"
+          grep -F "evidence output path overlaps observed workload path" "$work/stderr.txt"
+
+      - name: Retain collision evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p8-a3-4-collision-${{ github.sha }}
+          path: ${{ runner.temp }}/p8-a3-4-collision/
+          if-no-files-found: error
+          retention-days: 90
