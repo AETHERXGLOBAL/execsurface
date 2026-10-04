@@ -1,0 +1,36 @@
+name: P8 A3 typed report prototype
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/execsurface-observe/src/lib.rs"
+      - "crates/execsurface-observe/src/p8_a3_typed_report.rs"
+      - ".github/workflows/p8-a3-typed-report-prototype.yml"
+      - "docs/development/P8_A3_TYPED_REPORT_PROTOTYPE.md"
+
+permissions:
+  contents: read
+
+jobs:
+  research-prototype:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Toolchain evidence
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy -p execsurface-observe --lib --tests -- -D warnings
+
+      - name: R0-R3 typed report prototype
+        run: cargo test -p execsurface-observe p8_a3_ -- --nocapture
