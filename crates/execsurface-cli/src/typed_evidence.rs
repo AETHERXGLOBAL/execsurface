@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use execsurface_model::{FileOperation, RawEvent, RawEventKind};
 use execsurface_observe::{BackendObservation, CollectionCompleteness, ObservationCapability};
@@ -204,7 +204,73 @@ pub(crate) fn build_report(input: &BackendObservation) -> Result<Value, String> 
     }))
 }
 
+fn lexical_absolute(path: &Path) -> Result<PathBuf, String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("cannot resolve current directory: {error}"))?
+            .join(path)
+    };
+
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::Normal(value) => normalized.push(value),
+        }
+    }
+    Ok(normalized)
+}
+
+fn path_identity(path: &Path) -> Result<PathBuf, String> {
+    if path.exists() {
+        return std::fs::canonicalize(path)
+            .map_err(|error| format!("cannot resolve path {}: {error}", path.display()));
+    }
+
+    let absolute = lexical_absolute(path)?;
+    let parent = absolute.parent().unwrap_or_else(|| Path::new("/"));
+    let resolved_parent =
+        std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    let name = absolute
+        .file_name()
+        .ok_or_else(|| format!("evidence output path has no file name: {}", path.display()))?;
+    Ok(resolved_parent.join(name))
+}
+
+fn ensure_output_path_disjoint(path: &Path, input: &BackendObservation) -> Result<(), String> {
+    let output = path_identity(path)?;
+
+    for event in &input.observation.events {
+        let RawEventKind::FileDescriptorAccess {
+            operation: FileOperation::Write,
+            path: observed_path,
+            ..
+        } = &event.kind
+        else {
+            continue;
+        };
+
+        let observed = path_identity(Path::new(observed_path))?;
+        if observed == output {
+            return Err(format!(
+                "evidence output path overlaps observed workload path: {}",
+                path.display()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) fn write_report(path: &Path, input: &BackendObservation) -> Result<(), String> {
+    ensure_output_path_disjoint(path, input)?;
     let report = build_report(input)?;
     let mut bytes = serde_json::to_vec_pretty(&report)
         .map_err(|error| format!("cannot serialize typed evidence report: {error}"))?;
@@ -410,6 +476,52 @@ mod tests {
         ] {
             assert!(!keys.contains(forbidden), "forbidden field {forbidden}");
         }
+    }
+
+    #[test]
+    fn workload_written_output_path_is_rejected_without_overwrite() {
+        let path = std::env::temp_dir().join(format!(
+            "execsurface-p8-a3-collision-{}",
+            std::process::id()
+        ));
+        std::fs::write(&path, b"WORKLOAD-STATE").expect("seed workload bytes");
+        let input = complete_input(path.to_string_lossy().as_ref());
+
+        let error = write_report(&path, &input).expect_err("collision must fail");
+        assert!(error.contains("evidence output path overlaps observed workload path"));
+        assert_eq!(
+            std::fs::read(&path).expect("read preserved workload bytes"),
+            b"WORKLOAD-STATE"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_alias_to_workload_written_path_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "execsurface-p8-a3-collision-alias-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create collision dir");
+        let target = root.join("workload.bin");
+        let alias = root.join("evidence-alias.json");
+        std::fs::write(&target, b"WORKLOAD-STATE").expect("seed workload bytes");
+        symlink(&target, &alias).expect("create alias");
+
+        let input = complete_input(target.to_string_lossy().as_ref());
+        let error = write_report(&alias, &input).expect_err("alias collision must fail");
+        assert!(error.contains("evidence output path overlaps observed workload path"));
+        assert_eq!(
+            std::fs::read(&target).expect("read preserved workload bytes"),
+            b"WORKLOAD-STATE"
+        );
+
+        let _ = std::fs::remove_file(alias);
+        let _ = std::fs::remove_file(target);
+        let _ = std::fs::remove_dir(root);
     }
 
     #[test]
