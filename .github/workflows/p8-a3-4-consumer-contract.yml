@@ -1,0 +1,182 @@
+name: P8 A3.4 consumer contract red team
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/p8-a3-4-consumer-contract.yml"
+      - "crates/execsurface-cli/src/main.rs"
+      - "crates/execsurface-cli/src/typed_evidence.rs"
+      - "schemas/execsurface-typed-evidence-experimental-v1.schema.json"
+      - "scripts/p8_a3_typed_evidence_reference_consumer.py"
+      - "scripts/p8_a3_typed_evidence_mutation_redteam.py"
+      - "docs/development/P8_A3_4_CONSUMER_CONTRACT_RESULT.md"
+
+permissions:
+  contents: read
+
+jobs:
+  consumer-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Toolchain and static gates
+        run: |
+          set -euo pipefail
+          rustc --version
+          cargo --version
+          python3 --version
+          cargo fmt --check
+          cargo clippy -p execsurface --all-targets -- -D warnings
+          python3 -m py_compile \
+            scripts/p8_a3_typed_evidence_reference_consumer.py \
+            scripts/p8_a3_typed_evidence_mutation_redteam.py
+
+      - name: Build candidate
+        run: cargo build --locked -p execsurface
+
+      - name: C1 C2 real native artifact and independent reference consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/p8-a3-4-consumer"
+          mkdir -p "$work"
+          target="$work/target.bin"
+          evidence="$work/evidence.json"
+          raw="$work/raw.json"
+
+          target/debug/execsurface observe \
+            --evidence-output "$evidence" \
+            -- /bin/sh -c "printf bridge > '$target'" \
+            > "$raw"
+
+          python3 scripts/p8_a3_typed_evidence_reference_consumer.py \
+            "$evidence" \
+            --schema schemas/execsurface-typed-evidence-experimental-v1.schema.json \
+            > "$work/consumer-report.json"
+
+          python3 - "$raw" "$evidence" <<'PY'
+          import json, sys
+          raw=json.load(open(sys.argv[1]))
+          evidence=json.load(open(sys.argv[2]))
+          assert evidence["raw_observation"] == raw
+          assert evidence["stability"] == "experimental"
+          assert "verdict" not in evidence
+          PY
+
+      - name: C3 mutation and substitution red team
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/p8-a3-4-consumer"
+          python3 scripts/p8_a3_typed_evidence_mutation_redteam.py \
+            "$work/evidence.json" \
+            > "$work/mutation-report.json"
+          grep -F '"decision": "MUTATION_REDTEAM_PASS"' "$work/mutation-report.json"
+          grep -F '"rejected": 27' "$work/mutation-report.json"
+
+      - name: C4 target stdout stderr noise cannot corrupt evidence file
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/p8-a3-4-consumer"
+          noisy_target="$work/noisy-target.bin"
+          noisy_evidence="$work/noisy-evidence.json"
+
+          target/debug/execsurface observe \
+            --evidence-output "$noisy_evidence" \
+            -- /bin/sh -c "printf 'P8_A3_NOISY_STDOUT_91e7\\n'; printf 'P8_A3_NOISY_STDERR_c245\\n' >&2; printf bridge > '$noisy_target'" \
+            > "$work/noisy.stdout" 2> "$work/noisy.stderr"
+
+          python3 scripts/p8_a3_typed_evidence_reference_consumer.py \
+            "$noisy_evidence" \
+            --schema schemas/execsurface-typed-evidence-experimental-v1.schema.json \
+            > "$work/noisy-consumer-report.json"
+          grep -F 'P8_A3_NOISY_STDOUT_91e7' "$work/noisy.stdout"
+          grep -F 'P8_A3_NOISY_STDERR_c245' "$work/noisy.stderr"
+          if grep -F 'P8_A3_NOISY_STDOUT_91e7' "$noisy_evidence"; then
+            echo 'stdout payload leaked into evidence file' >&2
+            exit 1
+          fi
+          if grep -F 'P8_A3_NOISY_STDERR_c245' "$noisy_evidence"; then
+            echo 'stderr payload leaked into evidence file' >&2
+            exit 1
+          fi
+
+      - name: C4 evidence-output path collision is rejected without overwrite
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/p8-a3-4-consumer"
+          collision="$work/workload-owned.bin"
+
+          set +e
+          target/debug/execsurface observe \
+            --evidence-output "$collision" \
+            -- /bin/sh -c "printf 'WORKLOAD-STATE' > '$collision'" \
+            > "$work/collision.stdout" 2> "$work/collision.stderr"
+          rc=$?
+          set -e
+
+          test "$rc" -eq 2
+          test "$(cat "$collision")" = "WORKLOAD-STATE"
+          grep -F "evidence output path overlaps observed workload path" "$work/collision.stderr"
+
+      - name: C4 evidence write failure is explicit and does not imply rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/p8-a3-4-consumer"
+          marker="$work/workload-side-effect.bin"
+
+          set +e
+          target/debug/execsurface observe \
+            --evidence-output "$work" \
+            -- /bin/sh -c "printf 'TARGET-RAN' > '$marker'" \
+            > "$work/write-failure.stdout" 2> "$work/write-failure.stderr"
+          rc=$?
+          set -e
+
+          test "$rc" -eq 2
+          test "$(cat "$marker")" = "TARGET-RAN"
+          grep -F "cannot write typed evidence report" "$work/write-failure.stderr"
+
+      - name: C5 privacy sentinel and legacy no-flag contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/p8-a3-4-consumer"
+          sentinel="P8_A3_4_ARGV_ONLY_SECRET_f43a90"
+
+          target/debug/execsurface observe \
+            --evidence-output "$work/privacy-evidence.json" \
+            -- /bin/true "$sentinel" \
+            > "$work/privacy-raw.json"
+
+          if grep -F "$sentinel" "$work/privacy-evidence.json"; then
+            echo 'argv-only sentinel leaked into typed evidence' >&2
+            exit 1
+          fi
+
+          target/debug/execsurface observe -- /bin/true > "$work/legacy-raw.json"
+          python3 - "$work/legacy-raw.json" <<'PY'
+          import json, sys
+          raw=json.load(open(sys.argv[1]))
+          assert set(raw) == {"schema_version","backend","complete","outcome","events","warnings"}
+          assert raw["schema_version"] == 2
+          assert "report_kind" not in raw
+          assert "collection_health" not in raw
+          PY
+
+      - name: Retain consumer-contract evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: p8-a3-4-consumer-contract-${{ github.sha }}
+          path: ${{ runner.temp }}/p8-a3-4-consumer/
+          if-no-files-found: error
+          retention-days: 90
