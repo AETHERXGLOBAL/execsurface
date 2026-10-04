@@ -1,0 +1,153 @@
+name: Experimental Typed-Evidence Trial
+
+description: Submit the preserved initial result from the unreleased typed-evidence external trial packet.
+title: "[Typed Evidence Trial] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This template is for the experimental, unreleased typed-evidence trial pinned by P8-A3.5.
+
+        Negative, partial, unsupported, verifier-rejected and no-fit results are valid.
+
+        Preserve the initial result before AETHER X troubleshooting. Do not paste secrets, credentials, private source, environment values, file contents, stdin, network payloads, or sensitive paths. Raw typed evidence is not required publicly.
+
+  - type: checkboxes
+    id: initial
+    attributes:
+      label: Initial-result declaration
+      options:
+        - label: I am reporting the initial result before any AETHER X troubleshooting changed the attempt.
+          required: true
+        - label: I understand this submission does not automatically establish validation, adoption, P8-A1, P8-A4, or P9.5 qualification.
+          required: true
+
+  - type: dropdown
+    id: relationship
+    attributes:
+      label: Relationship to AETHER X / ExecSurface
+      options:
+        - Unaffiliated
+        - Upstream or ecosystem maintainer
+        - User or evaluator
+        - Prior contact, no project role
+        - Contributor to ExecSurface
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: assistance
+    attributes:
+      label: Assistance before the initial result
+      options:
+        - ZERO_ASSISTANCE
+        - DOCS_ONLY_CLARIFICATION
+        - ASSISTED
+        - COLLABORATIVE
+    validations:
+      required: true
+
+  - type: input
+    id: packet_sha
+    attributes:
+      label: Trial packet revision
+      description: Exact packet SHA from the P8-A3.5 closeout.
+      placeholder: 40-character Git SHA
+    validations:
+      required: true
+
+  - type: input
+    id: target_sha
+    attributes:
+      label: Frozen product source SHA
+      value: cea214244d7efe05fea2108a5f5d8ed6287d9a3f
+    validations:
+      required: true
+
+  - type: input
+    id: workload
+    attributes:
+      label: Workload / repository
+      description: Public URL if safe, otherwise a non-sensitive description.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: workload_origin
+    attributes:
+      label: Workload origin
+      options:
+        - Evaluator's own project
+        - Public project independently selected by evaluator
+        - Private project, non-sensitive description only
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, kernel, architecture, and relevant CI/VM/container context.
+      placeholder: Ubuntu 24.04, Linux 6.x, x86_64
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Privacy-minimized trial summary
+      description: Paste trial-summary.json only after reviewing it. Do not paste raw typed evidence unless you have reviewed paths and it is safe.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: consumer
+    attributes:
+      label: Consumer report
+      description: Paste consumer-report.json if it exists.
+      render: json
+
+  - type: textarea
+    id: observations
+    attributes:
+      label: Problems, surprises, false claims, friction, or no-fit observations
+      description: Include suspected false completeness/effects, missing/noisy effects, setup/permission/privacy/performance friction, or state "None observed".
+    validations:
+      required: true
+
+  - type: dropdown
+    id: fit
+    attributes:
+      label: Fit assessment
+      options:
+        - USEFUL_FIT
+        - USEFUL_BUT_NOISY
+        - INCOMPLETE_FOR_WORKLOAD
+        - UNSUPPORTED
+        - FALSE_REVIEW
+        - SUSPECTED_FALSE_PASS_OR_COUNTEREXAMPLE
+        - OPERATIONALLY_TOO_COSTLY
+        - NO_FIT_OR_REDUNDANT
+        - INCONCLUSIVE
+    validations:
+      required: true
+
+  - type: dropdown
+    id: sensitive
+    attributes:
+      label: Security-sensitive finding?
+      options:
+        - "no"
+        - "uncertain — I will use SECURITY.md instead"
+        - "yes — I will use SECURITY.md instead"
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence_locator
+    attributes:
+      label: Safe evidence hashes / locator
+      description: Optional hashes or safe public locator. Raw evidence is not required publicly.
