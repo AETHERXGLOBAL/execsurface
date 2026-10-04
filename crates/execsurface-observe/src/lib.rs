@@ -664,6 +664,5 @@ mod api_tests {
     }
 }
 
-
 #[cfg(test)]
 mod p8_a3_typed_report;
