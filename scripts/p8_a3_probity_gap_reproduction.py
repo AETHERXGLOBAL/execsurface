@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce the bounded P8-A3 Alpha.5 raw-evidence interoperability gap.
+"""Reproduce the bounded P8-A3 Alpha.5 raw-evidence interoperability gap (#145).
 
 This is evidence-only. It does not change ExecSurface product semantics.
 """
