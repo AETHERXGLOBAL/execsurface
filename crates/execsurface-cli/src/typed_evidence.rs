@@ -2,9 +2,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use execsurface_model::{FileOperation, RawEvent, RawEventKind};
-use execsurface_observe::{
-    BackendObservation, CollectionCompleteness, ObservationCapability,
-};
+use execsurface_observe::{BackendObservation, CollectionCompleteness, ObservationCapability};
 use serde_json::{json, Value};
 
 const EVIDENCE_SCHEMA_VERSION: u32 = 1;
@@ -129,8 +127,9 @@ pub(crate) fn build_report(input: &BackendObservation) -> Result<Value, String> 
             );
         }
 
-        let actor = prior_exec_path(&input.observation.events, event)
-            .ok_or_else(|| "typed evidence cannot bind fd-write effect to an executable".to_owned())?;
+        let actor = prior_exec_path(&input.observation.events, event).ok_or_else(|| {
+            "typed evidence cannot bind fd-write effect to an executable".to_owned()
+        })?;
 
         effects.push((
             event.sequence,
@@ -210,15 +209,18 @@ pub(crate) fn write_report(path: &Path, input: &BackendObservation) -> Result<()
     let mut bytes = serde_json::to_vec_pretty(&report)
         .map_err(|error| format!("cannot serialize typed evidence report: {error}"))?;
     bytes.push(b'\n');
-    std::fs::write(path, bytes)
-        .map_err(|error| format!("cannot write typed evidence report {}: {error}", path.display()))
+    std::fs::write(path, bytes).map_err(|error| {
+        format!(
+            "cannot write typed evidence report {}: {error}",
+            path.display()
+        )
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use execsurface_model::{
-        BackendMetadata, CommandOutcome, Observation, ObserverWarning, RawEvent,
-        SpawnMechanism,
+        BackendMetadata, CommandOutcome, Observation, ObserverWarning, RawEvent, SpawnMechanism,
     };
     use execsurface_observe::{reference_backend_descriptor, BackendDescriptor};
 
@@ -335,10 +337,7 @@ mod tests {
         });
         input.completeness = CollectionCompleteness::IncompleteAmbiguity;
         let report = build_report(&input).expect("report");
-        assert_eq!(
-            report["collection_health"]["state"],
-            "incomplete_ambiguity"
-        );
+        assert_eq!(report["collection_health"]["state"], "incomplete_ambiguity");
     }
 
     #[test]
