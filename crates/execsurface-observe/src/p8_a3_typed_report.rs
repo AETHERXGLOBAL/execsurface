@@ -265,6 +265,23 @@ mod tests {
         }
     }
 
+    fn collect_object_keys(value: &Value, keys: &mut BTreeSet<String>) {
+        match value {
+            Value::Object(map) => {
+                for (key, nested) in map {
+                    keys.insert(key.clone());
+                    collect_object_keys(nested, keys);
+                }
+            }
+            Value::Array(values) => {
+                for nested in values {
+                    collect_object_keys(nested, keys);
+                }
+            }
+            _ => {}
+        }
+    }
+
     #[test]
     fn p8_a3_r0_r1_report_is_deterministic_and_bounded() {
         let input = synthetic_complete("/tmp/target.bin");
@@ -279,7 +296,8 @@ mod tests {
         assert_eq!(first["collection_health"]["pass_eligible"], true);
         assert_eq!(first["effects"].as_array().expect("effects").len(), 1);
 
-        let encoded = serde_json::to_string(&first).expect("serialize report");
+        let mut object_keys = BTreeSet::new();
+        collect_object_keys(&first, &mut object_keys);
         for forbidden in [
             "bytes_transferred",
             "byte_count",
@@ -288,7 +306,10 @@ mod tests {
             "beforeRoot",
             "afterRoot",
         ] {
-            assert!(!encoded.contains(forbidden), "must not invent {forbidden}");
+            assert!(
+                !object_keys.contains(forbidden),
+                "must not invent field {forbidden}"
+            );
         }
     }
 
