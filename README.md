@@ -176,6 +176,20 @@ Independent external validation remains open as additional evidence rather than 
 
 Public findings can be reported through **[Issue #118 — Alpha.5 Independent External Validation & Post-Release Review](https://github.com/AETHERXGLOBAL/execsurface/issues/118)**. Negative, partial, unsupported-environment, usability and performance-problem results are welcome. Internal qualification is not evidence of independent adoption or external validation.
 
+## Selected external technical engagement
+
+ExecSurface is developed under an evidence-first rule: external technical discussion is useful signal, but it is not automatically product validation or adoption.
+
+Selected public records:
+
+- **NVIDIA OpenShell — execution-generation lifecycle safety:** AETHER X contributed execution-generation, idempotency and fail-closed conditional-action invariants to [OpenShell #4009](https://github.com/NVIDIA/OpenShell/issues/4009). The issue author subsequently published a live SDK reproduction of the stale-target class across stop/start and delete/recreate. [Impact record #161](https://github.com/AETHERXGLOBAL/execsurface/issues/161).
+- **OpenAI Codex — thread identity / control-surface addressability:** AETHER X contributed identity/placement and routing-contract analysis to [Codex #49729](https://github.com/openai/codex/issues/49729). Independent Windows and macOS reports supplied positive controls showing target conversations could remain valid through native/helper routes while the parent route still failed. [Impact record #162](https://github.com/AETHERXGLOBAL/execsurface/issues/162).
+- **OpenAI Codex — daemon execution continuity:** AETHER X separated daemon reachability from restoration of the same in-flight execution in [Codex #50299](https://github.com/openai/codex/issues/50299); the external reporter confirmed the distinction matched the observed failure and an OpenAI maintainer later reported a fix path. [Impact record #160](https://github.com/AETHERXGLOBAL/execsurface/issues/160).
+
+These records establish technical engagement and, where stated, external reproduction or acknowledgement of the underlying problem framing. They do **not** establish NVIDIA/OpenAI adoption, endorsement, integration or independent validation of ExecSurface.
+
+For the company-level evidence summary, see the **[AETHER X GLOBAL organization profile](https://github.com/AETHERXGLOBAL#selected-external-technical-impact)**.
+
 ## Distribution and verification
 
 The supported Alpha distribution surfaces are:
