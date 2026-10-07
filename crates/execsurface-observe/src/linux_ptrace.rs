@@ -65,6 +65,8 @@ struct FdEntry {
 enum PendingSyscall {
     Open {
         cloexec: bool,
+        lexical_path: String,
+        flags: u64,
     },
     Io {
         operation: FileOperation,
@@ -1233,10 +1235,25 @@ fn handle_syscall_exit(
     };
 
     match pending {
-        PendingSyscall::Open { cloexec } if result >= 0 => {
+        PendingSyscall::Open {
+            cloexec,
+            lexical_path,
+            flags,
+        } if result >= 0 => {
             let fd = result as i32;
             match proc_fd_path(tid, fd) {
-                Ok(path) => fd_tables.insert_fd(table_id, fd, FdEntry { path, cloexec }),
+                Ok(path) => {
+                    if open_has_immediate_filesystem_effect(flags) && path != lexical_path {
+                        collector.warning(
+                            tid,
+                            "side_effectful_open_identity_divergence",
+                            format!(
+                                "successful side-effectful open used lexical path {lexical_path:?}, but the returned fd resolves to kernel object path {path:?}; raw observation v2 cannot serialize a dedicated successful-open object identity, so this observation is incomplete"
+                            ),
+                        );
+                    }
+                    fd_tables.insert_fd(table_id, fd, FdEntry { path, cloexec });
+                }
                 Err(error) => collector.warning(
                     tid,
                     "opened_fd_path_unreadable",
@@ -1313,6 +1330,13 @@ fn handle_syscall_exit(
         | PendingSyscall::SetFdFlags { .. }
         | PendingSyscall::Rename { .. } => {}
     }
+}
+
+fn open_has_immediate_filesystem_effect(flags: u64) -> bool {
+    let flags = flags as i32;
+    flags & libc::O_TRUNC != 0
+        || flags & libc::O_CREAT != 0
+        || flags & libc::O_TMPFILE == libc::O_TMPFILE
 }
 
 fn recover_fd_after_unknown_dup(
@@ -1417,6 +1441,7 @@ fn record_open_entry(
         .and_then(|path| resolve_user_path(tid, dirfd, path))
     {
         Ok(path) => {
+            let lexical_path = path.clone();
             if openat2 {
                 collector.event(
                     tid,
@@ -1441,6 +1466,8 @@ fn record_open_entry(
                 tid,
                 PendingSyscall::Open {
                     cloexec: flags as i32 & libc::O_CLOEXEC != 0,
+                    lexical_path,
+                    flags,
                 },
             );
         }
