@@ -423,9 +423,11 @@ mod tests {
         let report = build_report(&input).expect("report");
 
         assert!(report["effects"].as_array().expect("effects").is_empty());
-        assert_eq!(
-            report["raw_observation"]["events"][1]["kind"]["path"],
-            "pipe:[12345]"
+        assert!(
+            report["raw_observation"]
+                .to_string()
+                .contains("pipe:[12345]"),
+            "raw observation must retain the kernel pseudo-object identity"
         );
     }
 

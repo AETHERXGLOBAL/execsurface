@@ -39,6 +39,23 @@ set +e
 pass_output="$("$candidate_bin" check --baseline alpha5.lock.json --json-output pass-report.json -- /bin/bash -lc true 2>&1)"
 pass_status=$?
 set -e
+if [[ "$pass_status" -ne 0 ]]; then
+  printf 'P9.3 diagnostic: candidate failed Alpha.5 PASS compatibility (status=%s)\n' "$pass_status" >&2
+  printf '%s\n' "$pass_output" >&2
+  if [[ -s pass-report.json ]]; then
+    printf '%s\n' '--- candidate pass-report.json ---' >&2
+    cat pass-report.json >&2
+  fi
+  printf '%s\n' '--- Alpha.5 baseline canonical file effects ---' >&2
+  python - <<'PY' >&2
+import json
+from pathlib import Path
+lock = json.loads(Path("alpha5.lock.json").read_text())
+for effect in lock["payload"]["canonical_surface"]["effects"]:
+    if effect.get("event_type") == "file_path_access":
+        print(json.dumps(effect, sort_keys=True))
+PY
+fi
 test "$pass_status" -eq 0
 grep -F "ExecSurface: PASS" <<<"$pass_output"
 python - <<'PY'
