@@ -90,6 +90,10 @@ fn validate_boundary(input: &BackendObservation) -> Result<(), String> {
     Ok(())
 }
 
+fn is_filesystem_kernel_fd_path(path: &str) -> bool {
+    path.starts_with('/')
+}
+
 fn prior_exec_path(events: &[RawEvent], effect: &RawEvent) -> Option<String> {
     events
         .iter()
@@ -120,6 +124,10 @@ pub(crate) fn build_report(input: &BackendObservation) -> Result<Value, String> 
         else {
             continue;
         };
+
+        if !is_filesystem_kernel_fd_path(path) {
+            continue;
+        }
 
         if !fd_effect_capable {
             return Err(
@@ -255,6 +263,10 @@ fn ensure_output_path_disjoint(path: &Path, input: &BackendObservation) -> Resul
         else {
             continue;
         };
+
+        if !is_filesystem_kernel_fd_path(observed_path) {
+            continue;
+        }
 
         let observed = path_identity(Path::new(observed_path))?;
         if observed == output {
@@ -403,6 +415,18 @@ mod tests {
         input.completeness = CollectionCompleteness::IncompleteAmbiguity;
         let report = build_report(&input).expect("report");
         assert_eq!(report["collection_health"]["state"], "incomplete_ambiguity");
+    }
+
+    #[test]
+    fn kernel_pseudo_fd_write_is_retained_raw_but_not_promoted_to_file_effect() {
+        let input = complete_input("pipe:[12345]");
+        let report = build_report(&input).expect("report");
+
+        assert!(report["effects"].as_array().expect("effects").is_empty());
+        assert_eq!(
+            report["raw_observation"]["events"][1]["kind"]["path"],
+            "pipe:[12345]"
+        );
     }
 
     #[test]

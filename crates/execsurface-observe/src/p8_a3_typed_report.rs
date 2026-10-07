@@ -83,6 +83,10 @@ fn validate_internal_boundary(input: &BackendObservation) -> Result<(), &'static
     Ok(())
 }
 
+fn is_filesystem_kernel_fd_path(path: &str) -> bool {
+    path.starts_with('/')
+}
+
 fn prior_exec_path(events: &[RawEvent], write: &RawEvent) -> Option<String> {
     events
         .iter()
@@ -113,6 +117,10 @@ fn build_typed_report(input: &BackendObservation) -> Result<Value, &'static str>
         else {
             continue;
         };
+
+        if !is_filesystem_kernel_fd_path(path) {
+            continue;
+        }
 
         if !fd_effect_capable {
             return Err("fd-effect-capability-mismatch");
@@ -420,6 +428,14 @@ mod tests {
 
         let report = build_typed_report(&input).expect("report");
         assert_eq!(report["effects"].as_array().expect("effects").len(), 2);
+    }
+
+    #[test]
+    fn p8_a3_kernel_pseudo_fd_write_is_not_promoted_to_file_effect() {
+        let input = synthetic_complete("pipe:[12345]");
+        let report = build_typed_report(&input).expect("report");
+
+        assert!(report["effects"].as_array().expect("effects").is_empty());
     }
 
     #[test]
