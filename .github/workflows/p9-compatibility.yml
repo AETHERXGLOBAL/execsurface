@@ -91,9 +91,11 @@ jobs:
           sha256sum "$GITHUB_WORKSPACE/p9-candidate.lock.json" > "$RUNNER_TEMP/p9-candidate.lock.sha256"
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
-          alpha = json.loads(Path("p9-alpha5.lock.json").read_text())
-          candidate = json.loads(Path("p9-candidate.lock.json").read_text())
+          workspace = Path(os.environ["GITHUB_WORKSPACE"])
+          alpha = json.loads((workspace / "p9-alpha5.lock.json").read_text())
+          candidate = json.loads((workspace / "p9-candidate.lock.json").read_text())
           assert alpha["payload"]["canonical_surface"]["normalization"]["profile_version"] == 3
           assert candidate["payload"]["canonical_surface"]["normalization"]["profile_version"] == 4
           PY
