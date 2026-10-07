@@ -173,3 +173,19 @@ fn r2_control_bash_true_remains_complete_for_supported_behavior() {
         observation.warnings
     );
 }
+
+#[test]
+fn r2_control_echo_devnull_remains_complete_for_supported_behavior() {
+    let observation = observe_command(
+        &CommandSpec::new("/bin/sh")
+            .arg("-c")
+            .arg("true; /bin/echo x >/dev/null"),
+    )
+    .expect("observe redirected compatibility control");
+
+    assert!(
+        observation.complete,
+        "ordinary redirected echo became incomplete under R2: {:?}",
+        observation.warnings
+    );
+}
