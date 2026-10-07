@@ -16,6 +16,21 @@ A future stable release must not silently reinterpret a baseline, policy, verdic
 
 When safe compatibility cannot be established, explicit rejection is preferred to silent reinterpretation.
 
+### Stage-2 R2 correctness boundary
+
+The external Stage-2 falsification reproduced a stale file-descriptor attribution defect in the Alpha.5 observer: a successful `dup2`/equivalent replacement from an untracked source could leave the old destination identity authoritative. The R2 correction changes canonical equality because phantom fd-attributed file effects disappear and newly recovered non-filesystem kernel objects remain raw evidence rather than filesystem effects.
+
+Accordingly, the corrected development line uses normalization profile `4` while Alpha.5 baselines remain profile `3`. This is an explicit semantic boundary, not a rewrite of Alpha.5 history:
+
+- Alpha.5 lock schema `2` remains parseable and self-verifiable;
+- a profile-3 Alpha.5 baseline is not silently reinterpreted under profile 4;
+- candidate `check` rejects profile-3/profile-4 comparison as incomparable with exit code `2`;
+- profile-4 baselines are learned explicitly under corrected semantics;
+- no automatic baseline migration or relearning is permitted;
+- the exact Alpha.5 binary remains able to consume its original profile-3 baseline for rollback and reproduction.
+
+The P9.3 gate also contains a cross-version executable probe that must continue proving that Alpha.5 reproduces the stale-destination phantom write while profile 4 does not.
+
 ## Candidate stable contract for v1
 
 ### 1. Verdict and exit codes
@@ -44,7 +59,7 @@ Current public baseline facts at contract freeze:
 
 Candidate v1 requirements:
 
-1. A valid baseline-v2 lock produced by the supported Alpha.5/v0.1 public path must remain readable by v1.0 **when the stored semantics remain compatible with the qualified v1 public reference observer**.
+1. A valid baseline-v2 lock produced by the supported Alpha.5/v0.1 public path must remain readable by v1.0. When the stored semantics remain compatible with the qualified v1 public reference observer it may be consumed directly; when a versioned semantic correction makes it incompatible, it must be rejected explicitly rather than reinterpreted. The Stage-2 R2 profile-3/profile-4 boundary is such a correction.
 2. Unsupported schema, digest, canonical-surface, observer, or semantic states must fail explicitly.
 3. Reading an old baseline must not mutate it.
 4. No automatic baseline relearning is an upgrade mechanism.
@@ -170,14 +185,16 @@ Bug fixes are not automatically breaking merely because alpha behavior differed.
 
 P9.3 remains OPEN until executable evidence covers this contract. Required proof set:
 
-1. **Golden Alpha.5 baseline-v2 fixture** consumed successfully by candidate v1 code under the preserved reference semantics.
-2. **Unsupported-schema rejection fixtures** proving no silent migration/reinterpretation.
-3. **Verdict/exit regression** for PASS `0`, ERROR `2`, REVIEW `10`, BLOCK `20`.
-4. **Policy/report version regression** including unknown/unsupported input failure behavior.
-5. **GitHub Action contract test** for stable candidate inputs/outputs and verdict enforcement.
-6. **Upgrade rehearsal** from the frozen current public line to a frozen v1 release candidate.
-7. **Rollback rehearsal** back to the previously qualified release path without mutating user evidence.
-8. **Experimental-surface anti-drift review** proving experimental libbpf/research capabilities were not accidentally promoted.
+1. **Golden Alpha.5 baseline-v2 fixture** verified as immutable history, with explicit profile-3/profile-4 rejection where Stage-2 R2 changed semantics, plus exact-Alpha.5 rollback consumption.
+2. **Profile-4 self-compatibility fixture** proving corrected candidate semantics can learn/check deterministically without baseline mutation.
+3. **Stage-2 R2 cross-version counterexample** proving Alpha.5 emits the stale-destination phantom write and profile 4 removes it while the kernel victim remains untouched.
+4. **Unsupported-schema rejection fixtures** proving no silent migration/reinterpretation.
+5. **Verdict/exit regression** for PASS `0`, ERROR `2`, REVIEW `10`, BLOCK `20`.
+6. **Policy/report version regression** including unknown/unsupported input failure behavior.
+7. **GitHub Action contract test** for stable candidate inputs/outputs and verdict enforcement.
+8. **Upgrade rehearsal** from the frozen current public line to a frozen v1 release candidate, including explicit semantic-boundary handling.
+9. **Rollback rehearsal** back to the previously qualified release path without mutating user evidence.
+10. **Experimental-surface anti-drift review** proving experimental libbpf/research capabilities were not accidentally promoted.
 
 Historical M12.2 evidence is relevant starting evidence, but it does not by itself qualify an unreleased v1 candidate.
 
