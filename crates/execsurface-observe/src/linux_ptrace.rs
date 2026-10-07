@@ -1446,11 +1446,7 @@ fn emit_fd_access(
     );
 }
 
-fn check_mutating_fd_object_authority(
-    tid: libc::pid_t,
-    fd: i32,
-    collector: &mut Collector,
-) {
+fn check_mutating_fd_object_authority(tid: libc::pid_t, fd: i32, collector: &mut Collector) {
     match proc_fd_object_metadata(tid, fd) {
         Ok(object) if object.file_type == libc::S_IFREG && object.nlink > 1 => collector.warning(
             tid,
