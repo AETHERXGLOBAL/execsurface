@@ -81,7 +81,7 @@ jobs:
         run: |
           cargo test --locked -p execsurface-observe \
             --test stage2_external_falsification \
-            r2_control_bash_true_remains_complete_for_supported_behavior -- --nocapture
+            r2_control_ -- --nocapture
 
       - name: Run bounded adversarial suite
         shell: bash
