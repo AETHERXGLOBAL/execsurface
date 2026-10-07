@@ -126,7 +126,7 @@ fn r2_dup2_same_fd_is_a_noop_for_tracked_identity() {
 }
 
 #[test]
-fn r2_shared_fd_table_unknown_io_must_not_claim_authoritative_identity() {
+fn r2_shared_fd_table_unknown_io_remains_fail_closed_by_public_guard() {
     let fixture = env!("CARGO_BIN_EXE_execsurface-fixture");
     let observation =
         observe_command(&CommandSpec::new(fixture).arg("stage2-shared-untracked-fd-write"))
@@ -142,18 +142,18 @@ fn r2_shared_fd_table_unknown_io_must_not_claim_authoritative_identity() {
             } if path.starts_with("pipe:[")
         )
     });
-    let concurrency_warning = observation
+    let shared_guard = observation
         .warnings
         .iter()
-        .any(|warning| warning.code == "shared_fd_concurrency_ambiguous");
+        .any(|warning| warning.code == "shared_fd_table_ambiguity");
 
     assert!(
         represented_pipe_write,
         "the observer should retain the best-effort kernel pseudo-object identity as raw evidence"
     );
     assert!(
-        concurrency_warning,
-        "per-thread ptrace restart cannot certify shared-FD-table attribution as race-free"
+        shared_guard,
+        "the existing public raw-v2 shared-fd ambiguity guard must remain explicit"
     );
     assert!(
         !observation.complete,
