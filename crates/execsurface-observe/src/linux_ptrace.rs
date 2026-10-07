@@ -2002,7 +2002,7 @@ mod tests {
                 cloexec: false,
             },
         );
-        tables.duplicate(shared_id, 9, 10, false);
+        tables.duplicate(shared_id, 9, 10, None, false);
         assert_eq!(
             tables.fd(shared_id, 10).expect("dup fd").path.as_deref(),
             Some("/tmp/c1-old")
