@@ -124,3 +124,40 @@ fn r2_dup2_same_fd_is_a_noop_for_tracked_identity() {
         "same-fd dup2 must preserve the tracked kernel identity used by the subsequent write"
     );
 }
+
+#[test]
+fn r2_shared_fd_table_unknown_io_must_not_claim_authoritative_identity() {
+    let fixture = env!("CARGO_BIN_EXE_execsurface-fixture");
+    let observation =
+        observe_command(&CommandSpec::new(fixture).arg("stage2-shared-untracked-fd-write"))
+            .expect("observe shared fd-table falsification fixture");
+
+    let represented_pipe_write = observation.events.iter().any(|event| {
+        matches!(
+            &event.kind,
+            RawEventKind::FileDescriptorAccess {
+                operation: FileOperation::Write,
+                path,
+                ..
+            } if path.starts_with("pipe:[")
+        )
+    });
+    let concurrency_warning = observation
+        .warnings
+        .iter()
+        .any(|warning| warning.code == "shared_fd_concurrency_ambiguous");
+
+    assert!(
+        represented_pipe_write,
+        "the observer should retain the best-effort kernel pseudo-object identity as raw evidence"
+    );
+    assert!(
+        concurrency_warning,
+        "per-thread ptrace restart cannot certify shared-FD-table attribution as race-free"
+    );
+    assert!(
+        !observation.complete,
+        "shared-FD-table attribution must fail closed until concurrent table mutation is serialized or observed atomically"
+    );
+}
+
