@@ -136,10 +136,8 @@ fn r3_curdir_spelling_does_not_invent_object_identity_divergence() {
 
 #[test]
 fn r3_hardlink_truncate_must_not_be_complete_with_path_only_identity() {
-    let root = std::env::temp_dir().join(format!(
-        "execsurface-stage2-r3-hardlink-{}",
-        process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("execsurface-stage2-r3-hardlink-{}", process::id()));
     let workspace = root.join("workspace");
     let target = root.join("credential");
     let alias = workspace.join("alias");
@@ -177,15 +175,25 @@ fn r3_hardlink_truncate_must_not_be_complete_with_path_only_identity() {
 
     let _ = fs::remove_dir_all(&root);
 
-    assert_eq!(target_after.len(), 0, "target inode must actually be truncated");
-    assert_eq!(alias_after.len(), 0, "alias must expose the same truncated inode");
+    assert_eq!(
+        target_after.len(),
+        0,
+        "target inode must actually be truncated"
+    );
+    assert_eq!(
+        alias_after.len(),
+        0,
+        "alias must expose the same truncated inode"
+    );
     assert_eq!(target_after.dev(), alias_after.dev());
     assert_eq!(target_after.ino(), alias_after.ino());
-    assert!(lexical_attempt_retained, "lexical open intent must remain visible");
+    assert!(
+        lexical_attempt_retained,
+        "lexical open intent must remain visible"
+    );
     assert!(
         !observation.complete,
         "path-string agreement alone cannot certify the identity of a side-effected kernel object when a hard-link alias exists: {:?}",
         observation.warnings
     );
 }
-
