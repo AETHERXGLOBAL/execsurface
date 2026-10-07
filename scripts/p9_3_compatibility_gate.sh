@@ -42,6 +42,36 @@ set -e
 if [ "$pass_status" -ne 0 ]; then
   printf 'candidate_alpha5_pass_status=%s\n' "$pass_status"
   printf '%s\n' "$pass_output"
+
+  "$alpha5_bin" observe -- /bin/bash -lc true > alpha5-observe.json
+  "$candidate_bin" observe -- /bin/bash -lc true > candidate-observe.json
+  python - alpha5-observe.json candidate-observe.json <<'PY'
+import json
+import sys
+
+for label, path in zip(("alpha5", "candidate"), sys.argv[1:]):
+    data = json.load(open(path, encoding="utf-8"))
+    events = data.get("events", [])
+    exec_by_tid = {}
+    relevant = []
+    for event in events:
+        tid = event.get("tid")
+        kind = event.get("event_type")
+        if kind == "process_exec":
+            exec_by_tid[tid] = event.get("path")
+        elif kind == "file_descriptor_access":
+            target = event.get("path", "")
+            if target == "/dev/null" or target.startswith(("pipe:[", "socket:[", "anon_inode:")):
+                relevant.append({
+                    "sequence": event.get("sequence"),
+                    "tid": tid,
+                    "actor": exec_by_tid.get(tid),
+                    "operation": event.get("operation"),
+                    "fd": event.get("fd"),
+                    "path": target,
+                })
+    print(f"{label}_fd_identity_diagnostic={json.dumps(relevant, sort_keys=True)}")
+PY
 fi
 test "$pass_status" -eq 0
 grep -F "ExecSurface: PASS" <<<"$pass_output"
