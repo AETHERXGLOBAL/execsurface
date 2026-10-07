@@ -194,6 +194,59 @@ fn main() {
             read.join().expect("read thread");
             assert_eq!(unsafe { libc::close(fd) }, 0, "close final shared fd");
         }
+        Some("stage2-dup2-untracked-write") => {
+            let victim_path = args.next().expect("victim file path");
+            let victim = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(victim_path)
+                .expect("open victim file");
+            let victim_fd = victim.as_raw_fd();
+
+            let mut pipe_fds = [-1_i32; 2];
+            assert_eq!(
+                unsafe { libc::pipe(pipe_fds.as_mut_ptr()) },
+                0,
+                "create untracked pipe"
+            );
+            assert_eq!(
+                unsafe { libc::dup2(pipe_fds[1], victim_fd) },
+                victim_fd,
+                "dup2 untracked pipe over tracked victim fd"
+            );
+            let byte = [b'x'];
+            assert_eq!(
+                unsafe { libc::write(victim_fd, byte.as_ptr().cast(), byte.len()) },
+                1,
+                "write through replaced destination fd"
+            );
+            assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0, "close pipe read end");
+            assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0, "close pipe write end");
+        }
+        Some("stage2-stderr-write") => {
+            let byte = [b'x'];
+            assert_eq!(
+                unsafe {
+                    libc::write(
+                        libc::STDERR_FILENO,
+                        byte.as_ptr().cast(),
+                        byte.len(),
+                    )
+                },
+                1,
+                "write one byte to inherited stderr"
+            );
+        }
+        Some("stage2-symlink-truncate") => {
+            let link_path = args.next().expect("symlink path");
+            let file = OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(link_path)
+                .expect("open symlink target with truncate");
+            drop(file);
+        }
         Some("burst") => {
             let dir = args.next().expect("directory");
             let count: usize = args.next().expect("count").parse().expect("count");
