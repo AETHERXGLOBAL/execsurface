@@ -259,8 +259,16 @@ fn main() {
                 1,
                 "write through dup3-replaced destination fd"
             );
-            assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0, "close pipe read end");
-            assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0, "close pipe write end");
+            assert_eq!(
+                unsafe { libc::close(pipe_fds[0]) },
+                0,
+                "close pipe read end"
+            );
+            assert_eq!(
+                unsafe { libc::close(pipe_fds[1]) },
+                0,
+                "close pipe write end"
+            );
         }
         Some("stage2-fcntl-dupfd-untracked-write") => {
             let mut pipe_fds = [-1_i32; 2];
@@ -269,8 +277,7 @@ fn main() {
                 0,
                 "create untracked pipe"
             );
-            let duplicated_fd =
-                unsafe { libc::fcntl(pipe_fds[1], libc::F_DUPFD_CLOEXEC, 64) };
+            let duplicated_fd = unsafe { libc::fcntl(pipe_fds[1], libc::F_DUPFD_CLOEXEC, 64) };
             assert!(duplicated_fd >= 0, "F_DUPFD_CLOEXEC must succeed");
             let byte = *b"x";
             assert_eq!(
@@ -278,9 +285,21 @@ fn main() {
                 1,
                 "write through fcntl-duplicated fd"
             );
-            assert_eq!(unsafe { libc::close(duplicated_fd) }, 0, "close duplicated fd");
-            assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0, "close pipe read end");
-            assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0, "close pipe write end");
+            assert_eq!(
+                unsafe { libc::close(duplicated_fd) },
+                0,
+                "close duplicated fd"
+            );
+            assert_eq!(
+                unsafe { libc::close(pipe_fds[0]) },
+                0,
+                "close pipe read end"
+            );
+            assert_eq!(
+                unsafe { libc::close(pipe_fds[1]) },
+                0,
+                "close pipe write end"
+            );
         }
         Some("stage2-dup2-same-fd-write") => {
             let path = args.next().expect("file path");

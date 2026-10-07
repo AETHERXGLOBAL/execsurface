@@ -1274,14 +1274,7 @@ fn handle_syscall_exit(
         PendingSyscall::Dup { old_fd, cloexec } if result >= 0 => {
             let new_fd = result as i32;
             if !fd_tables.duplicate(table_id, old_fd, new_fd, cloexec) {
-                recover_fd_after_unknown_dup(
-                    tid,
-                    table_id,
-                    new_fd,
-                    cloexec,
-                    fd_tables,
-                    collector,
-                );
+                recover_fd_after_unknown_dup(tid, table_id, new_fd, cloexec, fd_tables, collector);
             }
         }
         PendingSyscall::DupTo {
