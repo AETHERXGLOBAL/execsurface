@@ -200,12 +200,23 @@ impl FdTables {
         self.tables.get(&table_id)?.get(&fd)
     }
 
-    fn duplicate(&mut self, table_id: u64, old_fd: i32, new_fd: i32, cloexec: bool) {
-        let Some(mut entry) = self.fd(table_id, old_fd).cloned() else {
-            return;
+    fn duplicate(&mut self, table_id: u64, old_fd: i32, new_fd: i32, cloexec: bool) -> bool {
+        let entry = self.fd(table_id, old_fd).cloned();
+
+        // A successful dup2/dup3 atomically replaces new_fd. Snapshot the source
+        // first, then retire any distinct destination identity before deciding
+        // whether the source was tracked. This prevents an unknown source from
+        // leaving a stale path authoritative at the destination.
+        if old_fd != new_fd {
+            self.remove_fd(table_id, new_fd);
+        }
+
+        let Some(mut entry) = entry else {
+            return false;
         };
         entry.cloexec = cloexec;
         self.insert_fd(table_id, new_fd, entry);
+        true
     }
 
     fn set_cloexec(&mut self, table_id: u64, fd: i32, cloexec: bool) {
@@ -1261,7 +1272,17 @@ fn handle_syscall_exit(
             fd_tables.close_range(table_id, first, last);
         }
         PendingSyscall::Dup { old_fd, cloexec } if result >= 0 => {
-            fd_tables.duplicate(table_id, old_fd, result as i32, cloexec);
+            let new_fd = result as i32;
+            if !fd_tables.duplicate(table_id, old_fd, new_fd, cloexec) {
+                recover_fd_after_unknown_dup(
+                    tid,
+                    table_id,
+                    new_fd,
+                    cloexec,
+                    fd_tables,
+                    collector,
+                );
+            }
         }
         PendingSyscall::DupTo {
             old_fd,
@@ -1269,7 +1290,17 @@ fn handle_syscall_exit(
             cloexec,
         } if result >= 0 => {
             if old_fd != new_fd {
-                fd_tables.duplicate(table_id, old_fd, result as i32, cloexec);
+                let duplicated_fd = result as i32;
+                if !fd_tables.duplicate(table_id, old_fd, duplicated_fd, cloexec) {
+                    recover_fd_after_unknown_dup(
+                        tid,
+                        table_id,
+                        duplicated_fd,
+                        cloexec,
+                        fd_tables,
+                        collector,
+                    );
+                }
             }
         }
         PendingSyscall::SetFdFlags { fd, flags } if result == 0 => {
@@ -1291,6 +1322,26 @@ fn handle_syscall_exit(
     }
 }
 
+fn recover_fd_after_unknown_dup(
+    tid: libc::pid_t,
+    table_id: u64,
+    fd: i32,
+    cloexec: bool,
+    fd_tables: &mut FdTables,
+    collector: &mut Collector,
+) {
+    match proc_fd_path(tid, fd) {
+        Ok(path) => fd_tables.insert_fd(table_id, fd, FdEntry { path, cloexec }),
+        Err(error) => collector.warning(
+            tid,
+            "duplicated_fd_path_unreadable",
+            format!(
+                "successful fd duplication produced fd {fd}, but the source was untracked and the duplicated kernel fd path was unreadable: {error}"
+            ),
+        ),
+    }
+}
+
 fn emit_fd_access(
     tid: libc::pid_t,
     table_id: u64,
@@ -1299,15 +1350,30 @@ fn emit_fd_access(
     fd_tables: &FdTables,
     collector: &mut Collector,
 ) {
-    let Some(entry) = fd_tables.fd(table_id, fd) else {
-        return;
+    let path = if let Some(entry) = fd_tables.fd(table_id, fd) {
+        entry.path.clone()
+    } else {
+        match proc_fd_path(tid, fd) {
+            Ok(path) => path,
+            Err(error) => {
+                collector.warning(
+                    tid,
+                    "fd_access_path_unreadable",
+                    format!(
+                        "successful {operation:?} on untracked fd {fd} could not be attributed because its kernel fd path was unreadable: {error}"
+                    ),
+                );
+                return;
+            }
+        }
     };
+
     collector.event(
         tid,
         RawEventKind::FileDescriptorAccess {
             operation,
             fd,
-            path: entry.path.clone(),
+            path,
         },
     );
 }
@@ -1899,6 +1965,53 @@ mod tests {
         tables.close_range(shared_id, 9, 10);
         assert!(tables.fd(shared_id, 9).is_none());
         assert!(tables.fd(shared_id, 10).is_none());
+    }
+
+    #[test]
+    fn r2_unknown_dup_source_retires_stale_destination_identity() {
+        let mut tables = FdTables::new();
+        let table_id = tables.root_id();
+        tables.insert_fd(
+            table_id,
+            10,
+            FdEntry {
+                path: "/tmp/r2-stale-destination".to_owned(),
+                cloexec: false,
+            },
+        );
+
+        assert!(!tables.duplicate(table_id, 99, 10, false));
+        assert!(
+            tables.fd(table_id, 10).is_none(),
+            "unknown successful dup source must never leave the replaced destination identity tracked"
+        );
+    }
+
+    #[test]
+    fn r2_known_dup_source_replaces_destination_and_preserves_cloexec_semantics() {
+        let mut tables = FdTables::new();
+        let table_id = tables.root_id();
+        tables.insert_fd(
+            table_id,
+            9,
+            FdEntry {
+                path: "/tmp/r2-source".to_owned(),
+                cloexec: false,
+            },
+        );
+        tables.insert_fd(
+            table_id,
+            10,
+            FdEntry {
+                path: "/tmp/r2-old-destination".to_owned(),
+                cloexec: false,
+            },
+        );
+
+        assert!(tables.duplicate(table_id, 9, 10, true));
+        let duplicated = tables.fd(table_id, 10).expect("duplicated destination");
+        assert_eq!(duplicated.path, "/tmp/r2-source");
+        assert!(duplicated.cloexec);
     }
 
     #[test]

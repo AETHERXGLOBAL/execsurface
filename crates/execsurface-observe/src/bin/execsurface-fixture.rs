@@ -232,6 +232,73 @@ fn main() {
                 "close pipe write end"
             );
         }
+        Some("stage2-dup3-untracked-write") => {
+            let victim_path = args.next().expect("victim file path");
+            let victim = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(victim_path)
+                .expect("open victim file");
+            let victim_fd = victim.as_raw_fd();
+
+            let mut pipe_fds = [-1_i32; 2];
+            assert_eq!(
+                unsafe { libc::pipe(pipe_fds.as_mut_ptr()) },
+                0,
+                "create untracked pipe"
+            );
+            assert_eq!(
+                unsafe { libc::dup3(pipe_fds[1], victim_fd, libc::O_CLOEXEC) },
+                victim_fd,
+                "dup3 untracked pipe over tracked victim fd"
+            );
+            let byte = *b"x";
+            assert_eq!(
+                unsafe { libc::write(victim_fd, byte.as_ptr().cast(), byte.len()) },
+                1,
+                "write through dup3-replaced destination fd"
+            );
+            assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0, "close pipe read end");
+            assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0, "close pipe write end");
+        }
+        Some("stage2-fcntl-dupfd-untracked-write") => {
+            let mut pipe_fds = [-1_i32; 2];
+            assert_eq!(
+                unsafe { libc::pipe(pipe_fds.as_mut_ptr()) },
+                0,
+                "create untracked pipe"
+            );
+            let duplicated_fd =
+                unsafe { libc::fcntl(pipe_fds[1], libc::F_DUPFD_CLOEXEC, 64) };
+            assert!(duplicated_fd >= 0, "F_DUPFD_CLOEXEC must succeed");
+            let byte = *b"x";
+            assert_eq!(
+                unsafe { libc::write(duplicated_fd, byte.as_ptr().cast(), byte.len()) },
+                1,
+                "write through fcntl-duplicated fd"
+            );
+            assert_eq!(unsafe { libc::close(duplicated_fd) }, 0, "close duplicated fd");
+            assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0, "close pipe read end");
+            assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0, "close pipe write end");
+        }
+        Some("stage2-dup2-same-fd-write") => {
+            let path = args.next().expect("file path");
+            let file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(path)
+                .expect("open same-fd target");
+            let fd = file.as_raw_fd();
+            assert_eq!(unsafe { libc::dup2(fd, fd) }, fd, "dup2 same fd");
+            let byte = *b"x";
+            assert_eq!(
+                unsafe { libc::write(fd, byte.as_ptr().cast(), byte.len()) },
+                1,
+                "write after dup2 same-fd no-op"
+            );
+        }
         Some("stage2-stderr-write") => {
             let byte = *b"x";
             assert_eq!(
