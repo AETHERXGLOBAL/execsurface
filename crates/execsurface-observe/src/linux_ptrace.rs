@@ -4,6 +4,7 @@ use std::fs;
 use std::io;
 use std::mem::{size_of, MaybeUninit};
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::ptr;
 
@@ -59,6 +60,14 @@ impl PtraceSyscallInfo {
 struct FdEntry {
     path: String,
     cloexec: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct KernelFileMetadata {
+    dev: u64,
+    ino: u64,
+    file_type: u32,
+    nlink: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -1243,16 +1252,34 @@ fn handle_syscall_exit(
             let fd = result as i32;
             match proc_fd_path(tid, fd) {
                 Ok(path) => {
-                    if open_has_immediate_filesystem_effect(flags)
-                        && !same_path_ignoring_curdir_components(&path, &lexical_path)
-                    {
-                        collector.warning(
-                            tid,
-                            "side_effectful_open_identity_divergence",
-                            format!(
-                                "successful side-effectful open used lexical path {lexical_path:?}, but the returned fd resolves to kernel object path {path:?}; raw observation v2 cannot serialize a dedicated successful-open object identity, so this observation is incomplete"
+                    if open_has_immediate_filesystem_effect(flags) {
+                        if !same_path_ignoring_curdir_components(&path, &lexical_path) {
+                            collector.warning(
+                                tid,
+                                "side_effectful_open_identity_divergence",
+                                format!(
+                                    "successful side-effectful open used lexical path {lexical_path:?}, but the returned fd resolves to kernel object path {path:?}; raw observation v2 cannot serialize a dedicated successful-open object identity, so this observation is incomplete"
+                                ),
+                            );
+                        }
+                        match proc_fd_object_metadata(tid, fd) {
+                            Ok(object) if object.nlink > 1 => collector.warning(
+                                tid,
+                                "side_effectful_open_object_alias_ambiguity",
+                                format!(
+                                    "successful side-effectful open returned fd {fd} bound to kernel object dev={} ino={} type={} with link count {}; raw observation v2 carries only path identity and cannot represent the additional hard-link aliases affected by this object mutation",
+                                    object.dev, object.ino, object.file_type, object.nlink
+                                ),
                             ),
-                        );
+                            Ok(_) => {}
+                            Err(error) => collector.warning(
+                                tid,
+                                "side_effectful_open_object_metadata_unreadable",
+                                format!(
+                                    "successful side-effectful open returned fd {fd}, but kernel object metadata could not be read at the syscall-exit binding point: {error}"
+                                ),
+                            ),
+                        }
                     }
                     fd_tables.insert_fd(table_id, fd, FdEntry { path, cloexec });
                 }
@@ -1581,6 +1608,19 @@ fn proc_fd_path(tid: libc::pid_t, fd: i32) -> Result<String, ObserveError> {
     let path = read_proc_link(PathBuf::from(format!("/proc/{tid}/fd/{fd}")))?;
     let tgid = tracee_tgid(tid).unwrap_or(tid);
     Ok(normalize_own_proc_path(&path, tid, tgid))
+}
+
+fn proc_fd_object_metadata(
+    tid: libc::pid_t,
+    fd: i32,
+) -> Result<KernelFileMetadata, ObserveError> {
+    let metadata = fs::metadata(format!("/proc/{tid}/fd/{fd}"))?;
+    Ok(KernelFileMetadata {
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+        file_type: metadata.mode() & libc::S_IFMT,
+        nlink: metadata.nlink(),
+    })
 }
 
 fn tracee_tgid(tid: libc::pid_t) -> Result<libc::pid_t, ObserveError> {
