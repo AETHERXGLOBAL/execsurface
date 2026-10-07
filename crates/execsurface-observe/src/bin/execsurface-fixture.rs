@@ -326,6 +326,25 @@ fn main() {
                 "write one byte to inherited stderr"
             );
         }
+        Some("stage2-shared-untracked-fd-write") => {
+            let worker = std::thread::spawn(|| {
+                let mut pipe_fds = [-1_i32; 2];
+                assert_eq!(
+                    unsafe { libc::pipe(pipe_fds.as_mut_ptr()) },
+                    0,
+                    "create worker-local untracked pipe"
+                );
+                let byte = *b"x";
+                assert_eq!(
+                    unsafe { libc::write(pipe_fds[1], byte.as_ptr().cast(), byte.len()) },
+                    1,
+                    "write through untracked fd while CLONE_FILES table is shared"
+                );
+                assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0, "close pipe read end");
+                assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0, "close pipe write end");
+            });
+            worker.join().expect("shared-fd worker");
+        }
         Some("stage2-symlink-truncate") => {
             let link_path = args.next().expect("symlink path");
             let file = OpenOptions::new()
