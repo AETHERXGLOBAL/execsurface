@@ -215,7 +215,7 @@ fn main() {
                 victim_fd,
                 "dup2 untracked pipe over tracked victim fd"
             );
-            let byte = [b'x'];
+            let byte = *b"x";
             assert_eq!(
                 unsafe { libc::write(victim_fd, byte.as_ptr().cast(), byte.len()) },
                 1,
@@ -233,7 +233,7 @@ fn main() {
             );
         }
         Some("stage2-stderr-write") => {
-            let byte = [b'x'];
+            let byte = *b"x";
             assert_eq!(
                 unsafe { libc::write(libc::STDERR_FILENO, byte.as_ptr().cast(), byte.len(),) },
                 1,
