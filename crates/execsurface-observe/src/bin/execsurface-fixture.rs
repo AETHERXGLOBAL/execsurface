@@ -221,19 +221,21 @@ fn main() {
                 1,
                 "write through replaced destination fd"
             );
-            assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0, "close pipe read end");
-            assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0, "close pipe write end");
+            assert_eq!(
+                unsafe { libc::close(pipe_fds[0]) },
+                0,
+                "close pipe read end"
+            );
+            assert_eq!(
+                unsafe { libc::close(pipe_fds[1]) },
+                0,
+                "close pipe write end"
+            );
         }
         Some("stage2-stderr-write") => {
             let byte = [b'x'];
             assert_eq!(
-                unsafe {
-                    libc::write(
-                        libc::STDERR_FILENO,
-                        byte.as_ptr().cast(),
-                        byte.len(),
-                    )
-                },
+                unsafe { libc::write(libc::STDERR_FILENO, byte.as_ptr().cast(), byte.len(),) },
                 1,
                 "write one byte to inherited stderr"
             );
