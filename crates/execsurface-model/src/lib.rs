@@ -96,11 +96,8 @@ pub enum FileOperation {
 }
 
 pub fn is_non_filesystem_fd_identity(path: &str) -> bool {
-    path.starts_with("pipe:[")
-        || path.starts_with("socket:[")
-        || path.starts_with("anon_inode:")
+    path.starts_with("pipe:[") || path.starts_with("socket:[") || path.starts_with("anon_inode:")
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "address_family", rename_all = "snake_case")]
