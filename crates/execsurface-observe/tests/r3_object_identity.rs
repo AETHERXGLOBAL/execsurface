@@ -255,3 +255,96 @@ fn r3_hardlink_fd_write_must_not_be_complete_with_path_only_identity() {
         observation.warnings
     );
 }
+
+#[test]
+fn r3_link_created_after_open_is_caught_at_write_time() {
+    let root = std::env::temp_dir().join(format!(
+        "execsurface-stage2-r3-link-after-open-{}",
+        process::id()
+    ));
+    let workspace = root.join("workspace");
+    let target = root.join("credential");
+    let alias = workspace.join("late-alias");
+
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(&target, b"secret").expect("seed target");
+
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("stage2-hardlink-after-open-write")
+            .arg(target.as_os_str())
+            .arg(alias.as_os_str()),
+    )
+    .expect("observe post-open hardlink creation and write");
+
+    let target_after = fs::metadata(&target).expect("target metadata after");
+    let alias_after = fs::metadata(&alias).expect("alias metadata after");
+    let bytes = fs::read(&target).expect("read target after write");
+    let alias_warning = observation
+        .warnings
+        .iter()
+        .any(|warning| warning.code == "fd_write_object_alias_ambiguity");
+
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(bytes, b"secretx");
+    assert_eq!(target_after.dev(), alias_after.dev());
+    assert_eq!(target_after.ino(), alias_after.ino());
+    assert!(
+        alias_warning,
+        "write-time kernel metadata must detect a hardlink created after the original open"
+    );
+    assert!(
+        !observation.complete,
+        "a post-open alias that exists at mutation time must make raw-v2 write authority incomplete"
+    );
+}
+
+#[test]
+fn r3_removed_alias_before_write_does_not_invent_alias_ambiguity() {
+    let root = std::env::temp_dir().join(format!(
+        "execsurface-stage2-r3-link-removed-before-write-{}",
+        process::id()
+    ));
+    let workspace = root.join("workspace");
+    let target = root.join("credential");
+    let alias = workspace.join("temporary-alias");
+
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(&target, b"secret").expect("seed target");
+    fs::hard_link(&target, &alias).expect("create alias before open");
+
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("stage2-hardlink-remove-before-write")
+            .arg(target.as_os_str())
+            .arg(alias.as_os_str()),
+    )
+    .expect("observe hardlink removal before write");
+
+    let target_after = fs::metadata(&target).expect("target metadata after");
+    let bytes = fs::read(&target).expect("read target after write");
+    let alias_exists = alias.exists();
+    let alias_warning = observation
+        .warnings
+        .iter()
+        .any(|warning| warning.code == "fd_write_object_alias_ambiguity");
+
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(bytes, b"secretx");
+    assert_eq!(target_after.nlink(), 1);
+    assert!(!alias_exists, "temporary alias must be removed before write");
+    assert!(
+        !alias_warning,
+        "an alias removed before the mutating write must not produce a stale alias warning"
+    );
+    assert!(
+        observation.complete,
+        "single-task write after the final alias is removed should remain complete: {:?}",
+        observation.warnings
+    );
+}
+
