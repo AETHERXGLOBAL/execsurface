@@ -20,10 +20,8 @@ fn divergence_warning(observation: &execsurface_model::Observation) -> bool {
 
 #[test]
 fn r3_symlink_truncate_fails_closed_when_open_time_object_identity_diverges() {
-    let root = std::env::temp_dir().join(format!(
-        "execsurface-stage2-r3-symlink-{}",
-        process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("execsurface-stage2-r3-symlink-{}", process::id()));
     let workspace = root.join("workspace");
     let target = root.join("target");
     let link = workspace.join("link");
@@ -55,8 +53,14 @@ fn r3_symlink_truncate_fails_closed_when_open_time_object_identity_diverges() {
 
     let _ = fs::remove_dir_all(&root);
 
-    assert_eq!(target_len, 0, "kernel-resolved target must actually be truncated");
-    assert!(lexical_attempt_retained, "lexical open intent must remain visible");
+    assert_eq!(
+        target_len, 0,
+        "kernel-resolved target must actually be truncated"
+    );
+    assert!(
+        lexical_attempt_retained,
+        "lexical open intent must remain visible"
+    );
     assert!(
         divergence_warning(&observation),
         "side-effectful lexical/kernel identity divergence must be explicit"
