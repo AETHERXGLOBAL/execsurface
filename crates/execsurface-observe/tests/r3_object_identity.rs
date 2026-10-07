@@ -336,7 +336,10 @@ fn r3_removed_alias_before_write_does_not_invent_alias_ambiguity() {
 
     assert_eq!(bytes, b"secretx");
     assert_eq!(target_after.nlink(), 1);
-    assert!(!alias_exists, "temporary alias must be removed before write");
+    assert!(
+        !alias_exists,
+        "temporary alias must be removed before write"
+    );
     assert!(
         !alias_warning,
         "an alias removed before the mutating write must not produce a stale alias warning"
@@ -347,4 +350,3 @@ fn r3_removed_alias_before_write_does_not_invent_alias_ambiguity() {
         observation.warnings
     );
 }
-
