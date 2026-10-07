@@ -161,3 +161,20 @@ fn r1_3_side_effectful_symlink_truncate_must_not_be_complete_with_link_only_iden
         "a side effect that occurs during open must not remain complete when evidence contains only lexical link identity and no kernel-resolved target identity"
     );
 }
+
+#[test]
+fn r2_control_bash_true_remains_complete_for_supported_behavior() {
+    let observation = observe_command(
+        &CommandSpec::new("/bin/bash")
+            .arg("-lc")
+            .arg("true"),
+    )
+    .expect("observe compatibility control");
+
+    assert!(
+        observation.complete,
+        "ordinary bash true became incomplete under R2: {:?}",
+        observation.warnings
+    );
+}
+
