@@ -1243,7 +1243,9 @@ fn handle_syscall_exit(
             let fd = result as i32;
             match proc_fd_path(tid, fd) {
                 Ok(path) => {
-                    if open_has_immediate_filesystem_effect(flags) && path != lexical_path {
+                    if open_has_immediate_filesystem_effect(flags)
+                        && !same_path_ignoring_curdir_components(&path, &lexical_path)
+                    {
                         collector.warning(
                             tid,
                             "side_effectful_open_identity_divergence",
@@ -1337,6 +1339,24 @@ fn open_has_immediate_filesystem_effect(flags: u64) -> bool {
     flags & libc::O_TRUNC != 0
         || flags & libc::O_CREAT != 0
         || flags & libc::O_TMPFILE == libc::O_TMPFILE
+}
+
+fn same_path_ignoring_curdir_components(left: &str, right: &str) -> bool {
+    fn normalize(path: &str) -> String {
+        let absolute = path.starts_with('/');
+        let components = path
+            .split('/')
+            .filter(|component| !component.is_empty() && *component != ".")
+            .collect::<Vec<_>>();
+        let joined = components.join("/");
+        if absolute {
+            format!("/{joined}")
+        } else {
+            joined
+        }
+    }
+
+    left == right || normalize(left) == normalize(right)
 }
 
 fn recover_fd_after_unknown_dup(
