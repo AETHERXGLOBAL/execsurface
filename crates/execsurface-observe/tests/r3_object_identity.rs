@@ -1,7 +1,7 @@
 #![cfg(all(target_os = "linux", target_arch = "x86_64"))]
 
 use std::fs;
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{symlink, MetadataExt};
 use std::process;
 
 use execsurface_model::{FileOperation, RawEventKind};
@@ -133,3 +133,59 @@ fn r3_curdir_spelling_does_not_invent_object_identity_divergence() {
         observation.warnings
     );
 }
+
+#[test]
+fn r3_hardlink_truncate_must_not_be_complete_with_path_only_identity() {
+    let root = std::env::temp_dir().join(format!(
+        "execsurface-stage2-r3-hardlink-{}",
+        process::id()
+    ));
+    let workspace = root.join("workspace");
+    let target = root.join("credential");
+    let alias = workspace.join("alias");
+
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(&target, b"secret").expect("seed hardlink target");
+    fs::hard_link(&target, &alias).expect("create hardlink alias");
+
+    let target_before = fs::metadata(&target).expect("target metadata before");
+    let alias_before = fs::metadata(&alias).expect("alias metadata before");
+    assert_eq!(target_before.dev(), alias_before.dev());
+    assert_eq!(target_before.ino(), alias_before.ino());
+
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("stage2-symlink-truncate")
+            .arg(alias.as_os_str()),
+    )
+    .expect("observe hardlink truncate");
+
+    let target_after = fs::metadata(&target).expect("target metadata after");
+    let alias_after = fs::metadata(&alias).expect("alias metadata after");
+    let lexical = alias.to_string_lossy().into_owned();
+    let lexical_attempt_retained = observation.events.iter().any(|event| {
+        matches!(
+            &event.kind,
+            RawEventKind::FilePathAccess {
+                operation: FileOperation::Open,
+                path,
+                ..
+            } if path == &lexical
+        )
+    });
+
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(target_after.len(), 0, "target inode must actually be truncated");
+    assert_eq!(alias_after.len(), 0, "alias must expose the same truncated inode");
+    assert_eq!(target_after.dev(), alias_after.dev());
+    assert_eq!(target_after.ino(), alias_after.ino());
+    assert!(lexical_attempt_retained, "lexical open intent must remain visible");
+    assert!(
+        !observation.complete,
+        "path-string agreement alone cannot certify the identity of a side-effected kernel object when a hard-link alias exists: {:?}",
+        observation.warnings
+    );
+}
+
