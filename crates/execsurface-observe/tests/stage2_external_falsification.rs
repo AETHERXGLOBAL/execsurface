@@ -63,8 +63,7 @@ fn r1_1_dup2_from_untracked_source_never_keeps_stale_destination_identity() {
     );
 
     let stale_attribution = fd_write_to_path(&observation, &expected_victim);
-    let replacement_attribution =
-        any_fd_write_to_other_path(&observation, &expected_victim);
+    let replacement_attribution = any_fd_write_to_other_path(&observation, &expected_victim);
 
     assert!(
         !stale_attribution,
@@ -79,10 +78,8 @@ fn r1_1_dup2_from_untracked_source_never_keeps_stale_destination_identity() {
 #[test]
 fn r1_2_untracked_fd_io_must_not_disappear_under_complete_true() {
     let fixture = env!("CARGO_BIN_EXE_execsurface-fixture");
-    let observation = observe_command(
-        &CommandSpec::new(fixture).arg("stage2-stderr-write"),
-    )
-    .expect("observe untracked stderr write");
+    let observation = observe_command(&CommandSpec::new(fixture).arg("stage2-stderr-write"))
+        .expect("observe untracked stderr write");
 
     let attributed = observation.events.iter().any(|event| {
         matches!(
@@ -104,10 +101,8 @@ fn r1_2_untracked_fd_io_must_not_disappear_under_complete_true() {
 #[test]
 fn r1_3_side_effectful_symlink_truncate_must_not_be_complete_with_link_only_identity() {
     let fixture = env!("CARGO_BIN_EXE_execsurface-fixture");
-    let root = std::env::temp_dir().join(format!(
-        "execsurface-stage2-r1-symlink-{}",
-        process::id()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("execsurface-stage2-r1-symlink-{}", process::id()));
     let workspace = root.join("workspace");
     let credential = root.join("credential");
     let link = workspace.join("link");
@@ -144,15 +139,11 @@ fn r1_3_side_effectful_symlink_truncate_must_not_be_complete_with_link_only_iden
             } if path == &expected_link
         )
     });
-    let object_identity_evidence = observation.events.iter().any(|event| {
-        match &event.kind {
-            RawEventKind::FilePathAccess { path, .. }
-            | RawEventKind::FileOpenAt2 { path, .. }
-            | RawEventKind::FileDescriptorAccess { path, .. } => {
-                path == &expected_credential
-            }
-            _ => false,
-        }
+    let object_identity_evidence = observation.events.iter().any(|event| match &event.kind {
+        RawEventKind::FilePathAccess { path, .. }
+        | RawEventKind::FileOpenAt2 { path, .. }
+        | RawEventKind::FileDescriptorAccess { path, .. } => path == &expected_credential,
+        _ => false,
     });
 
     let _ = fs::remove_dir_all(&root);
