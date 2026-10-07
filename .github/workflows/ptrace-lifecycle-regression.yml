@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - crates/execsurface-observe/src/linux_ptrace.rs
+      - crates/execsurface-observe/src/lib.rs
+      - crates/execsurface-observe/tests/m11_shared_fd_ambiguity.rs
       - tests/fixtures/m9/exit_group_sched_getaffinity_bounded_race.c
       - .github/workflows/ptrace-lifecycle-regression.yml
   push:
@@ -13,6 +15,8 @@ on:
       - main
     paths:
       - crates/execsurface-observe/src/linux_ptrace.rs
+      - crates/execsurface-observe/src/lib.rs
+      - crates/execsurface-observe/tests/m11_shared_fd_ambiguity.rs
       - tests/fixtures/m9/exit_group_sched_getaffinity_bounded_race.c
       - .github/workflows/ptrace-lifecycle-regression.yml
   workflow_dispatch:
@@ -72,7 +76,10 @@ jobs:
           from pathlib import Path
 
           data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          assert data.get("complete") is True, data.get("warnings")
+          warnings = data.get("warnings", [])
+          codes = [warning.get("code") for warning in warnings]
+          assert data.get("complete") is False, warnings
+          assert codes == ["shared_fd_table_ambiguity"], warnings
           outcome = data.get("outcome", {})
           assert outcome.get("exit_code") == 0, outcome
           assert outcome.get("signal") is None, outcome
@@ -126,14 +133,32 @@ jobs:
           printf 'alpha\n' > /tmp/m7-fd/m7-fixture/alpha.txt
           printf 'beta\n' > /tmp/m7-fd/m7-fixture/sub/beta.txt
 
-      - name: Learn and prove repeated no-drift compatibility
+      - name: Prove default parallel fd is explicitly fail-closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/debug/execsurface observe -- /bin/bash -lc \
+            'cd /tmp/m7-fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null' \
+            >/tmp/execsurface-m7-source/fd-parallel.json
+
+          python3 - <<'PY'
+          import json
+          data = json.load(open("/tmp/execsurface-m7-source/fd-parallel.json"))
+          warnings = data.get("warnings", [])
+          codes = [warning.get("code") for warning in warnings]
+          assert data.get("complete") is False, warnings
+          assert codes == ["shared_fd_table_ambiguity"], warnings
+          assert data.get("outcome", {}).get("exit_code") == 0, data.get("outcome")
+          PY
+
+      - name: Learn and prove repeated single-thread no-drift compatibility
         shell: bash
         run: |
           set -euo pipefail
           target/debug/execsurface learn \
             --output /tmp/execsurface-m7-source/fd.lock.json \
             -- /bin/bash -lc \
-            'cd /tmp/m7-fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
+            'cd /tmp/m7-fd && ./target/release/fd --threads 1 --hidden --type f . m7-fixture >/dev/null'
 
           for n in 1 2; do
             target/debug/execsurface check \
@@ -141,7 +166,7 @@ jobs:
               --json-output "/tmp/execsurface-m7-source/fd-pass-${n}.json" \
               --markdown-output "/tmp/execsurface-m7-source/fd-pass-${n}.md" \
               -- /bin/bash -lc \
-              'cd /tmp/m7-fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
+              'cd /tmp/m7-fd && ./target/release/fd --threads 1 --hidden --type f . m7-fixture >/dev/null'
           done
 
           python3 - <<'PY'
@@ -162,7 +187,7 @@ jobs:
             --json-output /tmp/execsurface-m7-source/fd-controlled.json \
             --markdown-output /tmp/execsurface-m7-source/fd-controlled.md \
             -- /bin/bash -lc \
-            'cd /tmp/m7-fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null; /usr/bin/sha256sum m7-fixture/alpha.txt >/dev/null'
+            'cd /tmp/m7-fd && ./target/release/fd --threads 1 --hidden --type f . m7-fixture >/dev/null; /usr/bin/sha256sum m7-fixture/alpha.txt >/dev/null'
           status=$?
           set -e
           test "$status" -eq 10
@@ -244,7 +269,10 @@ jobs:
           from pathlib import Path
 
           data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          assert data.get("complete") is True, data.get("warnings")
+          warnings = data.get("warnings", [])
+          codes = [warning.get("code") for warning in warnings]
+          assert data.get("complete") is False, warnings
+          assert codes == ["shared_fd_table_ambiguity"], warnings
           outcome = data.get("outcome", {})
           assert outcome.get("exit_code") == 0, outcome
           assert outcome.get("signal") is None, outcome
