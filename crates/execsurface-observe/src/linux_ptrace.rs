@@ -1610,10 +1610,7 @@ fn proc_fd_path(tid: libc::pid_t, fd: i32) -> Result<String, ObserveError> {
     Ok(normalize_own_proc_path(&path, tid, tgid))
 }
 
-fn proc_fd_object_metadata(
-    tid: libc::pid_t,
-    fd: i32,
-) -> Result<KernelFileMetadata, ObserveError> {
+fn proc_fd_object_metadata(tid: libc::pid_t, fd: i32) -> Result<KernelFileMetadata, ObserveError> {
     let metadata = fs::metadata(format!("/proc/{tid}/fd/{fd}"))?;
     Ok(KernelFileMetadata {
         dev: metadata.dev(),
