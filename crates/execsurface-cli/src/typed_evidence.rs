@@ -419,16 +419,16 @@ mod tests {
 
     #[test]
     fn kernel_pseudo_fd_write_is_retained_raw_but_not_promoted_to_file_effect() {
-        let input = complete_input("pipe:[12345]");
-        let report = build_report(&input).expect("report");
+        for path in ["pipe:[12345]", "memfd:r2-buffer"] {
+            let input = complete_input(path);
+            let report = build_report(&input).expect("report");
 
-        assert!(report["effects"].as_array().expect("effects").is_empty());
-        assert!(
-            report["raw_observation"]
-                .to_string()
-                .contains("pipe:[12345]"),
-            "raw observation must retain the kernel pseudo-object identity"
-        );
+            assert!(report["effects"].as_array().expect("effects").is_empty());
+            assert!(
+                report["raw_observation"].to_string().contains(path),
+                "raw observation must retain kernel pseudo-object identity {path}"
+            );
+        }
     }
 
     #[test]

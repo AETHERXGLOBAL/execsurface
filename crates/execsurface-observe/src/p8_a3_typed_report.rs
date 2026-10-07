@@ -432,10 +432,12 @@ mod tests {
 
     #[test]
     fn p8_a3_kernel_pseudo_fd_write_is_not_promoted_to_file_effect() {
-        let input = synthetic_complete("pipe:[12345]");
-        let report = build_typed_report(&input).expect("report");
+        for path in ["pipe:[12345]", "memfd:r2-buffer"] {
+            let input = synthetic_complete(path);
+            let report = build_typed_report(&input).expect("report");
 
-        assert!(report["effects"].as_array().expect("effects").is_empty());
+            assert!(report["effects"].as_array().expect("effects").is_empty());
+        }
     }
 
     #[test]

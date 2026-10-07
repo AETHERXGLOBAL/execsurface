@@ -1067,6 +1067,15 @@ mod tests {
                     path: "anon_inode:[eventfd]".to_owned(),
                 },
             },
+            RawEvent {
+                sequence: 5,
+                tid: 10,
+                kind: RawEventKind::FileDescriptorAccess {
+                    operation: FileOperation::Write,
+                    fd: 6,
+                    path: "memfd:r2-buffer".to_owned(),
+                },
+            },
         ]);
 
         let surface = canonicalize(&raw, &NormalizationConfig::default()).expect("canonicalize");
