@@ -164,12 +164,8 @@ fn r1_3_side_effectful_symlink_truncate_must_not_be_complete_with_link_only_iden
 
 #[test]
 fn r2_control_bash_true_remains_complete_for_supported_behavior() {
-    let observation = observe_command(
-        &CommandSpec::new("/bin/bash")
-            .arg("-lc")
-            .arg("true"),
-    )
-    .expect("observe compatibility control");
+    let observation = observe_command(&CommandSpec::new("/bin/bash").arg("-lc").arg("true"))
+        .expect("observe compatibility control");
 
     assert!(
         observation.complete,
@@ -177,4 +173,3 @@ fn r2_control_bash_true_remains_complete_for_supported_behavior() {
         observation.warnings
     );
 }
-
