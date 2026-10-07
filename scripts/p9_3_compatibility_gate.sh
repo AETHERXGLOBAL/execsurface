@@ -39,6 +39,10 @@ set +e
 pass_output="$("$candidate_bin" check --baseline alpha5.lock.json --json-output pass-report.json -- /bin/bash -lc true 2>&1)"
 pass_status=$?
 set -e
+if [ "$pass_status" -ne 0 ]; then
+  printf 'candidate_alpha5_pass_status=%s\n' "$pass_status"
+  printf '%s\n' "$pass_output"
+fi
 test "$pass_status" -eq 0
 grep -F "ExecSurface: PASS" <<<"$pass_output"
 python - <<'PY'
