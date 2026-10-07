@@ -11,7 +11,8 @@ use execsurface_model::canonical::{
     CANONICAL_SURFACE_SCHEMA_VERSION, NORMALIZATION_PROFILE_VERSION,
 };
 use execsurface_model::{
-    FileOperation, NetworkEndpoint, Observation, RawEventKind, RAW_OBSERVATION_SCHEMA_VERSION,
+    is_non_filesystem_fd_identity, FileOperation, NetworkEndpoint, Observation, RawEventKind,
+    RAW_OBSERVATION_SCHEMA_VERSION,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -217,6 +218,9 @@ pub fn canonicalize(
             } => {
                 if !matches!(operation, FileOperation::Read | FileOperation::Write) {
                     return Err(NormalizeError::InvalidFdOperation(*operation));
+                }
+                if is_non_filesystem_fd_identity(path) {
+                    continue;
                 }
                 let state = processes.get(&event.tid).cloned().unwrap_or_default();
                 effects.insert(CanonicalEffect::FilePathAccess {
