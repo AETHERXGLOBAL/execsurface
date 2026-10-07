@@ -197,3 +197,58 @@ fn r3_hardlink_truncate_must_not_be_complete_with_path_only_identity() {
         observation.warnings
     );
 }
+
+#[test]
+fn r3_hardlink_fd_write_must_not_be_complete_with_path_only_identity() {
+    let root =
+        std::env::temp_dir().join(format!("execsurface-stage2-r3-hardlink-write-{}", process::id()));
+    let workspace = root.join("workspace");
+    let target = root.join("credential");
+    let alias = workspace.join("alias");
+
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(&target, b"secret").expect("seed hardlink target");
+    fs::hard_link(&target, &alias).expect("create hardlink alias");
+
+    let target_before = fs::metadata(&target).expect("target metadata before");
+    let alias_before = fs::metadata(&alias).expect("alias metadata before");
+    assert_eq!(target_before.dev(), alias_before.dev());
+    assert_eq!(target_before.ino(), alias_before.ino());
+
+    let observation = observe_command(
+        &CommandSpec::new(fixture()).arg("file-rw").arg(alias.as_os_str()),
+    )
+    .expect("observe hardlink fd write");
+
+    let target_after = fs::metadata(&target).expect("target metadata after");
+    let alias_after = fs::metadata(&alias).expect("alias metadata after");
+    let target_bytes = fs::read(&target).expect("read mutated target");
+    let lexical = alias.to_string_lossy().into_owned();
+    let fd_write_retained = observation.events.iter().any(|event| {
+        matches!(
+            &event.kind,
+            RawEventKind::FileDescriptorAccess {
+                operation: FileOperation::Write,
+                path,
+                ..
+            } if path == &lexical
+        )
+    });
+
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(target_bytes, b"secretx");
+    assert_eq!(target_after.dev(), alias_after.dev());
+    assert_eq!(target_after.ino(), alias_after.ino());
+    assert!(
+        fd_write_retained,
+        "successful fd write must remain visible on the lexical alias"
+    );
+    assert!(
+        !observation.complete,
+        "a successful mutating fd write to a multiply-linked kernel object must not remain authoritative under path-only raw-v2 evidence: {:?}",
+        observation.warnings
+    );
+}
+
