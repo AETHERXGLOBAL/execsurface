@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
-use execsurface_model::{FileOperation, RawEvent, RawEventKind};
+use execsurface_model::{is_non_filesystem_fd_identity, FileOperation, RawEvent, RawEventKind};
 use execsurface_observe::{BackendObservation, CollectionCompleteness, ObservationCapability};
 use serde_json::{json, Value};
 
@@ -120,6 +120,10 @@ pub(crate) fn build_report(input: &BackendObservation) -> Result<Value, String> 
         else {
             continue;
         };
+
+        if is_non_filesystem_fd_identity(path) {
+            continue;
+        }
 
         if !fd_effect_capable {
             return Err(
