@@ -103,10 +103,7 @@ fn r3_direct_truncate_stays_complete_when_lexical_and_kernel_identity_agree() {
 
 #[test]
 fn r3_curdir_spelling_does_not_invent_object_identity_divergence() {
-    let root = std::env::temp_dir().join(format!(
-        "execsurface-stage2-r3-curdir-{}",
-        process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("execsurface-stage2-r3-curdir-{}", process::id()));
     let workspace = root.join("workspace");
     let target = workspace.join("target");
 
@@ -136,4 +133,3 @@ fn r3_curdir_spelling_does_not_invent_object_identity_divergence() {
         observation.warnings
     );
 }
-
