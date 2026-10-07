@@ -216,36 +216,51 @@ impl FdTables {
         self.tables.get(&table_id)?.get(&fd)
     }
 
-    fn duplicate(&mut self, table_id: u64, old_fd: i32, new_fd: i32, cloexec: bool) -> bool {
-        let mut entry = self.fd(table_id, old_fd).cloned().unwrap_or(FdEntry {
-            path: None,
-            cloexec,
-        });
-        let source_identity_known = entry.path.is_some();
+    fn duplicate(
+        &mut self,
+        table_id: u64,
+        old_fd: i32,
+        new_fd: i32,
+        recovered: Option<FdEntry>,
+        cloexec: bool,
+    ) {
+        let mut entry = recovered
+            .or_else(|| self.fd(table_id, old_fd).cloned())
+            .unwrap_or(FdEntry {
+                path: None,
+                cloexec,
+            });
         entry.cloexec = cloexec;
         self.insert_fd(table_id, new_fd, entry);
-        source_identity_known
     }
 
-    fn set_cloexec(&mut self, table_id: u64, fd: i32, cloexec: bool) -> bool {
+    fn set_cloexec(
+        &mut self,
+        table_id: u64,
+        fd: i32,
+        cloexec: bool,
+        recovered: Option<FdEntry>,
+    ) {
         if let Some(entry) = self
             .tables
             .get_mut(&table_id)
             .and_then(|table| table.get_mut(&fd))
         {
             entry.cloexec = cloexec;
-            return entry.path.is_some();
+            if entry.path.is_none() {
+                if let Some(recovered) = recovered {
+                    entry.path = recovered.path;
+                }
+            }
+            return;
         }
 
-        self.insert_fd(
-            table_id,
-            fd,
-            FdEntry {
-                path: None,
-                cloexec,
-            },
-        );
-        false
+        let mut entry = recovered.unwrap_or(FdEntry {
+            path: None,
+            cloexec,
+        });
+        entry.cloexec = cloexec;
+        self.insert_fd(table_id, fd, entry);
     }
 
     fn rename_paths(&mut self, from: &str, to: &str) {
@@ -1264,15 +1279,8 @@ fn handle_syscall_exit(
     match pending {
         PendingSyscall::Open { cloexec } if result >= 0 => {
             let fd = result as i32;
-            match proc_fd_path(tid, fd) {
-                Ok(path) => fd_tables.insert_fd(
-                    table_id,
-                    fd,
-                    FdEntry {
-                        path: Some(path),
-                        cloexec,
-                    },
-                ),
+            match recover_fd_entry(tid, fd, Some(cloexec)) {
+                Ok(entry) => fd_tables.insert_fd(table_id, fd, entry),
                 Err(error) => collector.warning(
                     tid,
                     "opened_fd_path_unreadable",
@@ -1326,15 +1334,8 @@ fn handle_syscall_exit(
         }
         PendingSyscall::Dup { old_fd, cloexec } if result >= 0 => {
             let new_fd = result as i32;
-            if !fd_tables.duplicate(table_id, old_fd, new_fd, cloexec) {
-                collector.warning(
-                    tid,
-                    "fd_duplicate_source_identity_unknown",
-                    format!(
-                        "successful fd duplication from source fd {old_fd} created fd {new_fd}, but the source object identity was not tracked"
-                    ),
-                );
-            }
+            let recovered = recover_fd_entry(tid, new_fd, Some(cloexec)).ok();
+            fd_tables.duplicate(table_id, old_fd, new_fd, recovered, cloexec);
         }
         PendingSyscall::DupTo {
             old_fd,
@@ -1343,35 +1344,18 @@ fn handle_syscall_exit(
         } if result >= 0 => {
             if old_fd != new_fd {
                 let actual_new_fd = result as i32;
-                if !fd_tables.duplicate(table_id, old_fd, actual_new_fd, cloexec) {
-                    collector.warning(
-                        tid,
-                        "fd_duplicate_source_identity_unknown",
-                        format!(
-                            "successful fd duplication from source fd {old_fd} replaced fd {actual_new_fd}, but the source object identity was not tracked"
-                        ),
-                    );
-                }
+                let recovered = recover_fd_entry(tid, actual_new_fd, Some(cloexec)).ok();
+                fd_tables.duplicate(table_id, old_fd, actual_new_fd, recovered, cloexec);
             } else if fd_tables.fd(table_id, old_fd).is_none() {
-                collector.warning(
-                    tid,
-                    "fd_same_number_dup_identity_unknown",
-                    format!(
-                        "successful same-fd dup2({old_fd}, {new_fd}) proved the fd was live, but its object identity was not tracked"
-                    ),
-                );
+                if let Ok(entry) = recover_fd_entry(tid, old_fd, None) {
+                    fd_tables.insert_fd(table_id, old_fd, entry);
+                }
             }
         }
         PendingSyscall::SetFdFlags { fd, flags } if result == 0 => {
-            if !fd_tables.set_cloexec(table_id, fd, flags & libc::FD_CLOEXEC != 0) {
-                collector.warning(
-                    tid,
-                    "fd_flag_target_identity_unknown",
-                    format!(
-                        "successful F_SETFD updated fd {fd}, but its object identity was not tracked"
-                    ),
-                );
-            }
+            let cloexec = flags & libc::FD_CLOEXEC != 0;
+            let recovered = recover_fd_entry(tid, fd, Some(cloexec)).ok();
+            fd_tables.set_cloexec(table_id, fd, cloexec, recovered);
         }
         PendingSyscall::Rename { from, to } if result == 0 => {
             fd_tables.rename_paths(&from, &to);
@@ -1394,35 +1378,37 @@ fn emit_fd_access(
     table_id: u64,
     fd: i32,
     operation: FileOperation,
-    fd_tables: &FdTables,
+    fd_tables: &mut FdTables,
     collector: &mut Collector,
 ) {
-    let Some(entry) = fd_tables.fd(table_id, fd) else {
+    let path = fd_tables
+        .fd(table_id, fd)
+        .and_then(|entry| entry.path.clone())
+        .or_else(|| {
+            recover_fd_entry(tid, fd, None).ok().and_then(|entry| {
+                let path = entry.path.clone();
+                fd_tables.insert_fd(table_id, fd, entry);
+                path
+            })
+        });
+
+    let Some(path) = path else {
         collector.warning(
             tid,
-            "fd_access_untracked",
+            "fd_access_unattributed",
             format!(
-                "successful {operation:?} I/O used fd {fd}, but no fd-state entry was available"
+                "successful {operation:?} I/O used fd {fd}, but its post-operation fd identity could not be recovered"
             ),
         );
         return;
     };
-    let Some(path) = entry.path.as_ref() else {
-        collector.warning(
-            tid,
-            "fd_access_identity_unknown",
-            format!(
-                "successful {operation:?} I/O used fd {fd}, but its object identity was unknown"
-            ),
-        );
-        return;
-    };
+
     collector.event(
         tid,
         RawEventKind::FileDescriptorAccess {
             operation,
             fd,
-            path: path.clone(),
+            path,
         },
     );
 }
@@ -1556,6 +1542,41 @@ fn record_rename_entry(
             collector.warning(tid, "rename_path_unreadable", error.to_string())
         }
     }
+}
+
+fn recover_fd_entry(
+    tid: libc::pid_t,
+    fd: i32,
+    cloexec_override: Option<bool>,
+) -> Result<FdEntry, ObserveError> {
+    let path = proc_fd_path(tid, fd)?;
+    let cloexec = match cloexec_override {
+        Some(value) => value,
+        None => proc_fd_cloexec(tid, fd)?,
+    };
+    Ok(FdEntry {
+        path: Some(path),
+        cloexec,
+    })
+}
+
+fn proc_fd_cloexec(tid: libc::pid_t, fd: i32) -> Result<bool, ObserveError> {
+    let fdinfo = fs::read_to_string(format!("/proc/{tid}/fdinfo/{fd}"))?;
+    let flags = fdinfo
+        .lines()
+        .find_map(|line| line.strip_prefix("flags:"))
+        .map(str::trim)
+        .ok_or_else(|| {
+            ObserveError::Protocol(format!(
+                "fdinfo for tid {tid} fd {fd} did not contain flags"
+            ))
+        })?;
+    let flags = u64::from_str_radix(flags, 8).map_err(|error| {
+        ObserveError::Protocol(format!(
+            "fdinfo flags for tid {tid} fd {fd} were not valid octal: {error}"
+        ))
+    })?;
+    Ok(flags & libc::O_CLOEXEC as u64 != 0)
 }
 
 fn resolve_user_path(tid: libc::pid_t, dirfd: i32, path: String) -> Result<String, ObserveError> {
