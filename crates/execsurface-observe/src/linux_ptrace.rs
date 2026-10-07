@@ -1432,6 +1432,10 @@ fn emit_fd_access(
         }
     };
 
+    if operation == FileOperation::Write {
+        check_mutating_fd_object_authority(tid, fd, collector);
+    }
+
     collector.event(
         tid,
         RawEventKind::FileDescriptorAccess {
@@ -1440,6 +1444,31 @@ fn emit_fd_access(
             path,
         },
     );
+}
+
+fn check_mutating_fd_object_authority(
+    tid: libc::pid_t,
+    fd: i32,
+    collector: &mut Collector,
+) {
+    match proc_fd_object_metadata(tid, fd) {
+        Ok(object) if object.file_type == libc::S_IFREG && object.nlink > 1 => collector.warning(
+            tid,
+            "fd_write_object_alias_ambiguity",
+            format!(
+                "successful write on fd {fd} mutated regular kernel object dev={} ino={} with link count {}; raw observation v2 carries only one fd path and cannot represent the additional hard-link aliases affected by this mutation",
+                object.dev, object.ino, object.nlink
+            ),
+        ),
+        Ok(_) => {}
+        Err(error) => collector.warning(
+            tid,
+            "fd_write_object_metadata_unreadable",
+            format!(
+                "successful write on fd {fd} could not bind the mutating effect to kernel object metadata at syscall exit: {error}"
+            ),
+        ),
+    }
 }
 
 fn set_pending(
