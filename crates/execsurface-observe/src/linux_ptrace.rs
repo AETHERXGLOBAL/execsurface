@@ -1306,8 +1306,7 @@ fn handle_syscall_exit(
         }
         PendingSyscall::CloseRange { first, last, flags } if result == 0 => {
             if flags & CLOSE_RANGE_UNSHARE_FLAG != 0 {
-                let Some(private_table_id) =
-                    ensure_private_fd_table(tid, tracees, fd_tables)
+                let Some(private_table_id) = ensure_private_fd_table(tid, tracees, fd_tables)
                 else {
                     collector.warning(
                         tid,
@@ -2008,7 +2007,11 @@ mod tests {
             Some("/tmp/c1-new")
         );
         assert_eq!(
-            tables.fd(shared_id, 10).expect("old dup remains").path.as_deref(),
+            tables
+                .fd(shared_id, 10)
+                .expect("old dup remains")
+                .path
+                .as_deref(),
             Some("/tmp/c1-old")
         );
 
