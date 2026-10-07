@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use execsurface_model::{FileOperation, RawEvent, RawEventKind};
+use execsurface_model::{is_non_filesystem_fd_identity, FileOperation, RawEvent, RawEventKind};
 use serde_json::{json, Value};
 
 use super::*;
@@ -113,6 +113,10 @@ fn build_typed_report(input: &BackendObservation) -> Result<Value, &'static str>
         else {
             continue;
         };
+
+        if is_non_filesystem_fd_identity(path) {
+            continue;
+        }
 
         if !fd_effect_capable {
             return Err("fd-effect-capability-mismatch");
