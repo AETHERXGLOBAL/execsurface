@@ -67,7 +67,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Materialize exact public Alpha.5 binary and baseline
+      - name: Build candidate CLI for profile-4 Action baseline
+        run: cargo build --locked --release -p execsurface --bin execsurface
+
+      - name: Materialize exact public Alpha.5 binary and baselines
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -83,7 +86,17 @@ jobs:
           tar -xzf "$ALPHA5_ASSET"
           alpha5_bin="$root/execsurface-${ALPHA5_TAG}-x86_64-unknown-linux-gnu/execsurface"
           "$alpha5_bin" learn --output "$GITHUB_WORKSPACE/p9-alpha5.lock.json" -- /bin/bash -lc true
+          "$GITHUB_WORKSPACE/target/release/execsurface" learn --output "$GITHUB_WORKSPACE/p9-candidate.lock.json" -- /bin/bash -lc true
           sha256sum "$GITHUB_WORKSPACE/p9-alpha5.lock.json" > "$RUNNER_TEMP/p9-alpha5.lock.sha256"
+          sha256sum "$GITHUB_WORKSPACE/p9-candidate.lock.json" > "$RUNNER_TEMP/p9-candidate.lock.sha256"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          alpha = json.loads(Path("p9-alpha5.lock.json").read_text())
+          candidate = json.loads(Path("p9-candidate.lock.json").read_text())
+          assert alpha["payload"]["canonical_surface"]["normalization"]["profile_version"] == 3
+          assert candidate["payload"]["canonical_surface"]["normalization"]["profile_version"] == 4
+          PY
 
           cat > "$GITHUB_WORKSPACE/p9-block-policy.json" <<'JSON'
           {
@@ -102,12 +115,33 @@ jobs:
           }
           JSON
 
+      - name: Candidate Action rejects incompatible Alpha.5 profile-3 baseline
+        id: alpha5_incompatible
+        continue-on-error: true
+        uses: ./
+        with:
+          command: "true"
+          baseline: p9-alpha5.lock.json
+          upload-artifact: "false"
+
+      - name: Assert Alpha.5 profile boundary is explicit
+        env:
+          OUTCOME: ${{ steps.alpha5_incompatible.outcome }}
+          VERDICT: ${{ steps.alpha5_incompatible.outputs.verdict }}
+          EXIT_CODE: ${{ steps.alpha5_incompatible.outputs.exit-code }}
+        run: |
+          set -euo pipefail
+          test "$OUTCOME" = "failure"
+          test "$VERDICT" = "error"
+          test "$EXIT_CODE" = "2"
+          (cd "$GITHUB_WORKSPACE" && sha256sum -c "$RUNNER_TEMP/p9-alpha5.lock.sha256")
+
       - name: Candidate Action PASS with evidence upload
         id: pass
         uses: ./
         with:
           command: "true"
-          baseline: p9-alpha5.lock.json
+          baseline: p9-candidate.lock.json
           upload-artifact: "true"
           artifact-name: p9-compatibility-pass-evidence
 
@@ -129,7 +163,7 @@ jobs:
           test "$SARIF_STATUS" = "not-generated:no-source-provenance"
           test -n "$ARTIFACT_URL"
           test -n "$ARTIFACT_DIGEST"
-          (cd "$GITHUB_WORKSPACE" && sha256sum -c "$RUNNER_TEMP/p9-alpha5.lock.sha256")
+          (cd "$GITHUB_WORKSPACE" && sha256sum -c "$RUNNER_TEMP/p9-candidate.lock.sha256")
           python - "$REPORT_JSON" <<'PY'
           import json, sys
           report = json.load(open(sys.argv[1]))
@@ -142,7 +176,7 @@ jobs:
         uses: ./
         with:
           command: "true; /bin/echo p9-review >/dev/null"
-          baseline: p9-alpha5.lock.json
+          baseline: p9-candidate.lock.json
           upload-artifact: "false"
 
       - name: Assert REVIEW default contract
@@ -160,7 +194,7 @@ jobs:
         uses: ./
         with:
           command: "true; /bin/echo p9-review-fail >/dev/null"
-          baseline: p9-alpha5.lock.json
+          baseline: p9-candidate.lock.json
           fail-on-review: "true"
           upload-artifact: "false"
 
@@ -181,7 +215,7 @@ jobs:
         uses: ./
         with:
           command: "true; /bin/echo p9-block >/dev/null"
-          baseline: p9-alpha5.lock.json
+          baseline: p9-candidate.lock.json
           policy: p9-block-policy.json
           upload-artifact: "false"
 
@@ -216,3 +250,4 @@ jobs:
           test "$VERDICT" = "error"
           test "$EXIT_CODE" = "2"
           (cd "$GITHUB_WORKSPACE" && sha256sum -c "$RUNNER_TEMP/p9-alpha5.lock.sha256")
+          (cd "$GITHUB_WORKSPACE" && sha256sum -c "$RUNNER_TEMP/p9-candidate.lock.sha256")
