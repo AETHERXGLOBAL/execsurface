@@ -234,13 +234,7 @@ impl FdTables {
         self.insert_fd(table_id, new_fd, entry);
     }
 
-    fn set_cloexec(
-        &mut self,
-        table_id: u64,
-        fd: i32,
-        cloexec: bool,
-        recovered: Option<FdEntry>,
-    ) {
+    fn set_cloexec(&mut self, table_id: u64, fd: i32, cloexec: bool, recovered: Option<FdEntry>) {
         if let Some(entry) = self
             .tables
             .get_mut(&table_id)
