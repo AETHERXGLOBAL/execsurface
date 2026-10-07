@@ -200,8 +200,10 @@ fn r3_hardlink_truncate_must_not_be_complete_with_path_only_identity() {
 
 #[test]
 fn r3_hardlink_fd_write_must_not_be_complete_with_path_only_identity() {
-    let root =
-        std::env::temp_dir().join(format!("execsurface-stage2-r3-hardlink-write-{}", process::id()));
+    let root = std::env::temp_dir().join(format!(
+        "execsurface-stage2-r3-hardlink-write-{}",
+        process::id()
+    ));
     let workspace = root.join("workspace");
     let target = root.join("credential");
     let alias = workspace.join("alias");
@@ -217,7 +219,9 @@ fn r3_hardlink_fd_write_must_not_be_complete_with_path_only_identity() {
     assert_eq!(target_before.ino(), alias_before.ino());
 
     let observation = observe_command(
-        &CommandSpec::new(fixture()).arg("file-rw").arg(alias.as_os_str()),
+        &CommandSpec::new(fixture())
+            .arg("file-rw")
+            .arg(alias.as_os_str()),
     )
     .expect("observe hardlink fd write");
 
@@ -251,4 +255,3 @@ fn r3_hardlink_fd_write_must_not_be_complete_with_path_only_identity() {
         observation.warnings
     );
 }
-
