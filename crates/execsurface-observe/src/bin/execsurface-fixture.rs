@@ -340,8 +340,16 @@ fn main() {
                     1,
                     "write through untracked fd while CLONE_FILES table is shared"
                 );
-                assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0, "close pipe read end");
-                assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0, "close pipe write end");
+                assert_eq!(
+                    unsafe { libc::close(pipe_fds[0]) },
+                    0,
+                    "close pipe read end"
+                );
+                assert_eq!(
+                    unsafe { libc::close(pipe_fds[1]) },
+                    0,
+                    "close pipe write end"
+                );
             });
             worker.join().expect("shared-fd worker");
         }
