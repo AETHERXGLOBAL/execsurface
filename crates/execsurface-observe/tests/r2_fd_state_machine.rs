@@ -160,4 +160,3 @@ fn r2_shared_fd_table_unknown_io_must_not_claim_authoritative_identity() {
         "shared-FD-table attribution must fail closed until concurrent table mutation is serialized or observed atomically"
     );
 }
-
