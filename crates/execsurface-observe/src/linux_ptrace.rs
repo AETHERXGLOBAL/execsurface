@@ -20,6 +20,8 @@ const OPEN_HOW_BYTES: usize = 24;
 const PTRACE_GET_SYSCALL_INFO_REQUEST: libc::c_uint = 0x420e;
 const PTRACE_SYSCALL_INFO_ENTRY: u8 = 1;
 const PTRACE_SYSCALL_INFO_EXIT: u8 = 2;
+const CLOSE_RANGE_UNSHARE_FLAG: u32 = 1 << 1;
+const CLOSE_RANGE_CLOEXEC_FLAG: u32 = 1 << 2;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -57,7 +59,9 @@ impl PtraceSyscallInfo {
 
 #[derive(Debug, Clone)]
 struct FdEntry {
-    path: String,
+    // None means the kernel FD is known to exist, but ExecSurface cannot
+    // truthfully bind it to a path/object identity.
+    path: Option<String>,
     cloexec: bool,
 }
 
@@ -80,6 +84,7 @@ enum PendingSyscall {
     CloseRange {
         first: u32,
         last: u32,
+        flags: u32,
     },
     Dup {
         old_fd: i32,
@@ -196,39 +201,66 @@ impl FdTables {
         }
     }
 
+    fn set_cloexec_range(&mut self, table_id: u64, first: u32, last: u32) {
+        if let Some(table) = self.tables.get_mut(&table_id) {
+            for (fd, entry) in table {
+                let fd = *fd as u32;
+                if fd >= first && fd <= last {
+                    entry.cloexec = true;
+                }
+            }
+        }
+    }
+
     fn fd(&self, table_id: u64, fd: i32) -> Option<&FdEntry> {
         self.tables.get(&table_id)?.get(&fd)
     }
 
-    fn duplicate(&mut self, table_id: u64, old_fd: i32, new_fd: i32, cloexec: bool) {
-        let Some(mut entry) = self.fd(table_id, old_fd).cloned() else {
-            return;
-        };
+    fn duplicate(&mut self, table_id: u64, old_fd: i32, new_fd: i32, cloexec: bool) -> bool {
+        let mut entry = self.fd(table_id, old_fd).cloned().unwrap_or(FdEntry {
+            path: None,
+            cloexec,
+        });
+        let source_identity_known = entry.path.is_some();
         entry.cloexec = cloexec;
         self.insert_fd(table_id, new_fd, entry);
+        source_identity_known
     }
 
-    fn set_cloexec(&mut self, table_id: u64, fd: i32, cloexec: bool) {
+    fn set_cloexec(&mut self, table_id: u64, fd: i32, cloexec: bool) -> bool {
         if let Some(entry) = self
             .tables
             .get_mut(&table_id)
             .and_then(|table| table.get_mut(&fd))
         {
             entry.cloexec = cloexec;
+            return entry.path.is_some();
         }
+
+        self.insert_fd(
+            table_id,
+            fd,
+            FdEntry {
+                path: None,
+                cloexec,
+            },
+        );
+        false
     }
 
     fn rename_paths(&mut self, from: &str, to: &str) {
         for table in self.tables.values_mut() {
             for entry in table.values_mut() {
-                if entry.path == from {
-                    entry.path = to.to_owned();
-                } else if let Some(suffix) = entry
-                    .path
+                let Some(path) = entry.path.as_mut() else {
+                    continue;
+                };
+                if path == from {
+                    *path = to.to_owned();
+                } else if let Some(suffix) = path
                     .strip_prefix(from)
                     .filter(|suffix| suffix.starts_with('/'))
                 {
-                    entry.path = format!("{to}{suffix}");
+                    *path = format!("{to}{suffix}");
                 }
             }
         }
@@ -888,29 +920,36 @@ fn handle_ptrace_event(
     Ok(())
 }
 
-fn apply_exec_fd_semantics(
+fn ensure_private_fd_table(
     tid: libc::pid_t,
     tracees: &mut HashMap<libc::pid_t, TraceeState>,
     fd_tables: &mut FdTables,
-) {
-    let Some(old_id) = tracees.get(&tid).map(|state| state.fd_table_id) else {
-        return;
-    };
+) -> Option<u64> {
+    let old_id = tracees.get(&tid)?.fd_table_id;
     let users = tracees
         .values()
         .filter(|state| state.fd_table_id == old_id)
         .count();
 
-    let mut table = fd_tables.tables.get(&old_id).cloned().unwrap_or_default();
-    table.retain(|_, entry| !entry.cloexec);
+    if users <= 1 {
+        return Some(old_id);
+    }
 
-    if users > 1 {
-        let new_id = fd_tables.insert_table(table);
-        if let Some(state) = tracees.get_mut(&tid) {
-            state.fd_table_id = new_id;
-        }
-    } else {
-        fd_tables.tables.insert(old_id, table);
+    let new_id = fd_tables.clone_table(old_id);
+    tracees.get_mut(&tid)?.fd_table_id = new_id;
+    Some(new_id)
+}
+
+fn apply_exec_fd_semantics(
+    tid: libc::pid_t,
+    tracees: &mut HashMap<libc::pid_t, TraceeState>,
+    fd_tables: &mut FdTables,
+) {
+    let Some(table_id) = ensure_private_fd_table(tid, tracees, fd_tables) else {
+        return;
+    };
+    if let Some(table) = fd_tables.tables.get_mut(&table_id) {
+        table.retain(|_, entry| !entry.cloexec);
     }
 }
 
@@ -1122,6 +1161,7 @@ fn handle_syscall_entry(
             PendingSyscall::CloseRange {
                 first: args[0] as u32,
                 last: args[1] as u32,
+                flags: args[2] as u32,
             },
         );
         return;
@@ -1217,7 +1257,7 @@ fn handle_syscall_exit(
     else {
         return;
     };
-    let Some(table_id) = tracees.get(&tid).map(|state| state.fd_table_id) else {
+    let Some(mut table_id) = tracees.get(&tid).map(|state| state.fd_table_id) else {
         return;
     };
 
@@ -1225,7 +1265,14 @@ fn handle_syscall_exit(
         PendingSyscall::Open { cloexec } if result >= 0 => {
             let fd = result as i32;
             match proc_fd_path(tid, fd) {
-                Ok(path) => fd_tables.insert_fd(table_id, fd, FdEntry { path, cloexec }),
+                Ok(path) => fd_tables.insert_fd(
+                    table_id,
+                    fd,
+                    FdEntry {
+                        path: Some(path),
+                        cloexec,
+                    },
+                ),
                 Err(error) => collector.warning(
                     tid,
                     "opened_fd_path_unreadable",
@@ -1257,11 +1304,38 @@ fn handle_syscall_exit(
         PendingSyscall::Close { fd } if result == 0 => {
             fd_tables.remove_fd(table_id, fd);
         }
-        PendingSyscall::CloseRange { first, last } if result == 0 => {
-            fd_tables.close_range(table_id, first, last);
+        PendingSyscall::CloseRange { first, last, flags } if result == 0 => {
+            if flags & CLOSE_RANGE_UNSHARE_FLAG != 0 {
+                let Some(private_table_id) =
+                    ensure_private_fd_table(tid, tracees, fd_tables)
+                else {
+                    collector.warning(
+                        tid,
+                        "close_range_unshare_state_unavailable",
+                        "successful close_range(CLOSE_RANGE_UNSHARE) could not establish a private fd table",
+                    );
+                    return;
+                };
+                table_id = private_table_id;
+            }
+
+            if flags & CLOSE_RANGE_CLOEXEC_FLAG != 0 {
+                fd_tables.set_cloexec_range(table_id, first, last);
+            } else {
+                fd_tables.close_range(table_id, first, last);
+            }
         }
         PendingSyscall::Dup { old_fd, cloexec } if result >= 0 => {
-            fd_tables.duplicate(table_id, old_fd, result as i32, cloexec);
+            let new_fd = result as i32;
+            if !fd_tables.duplicate(table_id, old_fd, new_fd, cloexec) {
+                collector.warning(
+                    tid,
+                    "fd_duplicate_source_identity_unknown",
+                    format!(
+                        "successful fd duplication from source fd {old_fd} created fd {new_fd}, but the source object identity was not tracked"
+                    ),
+                );
+            }
         }
         PendingSyscall::DupTo {
             old_fd,
@@ -1269,11 +1343,36 @@ fn handle_syscall_exit(
             cloexec,
         } if result >= 0 => {
             if old_fd != new_fd {
-                fd_tables.duplicate(table_id, old_fd, result as i32, cloexec);
+                let actual_new_fd = result as i32;
+                if !fd_tables.duplicate(table_id, old_fd, actual_new_fd, cloexec) {
+                    collector.warning(
+                        tid,
+                        "fd_duplicate_source_identity_unknown",
+                        format!(
+                            "successful fd duplication from source fd {old_fd} replaced fd {actual_new_fd}, but the source object identity was not tracked"
+                        ),
+                    );
+                }
+            } else if fd_tables.fd(table_id, old_fd).is_none() {
+                collector.warning(
+                    tid,
+                    "fd_same_number_dup_identity_unknown",
+                    format!(
+                        "successful same-fd dup2({old_fd}, {new_fd}) proved the fd was live, but its object identity was not tracked"
+                    ),
+                );
             }
         }
         PendingSyscall::SetFdFlags { fd, flags } if result == 0 => {
-            fd_tables.set_cloexec(table_id, fd, flags & libc::FD_CLOEXEC != 0);
+            if !fd_tables.set_cloexec(table_id, fd, flags & libc::FD_CLOEXEC != 0) {
+                collector.warning(
+                    tid,
+                    "fd_flag_target_identity_unknown",
+                    format!(
+                        "successful F_SETFD updated fd {fd}, but its object identity was not tracked"
+                    ),
+                );
+            }
         }
         PendingSyscall::Rename { from, to } if result == 0 => {
             fd_tables.rename_paths(&from, &to);
@@ -1300,6 +1399,23 @@ fn emit_fd_access(
     collector: &mut Collector,
 ) {
     let Some(entry) = fd_tables.fd(table_id, fd) else {
+        collector.warning(
+            tid,
+            "fd_access_untracked",
+            format!(
+                "successful {operation:?} I/O used fd {fd}, but no fd-state entry was available"
+            ),
+        );
+        return;
+    };
+    let Some(path) = entry.path.as_ref() else {
+        collector.warning(
+            tid,
+            "fd_access_identity_unknown",
+            format!(
+                "successful {operation:?} I/O used fd {fd}, but its object identity was unknown"
+            ),
+        );
         return;
     };
     collector.event(
@@ -1307,7 +1423,7 @@ fn emit_fd_access(
         RawEventKind::FileDescriptorAccess {
             operation,
             fd,
-            path: entry.path.clone(),
+            path: path.clone(),
         },
     );
 }
@@ -1844,7 +1960,7 @@ mod tests {
             shared_id,
             7,
             FdEntry {
-                path: "/tmp/c1-cloexec".to_owned(),
+                path: Some("/tmp/c1-cloexec".to_owned()),
                 cloexec: true,
             },
         );
@@ -1868,14 +1984,14 @@ mod tests {
             shared_id,
             9,
             FdEntry {
-                path: "/tmp/c1-old".to_owned(),
+                path: Some("/tmp/c1-old".to_owned()),
                 cloexec: false,
             },
         );
         tables.duplicate(shared_id, 9, 10, false);
         assert_eq!(
-            tables.fd(shared_id, 10).expect("dup fd").path,
-            "/tmp/c1-old"
+            tables.fd(shared_id, 10).expect("dup fd").path.as_deref(),
+            Some("/tmp/c1-old")
         );
 
         tables.remove_fd(shared_id, 9);
@@ -1883,17 +1999,17 @@ mod tests {
             shared_id,
             9,
             FdEntry {
-                path: "/tmp/c1-new".to_owned(),
+                path: Some("/tmp/c1-new".to_owned()),
                 cloexec: false,
             },
         );
         assert_eq!(
-            tables.fd(shared_id, 9).expect("reused fd").path,
-            "/tmp/c1-new"
+            tables.fd(shared_id, 9).expect("reused fd").path.as_deref(),
+            Some("/tmp/c1-new")
         );
         assert_eq!(
-            tables.fd(shared_id, 10).expect("old dup remains").path,
-            "/tmp/c1-old"
+            tables.fd(shared_id, 10).expect("old dup remains").path.as_deref(),
+            Some("/tmp/c1-old")
         );
 
         tables.close_range(shared_id, 9, 10);
