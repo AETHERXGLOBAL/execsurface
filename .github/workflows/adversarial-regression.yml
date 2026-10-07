@@ -76,6 +76,13 @@ jobs:
       - name: Clippy observer all targets
         run: cargo clippy --locked -p execsurface-observe --all-targets -- -D warnings
 
+      - name: R2 diagnostic - ordinary bash true observation health
+        continue-on-error: true
+        run: |
+          cargo test --locked -p execsurface-observe \
+            --test stage2_external_falsification \
+            r2_control_bash_true_remains_complete_for_supported_behavior -- --nocapture
+
       - name: Run bounded adversarial suite
         shell: bash
         env:
