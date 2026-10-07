@@ -100,3 +100,40 @@ fn r3_direct_truncate_stays_complete_when_lexical_and_kernel_identity_agree() {
         observation.warnings
     );
 }
+
+#[test]
+fn r3_curdir_spelling_does_not_invent_object_identity_divergence() {
+    let root = std::env::temp_dir().join(format!(
+        "execsurface-stage2-r3-curdir-{}",
+        process::id()
+    ));
+    let workspace = root.join("workspace");
+    let target = workspace.join("target");
+
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(&target, b"secret").expect("seed target");
+
+    let lexical = format!("{}/./target", workspace.to_string_lossy());
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("stage2-symlink-truncate")
+            .arg(lexical),
+    )
+    .expect("observe curdir-spelled truncate");
+
+    let target_len = fs::metadata(&target).expect("target metadata").len();
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(target_len, 0, "target must actually be truncated");
+    assert!(
+        !divergence_warning(&observation),
+        "a redundant '.' path component must not be treated as kernel-object divergence"
+    );
+    assert!(
+        observation.complete,
+        "single-task direct side-effectful open with only '.' spelling variance must remain complete: {:?}",
+        observation.warnings
+    );
+}
+
