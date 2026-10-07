@@ -353,6 +353,32 @@ fn main() {
             });
             worker.join().expect("shared-fd worker");
         }
+        Some("stage2-hardlink-after-open-write") => {
+            let target_path = args.next().expect("target path");
+            let alias_path = args.next().expect("alias path");
+            let mut file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&target_path)
+                .expect("open target before hardlink creation");
+            fs::hard_link(&target_path, &alias_path).expect("create hardlink after open");
+            file.seek(SeekFrom::End(0)).expect("seek target end");
+            file.write_all(b"x").expect("write after hardlink creation");
+            file.flush().expect("flush write after hardlink creation");
+        }
+        Some("stage2-hardlink-remove-before-write") => {
+            let target_path = args.next().expect("target path");
+            let alias_path = args.next().expect("alias path");
+            let mut file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&target_path)
+                .expect("open target before hardlink removal");
+            fs::remove_file(&alias_path).expect("remove hardlink before write");
+            file.seek(SeekFrom::End(0)).expect("seek target end");
+            file.write_all(b"x").expect("write after hardlink removal");
+            file.flush().expect("flush write after hardlink removal");
+        }
         Some("stage2-symlink-truncate") => {
             let link_path = args.next().expect("symlink path");
             let file = OpenOptions::new()
