@@ -109,11 +109,15 @@ impl OpenIntentMatcher {
     fn matches(&self, intent: &OpenIntent) -> bool {
         !self.read.is_some_and(|expected| expected != intent.read)
             && !self.write.is_some_and(|expected| expected != intent.write)
-            && !self.create.is_some_and(|expected| expected != intent.create)
+            && !self
+                .create
+                .is_some_and(|expected| expected != intent.create)
             && !self
                 .truncate
                 .is_some_and(|expected| expected != intent.truncate)
-            && !self.append.is_some_and(|expected| expected != intent.append)
+            && !self
+                .append
+                .is_some_and(|expected| expected != intent.append)
             && !self
                 .path_only
                 .is_some_and(|expected| expected != intent.path_only)
