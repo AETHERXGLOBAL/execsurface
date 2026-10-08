@@ -641,6 +641,57 @@ fn validate_verdict_output_preflight(parsed: &CheckArgs) -> Result<VerdictOutput
     Ok(VerdictOutputGuard { protected })
 }
 
+fn workload_written_paths_after_renames(
+    observation: &Observation,
+) -> Result<Vec<PathBuf>, String> {
+    let mut written = Vec::<PathBuf>::new();
+    let mut events = observation.events.iter().collect::<Vec<_>>();
+    events.sort_by_key(|event| event.sequence);
+
+    for event in events {
+        match &event.kind {
+            RawEventKind::FileDescriptorAccess {
+                operation: FileOperation::Write,
+                path,
+                ..
+            } if path.starts_with('/') => {
+                let path = lexical_absolute_path(Path::new(path))?;
+                if !written.iter().any(|existing| existing == &path) {
+                    written.push(path);
+                }
+            }
+            RawEventKind::FileRename { from, to }
+                if from.starts_with('/') && to.starts_with('/') =>
+            {
+                let from = lexical_absolute_path(Path::new(from))?;
+                let to = lexical_absolute_path(Path::new(to))?;
+                if from == to {
+                    continue;
+                }
+
+                let mut next = Vec::with_capacity(written.len());
+                for path in written.drain(..) {
+                    if let Ok(suffix) = path.strip_prefix(&from) {
+                        next.push(to.join(suffix));
+                    } else if path.strip_prefix(&to).is_ok() {
+                        // A successful rename replaces the destination object/tree.
+                        // Any earlier write lineage that belonged only to the replaced
+                        // destination no longer identifies the final object there.
+                    } else {
+                        next.push(path);
+                    }
+                }
+                next.sort();
+                next.dedup();
+                written = next;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(written)
+}
+
 fn validate_verdict_output_postflight(
     parsed: &CheckArgs,
     observation: &Observation,
@@ -649,6 +700,7 @@ fn validate_verdict_output_postflight(
     // Re-run path-based checks after the target because the target can rebind
     // an output path after initial preflight.
     let _ = validate_verdict_output_preflight(parsed)?;
+    let workload_written_paths = workload_written_paths_after_renames(observation)?;
 
     for (output_kind, output) in verdict_output_paths(parsed) {
         let output_object_identity = existing_object_identity(output)?;
@@ -666,23 +718,10 @@ fn validate_verdict_output_postflight(
             }
         }
 
-        for event in &observation.events {
-            let RawEventKind::FileDescriptorAccess {
-                operation: FileOperation::Write,
-                path,
-                ..
-            } = &event.kind
-            else {
-                continue;
-            };
-
-            if !path.starts_with('/') {
-                continue;
-            }
-
-            if artifact_paths_alias(output, Path::new(path))? {
+        for path in &workload_written_paths {
+            if artifact_paths_alias(output, path)? {
                 return Err(format!(
-                    "{output_kind} verdict output overlaps workload-written artifact: {}",
+                    "{output_kind} verdict output overlaps workload-written artifact after observed path transitions: {}",
                     output.display()
                 ));
             }
