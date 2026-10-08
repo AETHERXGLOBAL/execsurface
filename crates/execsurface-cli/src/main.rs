@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,7 +16,7 @@ use execsurface_baseline::{
     ObserverIdentity, PlatformIdentity, ToolIdentity, DEFAULT_LOCKFILE_NAME,
 };
 use execsurface_diff::{diff, CandidateSnapshot, DiffReport};
-use execsurface_model::RawEventKind;
+use execsurface_model::{FileOperation, Observation, RawEventKind};
 use execsurface_normalize::{canonicalize, canonicalize_executable, NormalizationConfig};
 use execsurface_observe::{observe_command, observe_command_with_backend, CommandSpec};
 use execsurface_policy::{
@@ -405,6 +407,8 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
         );
     }
 
+    validate_verdict_output_preflight(&parsed)?;
+
     let baseline_bytes = std::fs::read(&parsed.baseline).map_err(|error| {
         format!(
             "cannot read baseline {}: {error}",
@@ -431,6 +435,7 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
 
     let spec = CommandSpec::new(parsed.program.clone()).args(parsed.command_args.clone());
     let observation = observe_command(&spec).map_err(|error| error.to_string())?;
+    validate_verdict_output_postflight(&parsed, &observation)?;
     let normalization = parsed.normalization_config()?;
     let canonical_surface =
         canonicalize(&observation, &normalization).map_err(|error| error.to_string())?;
@@ -503,6 +508,150 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
     }
 
     Ok(exit_code_for_verdict(verdict_report.verdict))
+}
+
+fn lexical_absolute_path(path: &Path) -> Result<PathBuf, String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()
+            .map_err(|error| format!("cannot resolve current directory: {error}"))?
+            .join(path)
+    };
+
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::Normal(value) => normalized.push(value),
+        }
+    }
+    Ok(normalized)
+}
+
+fn artifact_path_identity(path: &Path) -> Result<PathBuf, String> {
+    if path.exists() {
+        return fs::canonicalize(path)
+            .map_err(|error| format!("cannot resolve path {}: {error}", path.display()));
+    }
+
+    let absolute = lexical_absolute_path(path)?;
+    let parent = absolute.parent().unwrap_or_else(|| Path::new("/"));
+    let resolved_parent = fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    let name = absolute
+        .file_name()
+        .ok_or_else(|| format!("artifact path has no file name: {}", path.display()))?;
+    Ok(resolved_parent.join(name))
+}
+
+#[cfg(unix)]
+fn existing_object_identity(path: &Path) -> Result<Option<(u64, u64)>, String> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(Some((metadata.dev(), metadata.ino()))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!(
+            "cannot inspect artifact identity {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+#[cfg(not(unix))]
+fn existing_object_identity(_path: &Path) -> Result<Option<(u64, u64)>, String> {
+    Ok(None)
+}
+
+fn artifact_paths_alias(left: &Path, right: &Path) -> Result<bool, String> {
+    if let (Some(left_id), Some(right_id)) = (
+        existing_object_identity(left)?,
+        existing_object_identity(right)?,
+    ) {
+        if left_id == right_id {
+            return Ok(true);
+        }
+    }
+
+    Ok(artifact_path_identity(left)? == artifact_path_identity(right)?)
+}
+
+fn verdict_output_paths(parsed: &CheckArgs) -> Vec<(&'static str, &Path)> {
+    let mut outputs = Vec::new();
+    if let Some(path) = parsed.json_output.as_deref() {
+        outputs.push(("JSON", path));
+    }
+    if let Some(path) = parsed.markdown_output.as_deref() {
+        outputs.push(("Markdown", path));
+    }
+    outputs
+}
+
+fn validate_verdict_output_preflight(parsed: &CheckArgs) -> Result<(), String> {
+    let outputs = verdict_output_paths(parsed);
+    let mut protected = vec![("baseline", parsed.baseline.as_path())];
+    if let Some(policy) = parsed.policy.as_deref() {
+        protected.push(("policy", policy));
+    }
+
+    for (output_kind, output) in &outputs {
+        for (input_kind, input) in &protected {
+            if artifact_paths_alias(output, input)? {
+                return Err(format!(
+                    "{output_kind} verdict output aliases protected {input_kind} artifact: {}",
+                    output.display()
+                ));
+            }
+        }
+    }
+
+    if outputs.len() == 2 && artifact_paths_alias(outputs[0].1, outputs[1].1)? {
+        return Err(format!(
+            "JSON and Markdown verdict outputs alias the same artifact: {}",
+            outputs[0].1.display()
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_verdict_output_postflight(
+    parsed: &CheckArgs,
+    observation: &Observation,
+) -> Result<(), String> {
+    // Re-run the protected-artifact check after the target because the target
+    // can rebind an output path (for example by creating a symlink) after the
+    // initial preflight but before report materialization.
+    validate_verdict_output_preflight(parsed)?;
+
+    for (output_kind, output) in verdict_output_paths(parsed) {
+        for event in &observation.events {
+            let RawEventKind::FileDescriptorAccess {
+                operation: FileOperation::Write,
+                path,
+                ..
+            } = &event.kind
+            else {
+                continue;
+            };
+
+            if !path.starts_with('/') {
+                continue;
+            }
+
+            if artifact_paths_alias(output, Path::new(path))? {
+                return Err(format!(
+                    "{output_kind} verdict output overlaps workload-written artifact: {}",
+                    output.display()
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn write_verdict_outputs(
