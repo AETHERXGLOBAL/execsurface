@@ -40,28 +40,33 @@ jobs:
           printf '%s\n' "$out"
           python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["version"]=="1.0.0"; assert d["tag"]=="v1.0.0"; assert d["stable_channel"]=="v1"; assert d["release_kind"]=="stable"; assert d["is_prerelease"] is False; assert d["request_revision"]==2' <<<"$out"
 
-      - name: Prove release records are prepared but public status is not pre-announced
+      - name: Prove published stable-v1 records and public status
         shell: bash
         run: |
           set -euo pipefail
           test -s docs/releases/v1.0.0.md
           test -s docs/release/V1_0_0_RELEASE_DECISION.md
           grep -F 'RELEASE_V1_0_AUTHORIZED_BOUNDED' docs/release/V1_0_0_RELEASE_DECISION.md
+          grep -F 'PUBLISHED STABLE RELEASE — INTERNALLY QUALIFIED BOUNDED' docs/releases/v1.0.0.md
           grep -F 'Independent external validation is not claimed' docs/releases/v1.0.0.md
-          grep -F 'v0.1.0-alpha.6' README.md
-          grep -F 'Public release: `v0.1.0-alpha.6`' docs/STATUS.md
+          grep -F 'Current stable release' README.md
+          grep -F 'v1.0.0' README.md
+          grep -F 'Public release: `v1.0.0`' docs/STATUS.md
 
-      - name: Prove stable refs and release do not exist before arming merge
+      - name: Prove stable refs and GitHub Release exist with stable maturity
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          test -z "$(git ls-remote --tags origin refs/tags/v1 refs/tags/v1.0.0)"
-          if gh release view v1.0.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::error::v1.0.0 GitHub Release already exists before arming merge"
-            exit 1
-          fi
+          git fetch --force --tags origin
+          stable_sha="$(git rev-parse 'v1^{commit}')"
+          immutable_sha="$(git rev-parse 'v1.0.0^{commit}')"
+          test "$stable_sha" = "$immutable_sha"
+          git merge-base --is-ancestor "$immutable_sha" HEAD
+          gh release view v1.0.0 --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isDraft,isPrerelease \
+            --jq 'select(.tagName == "v1.0.0" and .isDraft == false and .isPrerelease == false)' >/dev/null
 
   immutable-tag-governance:
     name: Immutable v1 tag governance
