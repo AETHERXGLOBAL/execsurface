@@ -203,13 +203,23 @@ pub fn run_init(args: &[OsString]) -> Result<(), String> {
         println!(
             "Store those values in trusted GitHub repository/environment variables, not in checkout files."
         );
+        println!();
+        println!("With GitHub CLI, after `execsurface learn` creates execsurface.lock.json:");
+        println!(
+            "  baseline_digest=\"$(python3 -c 'import json; print(json.load(open(\"execsurface.lock.json\"))[\"baseline_digest\"])')\""
+        );
+        println!("  gh variable set EXECSURFACE_BASELINE_DIGEST --body \"$baseline_digest\"");
+        println!(
+            "  policy_sha256=\"sha256:$(sha256sum execsurface-policy.json | awk '{{print $1}}')\""
+        );
+        println!("  gh variable set EXECSURFACE_POLICY_SHA256 --body \"$policy_sha256\"");
     }
     Ok(())
 }
 
 fn render_workflow(command: &str) -> String {
     format!(
-        "name: ExecSurface\n\non:\n  pull_request:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\njobs:\n  execsurface:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: actions/checkout@{CHECKOUT_PIN} # v7.0.1\n\n      - name: ExecSurface runtime drift\n        uses: AETHERXGLOBAL/execsurface@v0.1\n        with:\n          command: >-\n            {command}\n          baseline: execsurface.lock.json\n          policy: {POLICY_PATH}\n          expected-baseline-digest: ${{{{ vars.EXECSURFACE_BASELINE_DIGEST }}}}\n          expected-policy-sha256: ${{{{ vars.EXECSURFACE_POLICY_SHA256 }}}}\n          require-custody: \"true\"\n          fail-on-review: \"false\"\n"
+        "name: ExecSurface\n\non:\n  pull_request:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\njobs:\n  execsurface:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: actions/checkout@{CHECKOUT_PIN} # v7.0.1\n\n      - name: Run target command as its own correctness gate\n        run: >-\n            {command}\n\n      - name: ExecSurface runtime drift\n        uses: AETHERXGLOBAL/execsurface@v0.1\n        with:\n          command: >-\n            {command}\n          baseline: execsurface.lock.json\n          policy: {POLICY_PATH}\n          expected-baseline-digest: ${{{{ vars.EXECSURFACE_BASELINE_DIGEST }}}}\n          expected-policy-sha256: ${{{{ vars.EXECSURFACE_POLICY_SHA256 }}}}\n          require-custody: \"true\"\n          fail-on-review: \"false\"\n"
     )
 }
 

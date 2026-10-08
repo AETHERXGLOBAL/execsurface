@@ -9,7 +9,7 @@
   <a href="https://github.com/AETHERXGLOBAL/execsurface/releases"><img alt="Release" src="https://img.shields.io/github/v/release/AETHERXGLOBAL/execsurface?include_prereleases&label=release"></a>
   <img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue">
   <img alt="Linux x86_64" src="https://img.shields.io/badge/platform-Linux%20x86__64-informational">
-  <img alt="Final Supported Alpha" src="https://img.shields.io/badge/status-Final%20Supported%20Alpha-yellow">
+  <img alt="Current Supported Alpha" src="https://img.shields.io/badge/status-Current%20Supported%20Alpha-yellow">
 </p>
 
 ExecSurface learns an accepted **runtime execution surface**, runs the same command later, and reports execution behavior that appeared, disappeared, or changed.
@@ -98,7 +98,7 @@ execsurface init --command "cargo test --locked" --github-actions
 
 `init` creates a starter policy and workflow. It **does not run your target command** and does not create a baseline automatically.
 
-The generated workflow uses the stable Final Supported Alpha Action channel:
+The generated workflow uses the current supported Alpha Action channel:
 
 ```text
 AETHERXGLOBAL/execsurface@v0.1
