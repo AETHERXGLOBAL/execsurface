@@ -266,7 +266,6 @@ fn r5_v3_most_restrictive_wins_is_unchanged() {
     );
 }
 
-
 #[test]
 fn r5_open_intent_absence_is_not_synthesized_as_all_false() {
     let policy = parse_policy(
@@ -450,5 +449,8 @@ fn r5_v3_unknown_fields_remain_parse_errors() {
           }]
         }"#,
     );
-    assert!(parsed.is_err(), "unknown v3 matcher fields must not be ignored");
+    assert!(
+        parsed.is_err(),
+        "unknown v3 matcher fields must not be ignored"
+    );
 }
