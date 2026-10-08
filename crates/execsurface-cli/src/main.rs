@@ -839,6 +839,9 @@ fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
                 index += 2;
             }
             "--expect-baseline-digest" => {
+                if expected_baseline_digest.is_some() {
+                    return Err(usage("duplicate --expect-baseline-digest"));
+                }
                 expected_baseline_digest = Some(path_string(option_value(
                     args,
                     index,
@@ -847,6 +850,9 @@ fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
                 index += 2;
             }
             "--expect-policy-sha256" => {
+                if expected_policy_sha256.is_some() {
+                    return Err(usage("duplicate --expect-policy-sha256"));
+                }
                 expected_policy_sha256 = Some(path_string(option_value(
                     args,
                     index,
