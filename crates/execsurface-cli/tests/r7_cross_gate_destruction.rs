@@ -239,3 +239,44 @@ fn r7_verdict_output_cannot_overwrite_workload_written_object() {
 
     let _ = fs::remove_dir_all(dir);
 }
+
+
+#[test]
+fn r7_target_cannot_rebind_output_path_to_verified_baseline_after_preflight() {
+    let dir = temp_dir("post-target-rebind");
+    let baseline = dir.join("baseline.lock.json");
+    let output_path = dir.join("report.json");
+    learn(&dir, &baseline);
+    let before = fs::read(&baseline).expect("baseline bytes before");
+
+    let target = format!(
+        "ln -s {} {}",
+        baseline.display(),
+        output_path.display()
+    );
+    let output = check(
+        &dir,
+        &baseline,
+        None,
+        Some(&output_path),
+        None,
+        &target,
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "post-target output identity rebinding must fail before report write"
+    );
+    assert!(
+        output_path.is_symlink(),
+        "target should have executed and created the adversarial alias"
+    );
+    assert_eq!(
+        fs::read(&baseline).expect("baseline bytes after"),
+        before,
+        "post-target symlink rebinding must not redirect report bytes into the baseline"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
