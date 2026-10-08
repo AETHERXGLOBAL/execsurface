@@ -125,6 +125,7 @@ dependencies = [
  "execsurface-diff",
  "execsurface-model",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
