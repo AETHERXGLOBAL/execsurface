@@ -650,3 +650,103 @@ fn merge_auth_preexisting_directory_report_is_rejected_before_target_execution()
 
     let _ = fs::remove_dir_all(dir);
 }
+
+
+#[test]
+fn merge_auth_parent_directory_rebinding_cannot_redirect_absent_report() {
+    let dir = temp_dir("parent-directory-rebind");
+    let baseline = dir.join("baseline.lock.json");
+    let parent = dir.join("route");
+    let moved_parent = dir.join("route-old");
+    let report = parent.join("report.json");
+
+    fs::create_dir(&parent).expect("create original report parent");
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "mv '{}' '{}' && mkdir '{}' && echo controlled-drift >/dev/null",
+        parent.display(),
+        moved_parent.display(),
+        parent.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run parent-directory rebind destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "an absent verdict output must not be materialized through a parent directory identity that changed after preflight; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !report.exists(),
+        "ExecSurface must not create a report after the selected output parent was rebound"
+    );
+    assert!(
+        moved_parent.is_dir() && parent.is_dir(),
+        "target must actually replace the selected output parent directory"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_parent_symlink_rebinding_cannot_redirect_absent_report() {
+    let dir = temp_dir("parent-symlink-rebind");
+    let baseline = dir.join("baseline.lock.json");
+    let left = dir.join("left");
+    let right = dir.join("right");
+    let parent = dir.join("route");
+    let report = parent.join("report.json");
+    let redirected_report = right.join("report.json");
+
+    fs::create_dir(&left).expect("create original symlink target");
+    fs::create_dir(&right).expect("create replacement symlink target");
+    symlink(&left, &parent).expect("create original report-parent symlink");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "rm '{}' && ln -s '{}' '{}' && echo controlled-drift >/dev/null",
+        parent.display(),
+        right.display(),
+        parent.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run parent-symlink rebind destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "an absent verdict output must not follow a parent symlink whose resolution changed after preflight; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !redirected_report.exists(),
+        "ExecSurface must not materialize the report through the rebound parent symlink"
+    );
+    assert!(parent.is_symlink(), "target must leave the rebound parent symlink in place");
+
+    let _ = fs::remove_file(&parent);
+    let _ = fs::remove_dir_all(dir);
+}
