@@ -637,13 +637,34 @@ fn verdict_output_state(path: &Path) -> Result<VerdictOutputState, String> {
     }
 }
 
-fn reject_verdict_output_symlink(kind: &str, path: &Path) -> Result<(), String> {
+fn validate_verdict_output_materialization_target(
+    kind: &str,
+    path: &Path,
+) -> Result<(), String> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
-            "{kind} verdict output path must not be a symbolic link: {}",
-            path.display()
-        )),
-        Ok(_) => Ok(()),
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "{kind} verdict output path must not be a symbolic link: {}",
+                    path.display()
+                ));
+            }
+            if !metadata.file_type().is_file() {
+                return Err(format!(
+                    "{kind} verdict output path must be a regular file when it already exists: {}",
+                    path.display()
+                ));
+            }
+            #[cfg(unix)]
+            if metadata.nlink() != 1 {
+                return Err(format!(
+                    "{kind} verdict output file must have link count 1; found {}: {}",
+                    metadata.nlink(),
+                    path.display()
+                ));
+            }
+            Ok(())
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!(
             "cannot inspect {kind} verdict output path {}: {error}",
@@ -655,7 +676,7 @@ fn reject_verdict_output_symlink(kind: &str, path: &Path) -> Result<(), String> 
 fn validate_verdict_output_preflight(parsed: &CheckArgs) -> Result<VerdictOutputGuard, String> {
     let outputs = verdict_output_paths(parsed);
     for (output_kind, output) in &outputs {
-        reject_verdict_output_symlink(output_kind, output)?;
+        validate_verdict_output_materialization_target(output_kind, output)?;
     }
 
     let mut protected = vec![("baseline", parsed.baseline.as_path())];
