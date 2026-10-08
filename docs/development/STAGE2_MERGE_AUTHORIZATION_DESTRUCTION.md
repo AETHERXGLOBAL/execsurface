@@ -132,15 +132,79 @@ The selected output-materialization contract is now:
 
 This is an internal report-materialization correctness rule. It does not redefine public observation semantics.
 
+## Destruction expansion — parent-resolution rebinding
+
+After the 15-case corpus was GREEN, independent destruction challenged a different
+assumption: an absent verdict-output leaf can remain `Absent -> Absent` while the
+directory object that resolves its parent pathname changes during workload execution.
+
+Two cases were frozen without changing product code:
+
+- replace the selected output parent directory with a different directory object at the same pathname;
+- rebind a symlinked output parent from one directory object to another while the report leaf remains absent.
+
+The first test addition at:
+
+`411ac0c22cbfa6a4cbcd73e8e7c6c5f1768c2633`
+
+was stopped by rustfmt before semantic execution and is retained as formatting-only RED.
+
+After formatting-only correction, semantic fail-first evidence was obtained at:
+
+`c0f381f028e6875ef7fefa28918c2c5e86c9fd19`
+
+Workflow evidence:
+
+- P8 A3 typed evidence output — `37724282820` — FAILURE;
+- merge-authorization corpus result — **15 PASS / 2 FAIL**.
+
+Failing cases:
+
+- `merge_auth_parent_directory_rebinding_cannot_redirect_absent_report`;
+- `merge_auth_parent_symlink_rebinding_cannot_redirect_absent_report`.
+
+The minimal cause was that the verdict-output snapshot tracked the output leaf state
+but not the identity of the directory object through which an absent leaf would later
+be materialized. Therefore a parent could be rebound while the leaf still appeared
+unchanged.
+
+### Bounded correction
+
+The internal verdict-output guard now snapshots the resolved immediate parent object
+identity on the qualified Unix boundary using the same bounded device+inode identity
+discipline already used for protected objects.
+
+Postflight must prove that the parent object identity is unchanged before report
+materialization. This rejects:
+
+- parent directory replacement at the same pathname;
+- parent symlink rebinding to a different directory object;
+- a previously missing parent becoming materializable during the workload.
+
+No public schema or observer semantics were changed.
+
+The first implementation commit:
+
+`3f959b49f09bc1d290eced3c901f1b3ca216d332`
+
+was stopped by rustfmt before semantic execution and is retained as formatting-only RED.
+
+The formatting-only correction produced the qualified product source:
+
+`ded88461f548596a8cf2aa4cce932976726ed75f`
+
+On that source the expanded corpus is **17/17 PASS** and all required qualification
+workflows are GREEN.
+
 ## Final hostile corpus
 
 Qualified product source for this destruction round:
 
-`51c6479f8bc5940afa61176526df8eb830ee57f6`
+`ded88461f548596a8cf2aa4cce932976726ed75f`
 
 `merge_authorization_destruction.rs`:
 
-**15/15 PASS**
+**17/17 PASS**
 
 Coverage includes:
 
@@ -158,7 +222,9 @@ Coverage includes:
 12. target-created broken symlink output;
 13. preexisting live symlink output;
 14. preexisting hardlinked output;
-15. preexisting directory output rejected before target execution.
+15. preexisting directory output rejected before target execution;
+16. absent report rejected after parent directory object replacement;
+17. absent report rejected after parent symlink rebinding.
 
 The dedicated hardlink raw-v2 boundary corpus also remains GREEN.
 
@@ -166,16 +232,16 @@ The dedicated hardlink raw-v2 boundary corpus also remains GREEN.
 
 All required workflows completed SUCCESS on `51c6479f8bc5940afa61176526df8eb830ee57f6`:
 
-- CI — `37722850606` — SUCCESS
-- Stage-2 Final Internal Gate — `37722850605` — SUCCESS
-- Adversarial Regression — `37722850573` — SUCCESS
-- Ptrace Lifecycle Regression — `37722850607` — SUCCESS
-- P9.3 Compatibility Contract — `37722850565` — SUCCESS
-- Registry Packaging Gate — `37722850570` — SUCCESS
-- Public Consumer Smoke — `37722850663` — SUCCESS
-- P8 A3.4 consumer contract red team — `37722850614` — SUCCESS
-- P8 A3 typed report prototype — `37722850661` — SUCCESS
-- P8 A3 typed evidence output — `37722850687` — SUCCESS
+- CI — `37724462607` — SUCCESS
+- Stage-2 Final Internal Gate — `37724462742` — SUCCESS
+- Adversarial Regression — `37724462867` — SUCCESS
+- Ptrace Lifecycle Regression — `37724462678` — SUCCESS
+- P9.3 Compatibility Contract — `37724462702` — SUCCESS
+- Registry Packaging Gate — `37724462667` — SUCCESS
+- Public Consumer Smoke — `37724462884` — SUCCESS
+- P8 A3.4 consumer contract red team — `37724462937` — SUCCESS
+- P8 A3 typed report prototype — `37724462642` — SUCCESS
+- P8 A3 typed evidence output — `37724462873` — SUCCESS
 
 The Stage-2 Final Internal Gate replays R1-R8 plus the post-R8 merge-authorization destruction corpus.
 
@@ -188,7 +254,9 @@ The following negative evidence is intentionally preserved:
 - formatting-only RED runs while new tests were being added;
 - symlink semantic failures at `58cca0ac26f26b06f812d0f9f7a547a54b24a0eb`;
 - hardlink/non-regular semantic failures at `269a4132dab96b0cf3ebe54afcbe576d0e3d3395`;
-- formatting-only RED at `6eac84df757dc88d7a78dbca07504f8e4905c555`.
+- formatting-only RED at `6eac84df757dc88d7a78dbca07504f8e4905c555`;
+- parent-resolution semantic failures at `c0f381f028e6875ef7fefa28918c2c5e86c9fd19`;
+- formatting-only REDs at `411ac0c22cbfa6a4cbcd73e8e7c6c5f1768c2633` and `3f959b49f09bc1d290eced3c901f1b3ca216d332`.
 
 Formatting-only failures are not counted as semantic falsification evidence.
 
