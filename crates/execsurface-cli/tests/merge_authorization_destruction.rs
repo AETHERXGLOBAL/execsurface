@@ -446,4 +446,3 @@ fn merge_auth_untouched_preexisting_report_remains_usable() {
 
     let _ = fs::remove_dir_all(dir);
 }
-
