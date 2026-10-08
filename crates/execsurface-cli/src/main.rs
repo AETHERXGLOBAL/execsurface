@@ -641,9 +641,7 @@ fn validate_verdict_output_preflight(parsed: &CheckArgs) -> Result<VerdictOutput
     Ok(VerdictOutputGuard { protected })
 }
 
-fn workload_written_paths_after_renames(
-    observation: &Observation,
-) -> Result<Vec<PathBuf>, String> {
+fn workload_written_paths_after_renames(observation: &Observation) -> Result<Vec<PathBuf>, String> {
     let mut written = Vec::<PathBuf>::new();
     let mut events = observation.events.iter().collect::<Vec<_>>();
     events.sort_by_key(|event| event.sequence);
