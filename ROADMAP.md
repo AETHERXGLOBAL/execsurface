@@ -20,7 +20,7 @@ ExecSurface advances only through evidence-preserving changes:
 
 **OPEN / ACTIVE**
 
-The production-readiness program is tracked in issue `#129` and the frozen qualification contract is `docs/PRODUCTION_READINESS.md`.
+The production-readiness program is tracked in issue `#129`, the frozen qualification contract is `docs/PRODUCTION_READINESS.md`, and the current Alpha.6 gap analysis is `docs/development/V1_PRODUCTION_READINESS_GAP_ANALYSIS.md`.
 
 The program does not authorize a stable-release claim from internal CI alone. Production qualification requires independent external evidence, a stable compatibility contract, public-consumer reliability, repository/supply-chain controls, real-workload evidence, and an evidence-qualified release candidate.
 
@@ -30,7 +30,7 @@ P8 remains the external-evidence authority for the independent validation portio
 
 **OPEN / ACTIVE**
 
-Obtain independent reproduction, criticism, counterexamples, interoperability findings and real-workload evidence against the published Alpha.5 release.
+Obtain independent reproduction, criticism, counterexamples, interoperability findings and real-workload evidence against the current supported public release. Historical Alpha.5 evidence remains retained; current v1-readiness execution/use evidence should target Alpha.6 unless a protocol explicitly freezes another source.
 
 Tracking: issues `#114` and `#118`.
 
@@ -71,13 +71,13 @@ No general backend-equivalence claim is authorized.
 
 **NOT YET CLAIMED**
 
-Linux x86_64 remains the public support boundary for Alpha.5. ARM64 or additional operating-system support may be reconsidered only after independent, reproducible platform evidence closes the relevant compatibility and semantic gates.
+Linux x86_64 remains the public support boundary for Alpha.6. ARM64 or additional operating-system support may be reconsidered only after independent, reproducible platform evidence closes the relevant compatibility and semantic gates.
 
 Historical ARM64 negative evidence remains retained and must not be reinterpreted as support.
 
 ## R6 — Release discipline
 
-Future public releases should preserve the Alpha.5 release standard or strengthen it:
+Future public releases should preserve the Alpha.6 release standard or strengthen it:
 
 1. freeze the exact release source;
 2. run full source and adversarial gates;
