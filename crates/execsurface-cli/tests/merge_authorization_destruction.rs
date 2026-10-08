@@ -651,7 +651,6 @@ fn merge_auth_preexisting_directory_report_is_rejected_before_target_execution()
     let _ = fs::remove_dir_all(dir);
 }
 
-
 #[test]
 fn merge_auth_parent_directory_rebinding_cannot_redirect_absent_report() {
     let dir = temp_dir("parent-directory-rebind");
@@ -745,7 +744,10 @@ fn merge_auth_parent_symlink_rebinding_cannot_redirect_absent_report() {
         !redirected_report.exists(),
         "ExecSurface must not materialize the report through the rebound parent symlink"
     );
-    assert!(parent.is_symlink(), "target must leave the rebound parent symlink in place");
+    assert!(
+        parent.is_symlink(),
+        "target must leave the rebound parent symlink in place"
+    );
 
     let _ = fs::remove_file(&parent);
     let _ = fs::remove_dir_all(dir);
