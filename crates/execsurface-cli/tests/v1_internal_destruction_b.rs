@@ -39,13 +39,7 @@ fn release_contract(args: &[&str]) -> Output {
 
 #[test]
 fn release_classifier_rejects_mismatched_and_prerelease_v1_identities() {
-    let mismatched = release_contract(&[
-        "classify",
-        "--version",
-        "1.0.0",
-        "--tag",
-        "v1.0.1",
-    ]);
+    let mismatched = release_contract(&["classify", "--version", "1.0.0", "--tag", "v1.0.1"]);
     assert_eq!(mismatched.status.code(), Some(2));
 
     let prerelease = release_contract(&[
@@ -57,13 +51,7 @@ fn release_classifier_rejects_mismatched_and_prerelease_v1_identities() {
     ]);
     assert_eq!(prerelease.status.code(), Some(2));
 
-    let stable = release_contract(&[
-        "classify",
-        "--version",
-        "1.0.0",
-        "--tag",
-        "v1.0.0",
-    ]);
+    let stable = release_contract(&["classify", "--version", "1.0.0", "--tag", "v1.0.0"]);
     assert!(stable.status.success());
     let stdout = String::from_utf8_lossy(&stable.stdout);
     assert!(stdout.contains(r#""stable_channel": "v1""#));
@@ -197,7 +185,9 @@ fn release_workflows_enforce_governance_and_consumer_ordering() {
     );
 
     assert!(
-        release.contains("needs: [release, binary-consumer, cargo-tag-consumer, immutable-action-consumer]"),
+        release.contains(
+            "needs: [release, binary-consumer, cargo-tag-consumer, immutable-action-consumer]"
+        ),
         "stable-channel promotion must depend on immutable artifact/consumer proof"
     );
     assert!(
