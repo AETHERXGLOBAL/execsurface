@@ -827,8 +827,7 @@ fn validate_verdict_output_postflight(
     let _ = validate_verdict_output_preflight(parsed)?;
 
     for output in &guard.outputs {
-        let current_parent_object_identity =
-            verdict_output_parent_object_identity(&output.path)?;
+        let current_parent_object_identity = verdict_output_parent_object_identity(&output.path)?;
         if current_parent_object_identity != output.parent_object_identity {
             return Err(format!(
                 "{} verdict output parent identity changed during workload execution and is reserved from report materialization: {}",
