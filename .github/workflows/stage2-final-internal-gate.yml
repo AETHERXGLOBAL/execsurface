@@ -1,0 +1,104 @@
+name: Stage-2 Final Internal Gate
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/stage2-final-internal-gate.yml'
+      - '.github/workflows/adversarial-regression.yml'
+      - 'action.yml'
+      - 'action/**'
+      - 'crates/**'
+      - 'scripts/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'rust-toolchain'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/stage2-final-internal-gate.yml'
+      - '.github/workflows/adversarial-regression.yml'
+      - 'action.yml'
+      - 'action/**'
+      - 'crates/**'
+      - 'scripts/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'rust-toolchain'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-internal:
+    name: FINAL_INTERNAL_GATE / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Environment evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          uname -a
+          rustc --version --verbose
+          cargo --version
+          cc --version
+
+      - name: Anti-drift formatting gate
+        run: cargo fmt --all -- --check
+
+      - name: Anti-drift Clippy gate
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Replay R1 external falsification acceptance
+        run: cargo test --locked -p execsurface-observe --test stage2_external_falsification -- --test-threads=1 --nocapture
+
+      - name: Replay R2 fd state-machine remediation
+        run: cargo test --locked -p execsurface-observe --test r2_fd_state_machine -- --test-threads=1 --nocapture
+
+      - name: Replay R3 object-identity authority
+        run: cargo test --locked -p execsurface-observe --test r3_object_identity -- --test-threads=1 --nocapture
+
+      - name: Replay R4 CLI custody
+        run: cargo test --locked -p execsurface --test r4_custody -- --test-threads=1 --nocapture
+
+      - name: Replay R4 Action custody
+        run: cargo test --locked -p execsurface --test r4_action_custody -- --test-threads=1 --nocapture
+
+      - name: Replay R5 policy expressiveness
+        run: cargo test --locked -p execsurface-policy --test r5_policy_expressiveness -- --test-threads=1 --nocapture
+
+      - name: Replay R6 CI trigger contract
+        run: cargo test --locked -p execsurface --test r6_ci_trigger_contract -- --test-threads=1 --nocapture
+
+      - name: Replay R7 cross-gate destruction
+        run: cargo test --locked -p execsurface --test r7_cross_gate_destruction -- --test-threads=1 --nocapture
+
+      - name: Execute R8 composed hostile corpus
+        run: cargo test --locked -p execsurface --test r8_final_internal_gate -- --test-threads=1 --nocapture
+
+      - name: Full workspace qualification
+        run: cargo test --locked --workspace --all-targets
+
+      - name: Lockfile integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- Cargo.lock
+          test -z "$(git status --porcelain -- Cargo.lock)"
