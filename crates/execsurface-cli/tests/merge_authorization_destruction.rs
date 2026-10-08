@@ -523,7 +523,10 @@ fn merge_auth_target_created_broken_symlink_report_is_rejected_postflight() {
         "a broken symlink created at the selected report path during workload execution must fail closed; stderr={}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(report.is_symlink(), "target must actually create the broken symlink");
+    assert!(
+        report.is_symlink(),
+        "target must actually create the broken symlink"
+    );
     assert!(
         !indirect_target.exists(),
         "ExecSurface must not follow the target-created symlink and create its target"
