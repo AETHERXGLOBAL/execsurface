@@ -10,6 +10,7 @@ on:
       - "docs/external/P8_A3_TYPED_EVIDENCE_TRIAL_MANIFEST.json"
       - "docs/external/P8_A3_TYPED_EVIDENCE_TRIAL_REPORT_TEMPLATE.md"
       - "scripts/p8_a3_external_trial_capture.py"
+      - "scripts/tests/test_p8_a3_trial_log_privacy.py"
       - "scripts/p8_a3_typed_evidence_reference_consumer.py"
       - "scripts/p8_a3_typed_evidence_mutation_redteam.py"
 
@@ -38,6 +39,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m py_compile             scripts/p8_a3_external_trial_capture.py             scripts/p8_a3_typed_evidence_reference_consumer.py             scripts/p8_a3_typed_evidence_mutation_redteam.py
+          python3 -m unittest discover -s scripts/tests -p 'test_p8_a3_trial_log_privacy.py' -v
           python3 - <<'PY'
           import json
           from pathlib import Path
