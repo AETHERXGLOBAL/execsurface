@@ -53,6 +53,7 @@ dependencies = [
  "execsurface-policy",
  "execsurface-report",
  "serde_json",
+ "sha2",
 ]
 [[package]]
 name = "execsurface-baseline"
