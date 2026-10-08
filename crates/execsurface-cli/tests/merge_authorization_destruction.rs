@@ -256,3 +256,42 @@ fn merge_auth_written_object_hardlinked_to_report_then_source_removed_is_protect
 
     let _ = fs::remove_dir_all(dir);
 }
+
+
+#[test]
+fn merge_auth_truncate_only_report_path_must_not_be_overwritten() {
+    let dir = temp_dir("truncate-only-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::write(&report, b"PREEXISTING").expect("seed report target");
+
+    let target = format!(": > '{}'", report.display());
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run truncate-only destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a report path truncated by the workload must be treated as workload-mutated even without a later write syscall; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&report).expect("truncated workload-owned report path"),
+        b"",
+        "ExecSurface must not overwrite the empty state produced by workload O_TRUNC"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
