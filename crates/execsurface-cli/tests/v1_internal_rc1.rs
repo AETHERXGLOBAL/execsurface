@@ -28,49 +28,48 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn v1_source_identity_requires_an_explicit_release_state() {
+fn v1_source_identity_requires_the_published_stable_release_state() {
     let cargo = read("Cargo.toml");
     let action_tag = read("action/release-tag.txt");
     let release_request = read(".release/release-request.json");
+    let decision = read("docs/release/V1_0_0_RELEASE_DECISION.md");
+    let notes = read("docs/releases/v1.0.0.md");
+    let readme = read("README.md");
+    let status = read("docs/STATUS.md");
 
     assert!(
         cargo.contains(r#"version = "1.0.0""#),
-        "v1 source version must be 1.0.0"
+        "published v1 source version must remain 1.0.0"
     );
     assert_eq!(
         action_tag.trim(),
         "v1.0.0",
-        "candidate Action source must identify the intended immutable v1 tag"
+        "published Action source must retain the immutable v1.0.0 identity"
     );
-
-    let rc_unarmed = release_request.contains(r#""version": "0.1.0-alpha.6""#)
-        && release_request.contains(r#""tag": "v0.1.0-alpha.6""#)
-        && release_request.contains(r#""stable_channel": "v0.1""#);
-
-    let release_armed = release_request.contains(r#""version": "1.0.0""#)
-        && release_request.contains(r#""tag": "v1.0.0""#)
-        && release_request.contains(r#""stable_channel": "v1""#)
-        && release_request.contains(r#""request_revision": 2"#);
-
-    if release_armed {
-        let decision = read("docs/release/V1_0_0_RELEASE_DECISION.md");
-        let notes = read("docs/releases/v1.0.0.md");
-        assert!(
-            decision.contains("RELEASE_V1_0_AUTHORIZED_BOUNDED"),
-            "armed v1 request requires explicit bounded release authorization"
-        );
-        assert!(
-            notes.contains("AUTHORIZED STABLE RELEASE CANDIDATE — PUBLICATION PENDING"),
-            "armed v1 request requires release notes that do not pre-claim publication"
-        );
-    }
-
     assert!(
-        rc_unarmed || release_armed,
-        "release request must be either the frozen RC-unarmed Alpha.6 state or the explicitly authorized v1.0.0 state"
+        release_request.contains(r#""version": "1.0.0""#)
+            && release_request.contains(r#""tag": "v1.0.0""#)
+            && release_request.contains(r#""stable_channel": "v1""#)
+            && release_request.contains(r#""request_revision": 2"#),
+        "published state must retain the exact authorized v1.0.0 release request"
+    );
+    assert!(
+        decision.contains("RELEASE_V1_0_AUTHORIZED_BOUNDED"),
+        "published v1 state must retain explicit bounded release authorization"
+    );
+    assert!(
+        notes.contains("PUBLISHED STABLE RELEASE — INTERNALLY QUALIFIED BOUNDED"),
+        "release record must advance from publication-pending to the published stable state"
+    );
+    assert!(
+        readme.contains("Current stable release") && readme.contains("v1.0.0"),
+        "README must identify v1.0.0 as the current stable release after publication"
+    );
+    assert!(
+        status.contains("Public release: `v1.0.0`"),
+        "authoritative status must identify v1.0.0 as public after publication"
     );
 }
-
 #[test]
 fn rc1_init_generates_future_stable_v1_action_channel() {
     let dir = temp_dir("init-v1-channel");
@@ -108,20 +107,23 @@ fn rc1_init_generates_future_stable_v1_action_channel() {
 }
 
 #[test]
-fn rc1_public_documents_still_identify_alpha6_as_published_release() {
+fn published_v1_documents_preserve_alpha6_as_historical_rollback_evidence() {
     let readme = read("README.md");
     let status = read("docs/STATUS.md");
 
     assert!(
-        readme.contains("v0.1.0-alpha.6"),
-        "unpublished RC must not rewrite README current release to v1"
+        readme.contains("Current stable release") && readme.contains("v1.0.0"),
+        "published v1 README must identify the stable release"
     );
     assert!(
-        status.contains("v0.1.0-alpha.6"),
-        "unpublished RC must not rewrite authoritative public status to v1"
+        status.contains("Public release: `v1.0.0`"),
+        "published v1 status must identify the stable release"
+    );
+    assert!(
+        status.contains("Previous public Alpha `v0.1.0-alpha.6` remains immutable"),
+        "Alpha.6 must remain explicit historical/rollback evidence"
     );
 }
-
 #[test]
 fn rc1_registry_publish_chain_is_complete_and_dependency_ordered() {
     let workflow = read(".github/workflows/publish-crates.yml");
