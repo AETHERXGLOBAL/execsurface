@@ -2,16 +2,16 @@
 
 Tracking: #94
 Status: `POST-RELEASE TECHNICAL ENGAGEMENT — EXTERNAL EVIDENCE OPEN`
-Current public release: `v0.1.0-alpha.5`
-Release source: `9e73b925d55557e33de1b0813995609aaefdc037`
-Stable Action: `AETHERXGLOBAL/execsurface@v0.1`
+Current public release: `v1.0.0`
+Release source: `e70169b959f2163715090c371335fa6c5591e3e4`
+Stable Action: `AETHERXGLOBAL/execsurface@v1`
 Current baseline: `docs/external/OPENSSF_CURRENT_STATE_BASELINE.md`
 
 ## Relationship classification
 
 Treat OpenSSF as:
 
-`EXTERNAL TECHNICAL COMMUNITY / OPEN-SOURCE SECURITY ECOSYSTEM`
+`EXTERNAL TECHNICAL COMMUNITY / SOFTWARE SUPPLY-CHAIN & OPEN-SOURCE ENGINEERING ECOSYSTEM`
 
 Do not describe OpenSSF / Linux Foundation as customer, validator, partner, approver, or endorser unless a later explicit agreement supports that wording.
 
@@ -21,7 +21,7 @@ AETHER X previously asked OpenSSF for independent technical evaluation of ExecSu
 
 OpenSSF / Linux Foundation responded that OpenSSF projects are community-driven, recommended participating directly in OpenSSF Working Groups for technical insight, invited AETHER X to join the community, and noted that membership can be discussed separately.
 
-That routing is historical context only. All new technical engagement is governed by the current Alpha.5 baseline and the post-release P8 evidence program.
+That routing is historical context only. All new technical engagement is governed by the current stable-v1 baseline and the post-release external-evidence program.
 
 ## Current engagement objective
 
@@ -72,18 +72,18 @@ Do not split initial technical engagement across many groups without a specific 
 
 ## Public review target
 
-External reviewers should evaluate the published Alpha.5 release, not an obsolete candidate:
+External reviewers should evaluate the published stable v1.0.0 release, not an obsolete Alpha candidate:
 
-- release: `v0.1.0-alpha.5`
-- immutable Action: `AETHERXGLOBAL/execsurface@v0.1.0-alpha.5`
-- stable Action: `AETHERXGLOBAL/execsurface@v0.1`
-- registry package: `execsurface = 0.1.0-alpha.5`
+- release: `v1.0.0`
+- immutable Action: `AETHERXGLOBAL/execsurface@v1.0.0`
+- stable Action: `AETHERXGLOBAL/execsurface@v1`
+- registry package: `execsurface = 1.0.0`
 - platform scope: Linux x86_64
 - public reference observer: native `ptrace`
 - public review hub: issue #118
 - P8 evidence tracking: issue #114
 
-Alpha.5 publication was owner-authorized with P8 waived only as a pre-publication condition. This is not a statement that P8 passed. Independent external validation remains open post-release.
+Stable v1.0.0 is internally qualified under the recorded governance and release-control gates. Independent external validation remains open as additional evidence and is not claimed.
 
 ## Community-entry rule
 
