@@ -407,7 +407,7 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
         );
     }
 
-    validate_verdict_output_preflight(&parsed)?;
+    let verdict_output_guard = validate_verdict_output_preflight(&parsed)?;
 
     let baseline_bytes = std::fs::read(&parsed.baseline).map_err(|error| {
         format!(
@@ -435,7 +435,7 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
 
     let spec = CommandSpec::new(parsed.program.clone()).args(parsed.command_args.clone());
     let observation = observe_command(&spec).map_err(|error| error.to_string())?;
-    validate_verdict_output_postflight(&parsed, &observation)?;
+    validate_verdict_output_postflight(&parsed, &observation, &verdict_output_guard)?;
     let normalization = parsed.normalization_config()?;
     let canonical_surface =
         canonicalize(&observation, &normalization).map_err(|error| error.to_string())?;
@@ -590,7 +590,19 @@ fn verdict_output_paths(parsed: &CheckArgs) -> Vec<(&'static str, &Path)> {
     outputs
 }
 
-fn validate_verdict_output_preflight(parsed: &CheckArgs) -> Result<(), String> {
+#[derive(Debug, Clone)]
+struct ProtectedArtifactSnapshot {
+    kind: &'static str,
+    path: PathBuf,
+    object_identity: Option<(u64, u64)>,
+}
+
+#[derive(Debug, Clone)]
+struct VerdictOutputGuard {
+    protected: Vec<ProtectedArtifactSnapshot>,
+}
+
+fn validate_verdict_output_preflight(parsed: &CheckArgs) -> Result<VerdictOutputGuard, String> {
     let outputs = verdict_output_paths(parsed);
     let mut protected = vec![("baseline", parsed.baseline.as_path())];
     if let Some(policy) = parsed.policy.as_deref() {
@@ -615,19 +627,45 @@ fn validate_verdict_output_preflight(parsed: &CheckArgs) -> Result<(), String> {
         ));
     }
 
-    Ok(())
+    let protected = protected
+        .into_iter()
+        .map(|(kind, path)| {
+            Ok(ProtectedArtifactSnapshot {
+                kind,
+                path: path.to_path_buf(),
+                object_identity: existing_object_identity(path)?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    Ok(VerdictOutputGuard { protected })
 }
 
 fn validate_verdict_output_postflight(
     parsed: &CheckArgs,
     observation: &Observation,
+    guard: &VerdictOutputGuard,
 ) -> Result<(), String> {
-    // Re-run the protected-artifact check after the target because the target
-    // can rebind an output path (for example by creating a symlink) after the
-    // initial preflight but before report materialization.
-    validate_verdict_output_preflight(parsed)?;
+    // Re-run path-based checks after the target because the target can rebind
+    // an output path after initial preflight.
+    let _ = validate_verdict_output_preflight(parsed)?;
 
     for (output_kind, output) in verdict_output_paths(parsed) {
+        let output_object_identity = existing_object_identity(output)?;
+
+        for protected in &guard.protected {
+            if output_object_identity.is_some()
+                && output_object_identity == protected.object_identity
+            {
+                return Err(format!(
+                    "{output_kind} verdict output aliases preflight-verified {} object after target execution: {} (original path {})",
+                    protected.kind,
+                    output.display(),
+                    protected.path.display()
+                ));
+            }
+        }
+
         for event in &observation.events {
             let RawEventKind::FileDescriptorAccess {
                 operation: FileOperation::Write,
