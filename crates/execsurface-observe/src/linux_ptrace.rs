@@ -109,6 +109,10 @@ enum PendingSyscall {
         from: String,
         to: String,
     },
+    HardLink {
+        from: String,
+        to: String,
+    },
     Clone {
         flags: u64,
     },
@@ -1062,6 +1066,31 @@ fn handle_syscall_entry(
         return;
     }
 
+    if nr == libc::SYS_link {
+        record_hardlink_entry(
+            tid,
+            libc::AT_FDCWD,
+            args[0],
+            libc::AT_FDCWD,
+            args[1],
+            tracees,
+            collector,
+        );
+        return;
+    }
+    if nr == libc::SYS_linkat {
+        record_hardlink_entry(
+            tid,
+            args[0] as i32,
+            args[1],
+            args[2] as i32,
+            args[3],
+            tracees,
+            collector,
+        );
+        return;
+    }
+
     if nr == libc::SYS_rename {
         record_rename_entry(
             tid,
@@ -1348,6 +1377,15 @@ fn handle_syscall_exit(
         PendingSyscall::Rename { from, to } if result == 0 => {
             fd_tables.rename_paths(&from, &to);
         }
+        PendingSyscall::HardLink { from, to } if result == 0 => {
+            collector.warning(
+                tid,
+                "hardlink_namespace_transition_unmodeled",
+                format!(
+                    "successful hard-link creation from {from:?} to {to:?} changes filesystem object aliases, but raw observation v2 cannot represent that namespace transition authoritatively"
+                ),
+            );
+        }
         PendingSyscall::Clone { .. }
         | PendingSyscall::Open { .. }
         | PendingSyscall::Io { .. }
@@ -1357,7 +1395,8 @@ fn handle_syscall_exit(
         | PendingSyscall::Dup { .. }
         | PendingSyscall::DupTo { .. }
         | PendingSyscall::SetFdFlags { .. }
-        | PendingSyscall::Rename { .. } => {}
+        | PendingSyscall::Rename { .. }
+        | PendingSyscall::HardLink { .. } => {}
     }
 }
 
@@ -1567,6 +1606,30 @@ fn record_file_attempt(
             },
         ),
         Err(error) => collector.warning(tid, "file_path_unreadable", error.to_string()),
+    }
+}
+
+fn record_hardlink_entry(
+    tid: libc::pid_t,
+    from_dirfd: i32,
+    from_address: u64,
+    to_dirfd: i32,
+    to_address: u64,
+    tracees: &mut HashMap<libc::pid_t, TraceeState>,
+    collector: &mut Collector,
+) {
+    let from = read_c_string(tid, from_address, MAX_PATH_BYTES)
+        .and_then(|path| resolve_user_path(tid, from_dirfd, path));
+    let to = read_c_string(tid, to_address, MAX_PATH_BYTES)
+        .and_then(|path| resolve_user_path(tid, to_dirfd, path));
+
+    match (from, to) {
+        (Ok(from), Ok(to)) => {
+            set_pending(tracees, tid, PendingSyscall::HardLink { from, to });
+        }
+        (Err(error), _) | (_, Err(error)) => {
+            collector.warning(tid, "hardlink_path_unreadable", error.to_string())
+        }
     }
 }
 
