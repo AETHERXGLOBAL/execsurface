@@ -57,6 +57,7 @@ dependencies = [
  "execsurface-observe",
  "execsurface-policy",
  "execsurface-report",
+ "libc",
  "serde_json",
  "sha2",
 ]
