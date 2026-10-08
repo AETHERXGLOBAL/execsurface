@@ -38,7 +38,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Prove RC identity is internal-only and release request is not armed
+      - name: Prove v1 release state is frozen or explicitly authorized
         shell: bash
         run: |
           set -euo pipefail
@@ -47,13 +47,29 @@ jobs:
           test "$(tr -d '[:space:]' < action/release-tag.txt)" = "v1.0.0"
           python3 - <<'PY'
           import json
+          from pathlib import Path
+
           request=json.load(open(".release/release-request.json"))
-          assert request == {
+          rc_unarmed = request == {
               "version":"0.1.0-alpha.6",
               "tag":"v0.1.0-alpha.6",
               "stable_channel":"v0.1",
               "request_revision":1,
           }
+          release_armed = request == {
+              "version":"1.0.0",
+              "tag":"v1.0.0",
+              "stable_channel":"v1",
+              "request_revision":2,
+          }
+
+          if release_armed:
+              decision=Path("docs/release/V1_0_0_RELEASE_DECISION.md").read_text()
+              notes=Path("docs/releases/v1.0.0.md").read_text()
+              assert "RELEASE_V1_0_AUTHORIZED_BOUNDED" in decision
+              assert "PUBLICATION PENDING" in notes
+
+          assert rc_unarmed or release_armed
           PY
           grep -F 'v0.1.0-alpha.6' README.md >/dev/null
           grep -F 'v0.1.0-alpha.6' docs/STATUS.md >/dev/null

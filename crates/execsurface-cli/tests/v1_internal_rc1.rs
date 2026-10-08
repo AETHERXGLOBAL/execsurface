@@ -28,14 +28,14 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn rc1_source_identity_is_v1_but_release_request_stays_alpha6() {
+fn v1_source_identity_requires_an_explicit_release_state() {
     let cargo = read("Cargo.toml");
     let action_tag = read("action/release-tag.txt");
     let release_request = read(".release/release-request.json");
 
     assert!(
         cargo.contains(r#"version = "1.0.0""#),
-        "internal RC1 source version must be 1.0.0"
+        "v1 source version must be 1.0.0"
     );
     assert_eq!(
         action_tag.trim(),
@@ -43,11 +43,31 @@ fn rc1_source_identity_is_v1_but_release_request_stays_alpha6() {
         "candidate Action source must identify the intended immutable v1 tag"
     );
 
+    let rc_unarmed = release_request.contains(r#""version": "0.1.0-alpha.6""#)
+        && release_request.contains(r#""tag": "v0.1.0-alpha.6""#)
+        && release_request.contains(r#""stable_channel": "v0.1""#);
+
+    let release_armed = release_request.contains(r#""version": "1.0.0""#)
+        && release_request.contains(r#""tag": "v1.0.0""#)
+        && release_request.contains(r#""stable_channel": "v1""#)
+        && release_request.contains(r#""request_revision": 2"#);
+
+    if release_armed {
+        let decision = read("docs/release/V1_0_0_RELEASE_DECISION.md");
+        let notes = read("docs/releases/v1.0.0.md");
+        assert!(
+            decision.contains("RELEASE_V1_0_AUTHORIZED_BOUNDED"),
+            "armed v1 request requires explicit bounded release authorization"
+        );
+        assert!(
+            notes.contains("AUTHORIZED STABLE RELEASE CANDIDATE — PUBLICATION PENDING"),
+            "armed v1 request requires release notes that do not pre-claim publication"
+        );
+    }
+
     assert!(
-        release_request.contains(r#""version": "0.1.0-alpha.6""#)
-            && release_request.contains(r#""tag": "v0.1.0-alpha.6""#)
-            && release_request.contains(r#""stable_channel": "v0.1""#),
-        "RC qualification must not arm the real v1 release request"
+        rc_unarmed || release_armed,
+        "release request must be either the frozen RC-unarmed Alpha.6 state or the explicitly authorized v1.0.0 state"
     );
 }
 

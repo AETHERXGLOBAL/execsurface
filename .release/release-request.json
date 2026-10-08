@@ -1,6 +1,6 @@
 {
-  "version": "0.1.0-alpha.6",
-  "tag": "v0.1.0-alpha.6",
-  "stable_channel": "v0.1",
-  "request_revision": 1
+  "version": "1.0.0",
+  "tag": "v1.0.0",
+  "stable_channel": "v1",
+  "request_revision": 2
 }

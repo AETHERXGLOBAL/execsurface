@@ -36,16 +36,35 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Current active request remains Alpha.6
+      - name: Active request is frozen RC or explicitly authorized stable v1
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
+          from pathlib import Path
+
           data=json.load(open(".release/release-request.json"))
-          assert data["version"] == "0.1.0-alpha.6"
-          assert data["tag"] == "v0.1.0-alpha.6"
-          assert data["stable_channel"] == "v0.1"
+          rc_unarmed = data == {
+              "version":"0.1.0-alpha.6",
+              "tag":"v0.1.0-alpha.6",
+              "stable_channel":"v0.1",
+              "request_revision":1,
+          }
+          release_armed = data == {
+              "version":"1.0.0",
+              "tag":"v1.0.0",
+              "stable_channel":"v1",
+              "request_revision":2,
+          }
+
+          if release_armed:
+              decision=Path("docs/release/V1_0_0_RELEASE_DECISION.md").read_text()
+              notes=Path("docs/releases/v1.0.0.md").read_text()
+              assert "RELEASE_V1_0_AUTHORIZED_BOUNDED" in decision
+              assert "PUBLICATION PENDING" in notes
+
+          assert rc_unarmed or release_armed
           PY
 
       - name: Classify current Alpha line

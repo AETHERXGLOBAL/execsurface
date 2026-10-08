@@ -1,0 +1,117 @@
+name: V1 Stable Release Arming Gate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.release/release-request.json'
+      - 'docs/releases/v1.0.0.md'
+      - 'docs/release/V1_0_0_RELEASE_DECISION.md'
+      - '.github/workflows/v1-release-arming.yml'
+      - '.github/scripts/release_contract.py'
+      - '.github/scripts/verify_tag_ruleset.py'
+      - '.github/workflows/promote-release.yml'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/publish-crates.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  request-contract:
+    name: Stable v1 release request contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact arming candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate stable request against package and Action identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="execsurface"))')"
+          tag="$(tr -d '[:space:]' < action/release-tag.txt)"
+          out="$(python3 .github/scripts/release_contract.py validate-request             --request .release/release-request.json             --package-version "$version"             --release-tag-file "$tag")"
+          printf '%s\n' "$out"
+          python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["version"]=="1.0.0"; assert d["tag"]=="v1.0.0"; assert d["stable_channel"]=="v1"; assert d["release_kind"]=="stable"; assert d["is_prerelease"] is False; assert d["request_revision"]==2' <<<"$out"
+
+      - name: Prove release records are prepared but public status is not pre-announced
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s docs/releases/v1.0.0.md
+          test -s docs/release/V1_0_0_RELEASE_DECISION.md
+          grep -F 'RELEASE_V1_0_AUTHORIZED_BOUNDED' docs/release/V1_0_0_RELEASE_DECISION.md
+          grep -F 'Independent external validation is not claimed' docs/releases/v1.0.0.md
+          grep -F 'v0.1.0-alpha.6' README.md
+          grep -F 'Public release: `v0.1.0-alpha.6`' docs/STATUS.md
+
+      - name: Prove stable refs and release do not exist before arming merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git ls-remote --tags origin refs/tags/v1 refs/tags/v1.0.0)"
+          if gh release view v1.0.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::v1.0.0 GitHub Release already exists before arming merge"
+            exit 1
+          fi
+
+  immutable-tag-governance:
+    name: Immutable v1 tag governance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read live GitHub rulesets and verify v1.0.0 protection
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/rulesets.jsonl"
+          : > "$evidence"
+          ids="$(gh api "repos/$GITHUB_REPOSITORY/rulesets" --paginate --jq '.[].id')"
+          test -n "$ids"
+          for id in $ids; do
+            gh api "repos/$GITHUB_REPOSITORY/rulesets/$id" >> "$evidence"
+            printf '\n' >> "$evidence"
+          done
+          python3 .github/scripts/verify_tag_ruleset.py             --rulesets-jsonl "$evidence"             --tag v1.0.0
+
+  packaging-preflight:
+    name: Stable registry packaging preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact arming candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: First publishable crate dry-run
+        run: cargo publish -p execsurface-model --locked --dry-run
+
+      - name: Prove publication chain retains final exact-version install
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'publish_one execsurface-model' .github/workflows/publish-crates.yml
+          grep -F 'publish_one execsurface-observe' .github/workflows/publish-crates.yml
+          grep -F 'publish_one execsurface-normalize' .github/workflows/publish-crates.yml
+          grep -F 'publish_one execsurface-baseline' .github/workflows/publish-crates.yml
+          grep -F 'publish_one execsurface-diff' .github/workflows/publish-crates.yml
+          grep -F 'publish_one execsurface-policy' .github/workflows/publish-crates.yml
+          grep -F 'publish_one execsurface-report' .github/workflows/publish-crates.yml
+          grep -F 'publish_one execsurface' .github/workflows/publish-crates.yml
+          grep -F 'cargo install execsurface --version "=$version" --locked' .github/workflows/publish-crates.yml
