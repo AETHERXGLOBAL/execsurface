@@ -1,6 +1,7 @@
 #![cfg(all(target_os = "linux", target_arch = "x86_64"))]
 
 use std::fs;
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -444,5 +445,90 @@ fn merge_auth_untouched_preexisting_report_remains_usable() {
         serde_json::from_slice(&fs::read(&report).expect("report bytes")).expect("report JSON");
     assert_eq!(report_json["verdict"], "review");
 
+    let _ = fs::remove_dir_all(dir);
+}
+
+
+#[test]
+fn merge_auth_preexisting_broken_symlink_report_is_rejected_without_following_target() {
+    let dir = temp_dir("preexisting-broken-symlink-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+    let indirect_target = dir.join("indirect-target.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    symlink(&indirect_target, &report).expect("create broken report symlink");
+    assert!(!indirect_target.exists());
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", "echo controlled-drift >/dev/null"])
+        .output()
+        .expect("run preexisting broken-symlink destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "verdict materialization must not follow a preexisting broken symlink output; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        report.is_symlink(),
+        "the selected output pathname must remain the original symlink"
+    );
+    assert!(
+        !indirect_target.exists(),
+        "ExecSurface must not create the symlink target while materializing its report"
+    );
+
+    let _ = fs::remove_file(&report);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_target_created_broken_symlink_report_is_rejected_postflight() {
+    let dir = temp_dir("target-created-broken-symlink-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+    let indirect_target = dir.join("indirect-target.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    let target = format!(
+        "ln -s '{}' '{}'",
+        indirect_target.display(),
+        report.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run target-created broken-symlink destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a broken symlink created at the selected report path during workload execution must fail closed; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(report.is_symlink(), "target must actually create the broken symlink");
+    assert!(
+        !indirect_target.exists(),
+        "ExecSurface must not follow the target-created symlink and create its target"
+    );
+
+    let _ = fs::remove_file(&report);
     let _ = fs::remove_dir_all(dir);
 }
