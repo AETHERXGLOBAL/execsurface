@@ -597,9 +597,44 @@ struct ProtectedArtifactSnapshot {
     object_identity: Option<(u64, u64)>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VerdictOutputState {
+    Absent,
+    Present {
+        object_identity: Option<(u64, u64)>,
+        len: u64,
+        modified: Option<SystemTime>,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct VerdictOutputSnapshot {
+    kind: &'static str,
+    path: PathBuf,
+    state: VerdictOutputState,
+}
+
 #[derive(Debug, Clone)]
 struct VerdictOutputGuard {
     protected: Vec<ProtectedArtifactSnapshot>,
+    outputs: Vec<VerdictOutputSnapshot>,
+}
+
+fn verdict_output_state(path: &Path) -> Result<VerdictOutputState, String> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(VerdictOutputState::Present {
+            object_identity: existing_object_identity(path)?,
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(VerdictOutputState::Absent)
+        }
+        Err(error) => Err(format!(
+            "cannot inspect verdict output state {}: {error}",
+            path.display()
+        )),
+    }
 }
 
 fn validate_verdict_output_preflight(parsed: &CheckArgs) -> Result<VerdictOutputGuard, String> {
@@ -638,7 +673,18 @@ fn validate_verdict_output_preflight(parsed: &CheckArgs) -> Result<VerdictOutput
         })
         .collect::<Result<Vec<_>, String>>()?;
 
-    Ok(VerdictOutputGuard { protected })
+    let outputs = outputs
+        .into_iter()
+        .map(|(kind, path)| {
+            Ok(VerdictOutputSnapshot {
+                kind,
+                path: path.to_path_buf(),
+                state: verdict_output_state(path)?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    Ok(VerdictOutputGuard { protected, outputs })
 }
 
 fn workload_mutated_paths_after_renames(observation: &Observation) -> Result<Vec<PathBuf>, String> {
@@ -729,6 +775,18 @@ fn validate_verdict_output_postflight(
     // Re-run path-based checks after the target because the target can rebind
     // an output path after initial preflight.
     let _ = validate_verdict_output_preflight(parsed)?;
+
+    for output in &guard.outputs {
+        let current = verdict_output_state(&output.path)?;
+        if current != output.state {
+            return Err(format!(
+                "{} verdict output path changed during workload execution and is reserved from report materialization: {}",
+                output.kind,
+                output.path.display()
+            ));
+        }
+    }
+
     let workload_mutated_paths = workload_mutated_paths_after_renames(observation)?;
 
     for (output_kind, output) in verdict_output_paths(parsed) {
