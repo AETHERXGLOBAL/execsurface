@@ -16,7 +16,7 @@ The doctor is diagnostic only. It never changes privileges, ptrace sysctls or ho
 
 **Action**
 
-Use a Linux x86_64 environment. The public alpha does not claim macOS or Windows support.
+Use a Linux x86_64 environment. Stable `v1.0.0` does not claim macOS or Windows support.
 
 Do not treat a compatibility layer as an officially supported observer unless it has separate evidence.
 
@@ -28,7 +28,7 @@ Do not treat a compatibility layer as an officially supported observer unless it
 
 **Action**
 
-Use a Linux x86_64 runner/host. No arm64 release is claimed in the public alpha.
+Use a Linux x86_64 runner/host. No arm64 release is claimed in stable `v1.0.0`.
 
 ## ptrace restrictions
 
@@ -89,7 +89,7 @@ M6.5 changed execution-surface meaning by adding actual fd-attributed read/write
 
 v1 lockfiles are intentionally **not** reinterpreted as v2.
 
-Relearn with the current public alpha and review the new surface.
+Relearn with the current stable release and review the new surface.
 
 See [M6.5 Schema Migration](milestones/M6_5_SCHEMA_MIGRATION.md).
 
@@ -183,16 +183,16 @@ Do not run the binary.
 
 Delete the downloaded files and download the release again from the official repository.
 
-Verify the current public-alpha asset:
+Verify the current stable release asset:
 
 ```bash
-sha256sum -c execsurface-v0.1.0-alpha.3-x86_64-unknown-linux-gnu.tar.gz.sha256
+sha256sum -c execsurface-v1.0.0-x86_64-unknown-linux-gnu.tar.gz.sha256
 ```
 
 Optionally verify GitHub build provenance:
 
 ```bash
-gh attestation verify execsurface-v0.1.0-alpha.3-x86_64-unknown-linux-gnu.tar.gz \
+gh attestation verify execsurface-v1.0.0-x86_64-unknown-linux-gnu.tar.gz \
   -R AETHERXGLOBAL/execsurface
 ```
 
@@ -200,7 +200,7 @@ An attestation proves provenance, not safety.
 
 ## GitHub Action cannot download the release
 
-The stable Action consumes the immutable public-alpha release asset.
+The stable Action consumes the immutable `v1.0.0` release asset.
 
 Check:
 
