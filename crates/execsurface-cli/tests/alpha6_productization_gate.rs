@@ -47,7 +47,7 @@ fn landing_and_current_docs_present_alpha6_as_current_not_final() {
         "authoritative status must point current users to the Alpha.6 release record"
     );
     assert!(
-        status.contains("Previous release \`v0.1.0-alpha.5\` remains immutable"),
+        status.contains("Previous release `v0.1.0-alpha.5` remains immutable"),
         "status must preserve Alpha.5 explicitly as historical/rollback evidence"
     );
 }
