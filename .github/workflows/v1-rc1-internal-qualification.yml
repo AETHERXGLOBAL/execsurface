@@ -302,3 +302,93 @@ jobs:
           fi
 
           test -z "$(git ls-remote --tags origin refs/tags/v1 refs/tags/v1.0.0)"
+
+
+  iq8-destruction-round-b:
+    name: IQ8 / Destruction Round B
+    needs:
+      - iq2-destruction-round-a
+      - iq3-alpha6-upgrade-rollback
+      - iq4-source-environment
+      - iq4-msrv
+      - iq5-performance
+      - iq6-tag-governance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Execute release-lifecycle destruction corpus
+        run: cargo test --locked -p execsurface --test v1_internal_destruction_b -- --test-threads=1 --nocapture
+
+      - name: Re-prove no v1 public refs exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git ls-remote --tags origin refs/tags/v1 refs/tags/v1.0.0)"
+
+      - name: Build candidate for cross-version custody attack
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p execsurface --bin execsurface
+          candidate="$GITHUB_WORKSPACE/target/release/execsurface"
+          test "$("$candidate" --version)" = "execsurface 1.0.0"
+          echo "CANDIDATE_BIN=$candidate" >> "$GITHUB_ENV"
+
+      - name: Materialize Alpha.6 baseline source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/round-b-alpha6"
+          mkdir -p "$root"
+          cd "$root"
+          gh release download "$ALPHA6_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ALPHA6_ASSET" --pattern "$ALPHA6_ASSET.sha256"
+          sha256sum -c "$ALPHA6_ASSET.sha256"
+          gh attestation verify "$ALPHA6_ASSET" -R "$GITHUB_REPOSITORY"
+          tar -xzf "$ALPHA6_ASSET"
+          alpha6="$root/execsurface-$ALPHA6_TAG-x86_64-unknown-linux-gnu/execsurface"
+          test -x "$alpha6"
+          echo "ALPHA6_BIN=$alpha6" >> "$GITHUB_ENV"
+
+      - name: Novel cross-layer attack — Alpha.6 baseline plus bad custody pin must stop v1 target
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/round-b-cross-layer"
+          mkdir -p "$work"
+          cd "$work"
+
+          "$ALPHA6_BIN" learn --output alpha6.lock.json -- /bin/bash -lc true
+          before="$(sha256sum alpha6.lock.json | awk '{print $1}')"
+
+          cat > policy.json <<'JSON'
+          {
+            "schema_version": 2,
+            "default_action": "review",
+            "rules": []
+          }
+          JSON
+          policy_sha="sha256:$(sha256sum policy.json | awk '{print $1}')"
+          marker="$work/MUST_NOT_EXIST"
+
+          set +e
+          output="$("$CANDIDATE_BIN" check \
+            --baseline alpha6.lock.json \
+            --policy policy.json \
+            --expect-baseline-digest sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            --expect-policy-sha256 "$policy_sha" \
+            -- /bin/bash -lc "touch '$marker'" 2>&1)"
+          status=$?
+          set -e
+
+          test "$status" -eq 2
+          test ! -e "$marker"
+          test "$before" = "$(sha256sum alpha6.lock.json | awk '{print $1}')"
+          grep -Ei 'digest|custody|mismatch|expected' <<<"$output" >/dev/null
