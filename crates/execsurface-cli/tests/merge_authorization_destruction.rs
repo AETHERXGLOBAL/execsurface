@@ -88,7 +88,6 @@ fn merge_auth_written_object_renamed_onto_report_must_not_be_overwritten() {
     let _ = fs::remove_dir_all(dir);
 }
 
-
 #[test]
 fn merge_auth_written_object_chained_renames_onto_report_must_not_be_overwritten() {
     let dir = temp_dir("written-chained-rename-output");
