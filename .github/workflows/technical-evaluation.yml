@@ -29,13 +29,15 @@ jobs:
       - name: Checkout public release pointer
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install exact current public crates.io release
         shell: bash
         run: |
           set -euo pipefail
-          release_tag="$(tr -d '[:space:]' < action/release-tag.txt)"
+          git fetch --force --tags origin
+          release_tag="$(git show v0.1:action/release-tag.txt | tr -d '[:space:]')"
           version="${release_tag#v}"
           test -n "$version"
           cargo install execsurface --version "=$version" --locked
