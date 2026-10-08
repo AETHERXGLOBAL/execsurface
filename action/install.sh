@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
-  echo "::error title=ExecSurface::Public alpha currently supports Linux x86_64 only"
+  echo "::error title=ExecSurface::Public Action currently supports Linux x86_64 only"
   exit 2
 fi
 
@@ -26,7 +26,7 @@ else
   done
 
   release_tag="$(tr -d '[:space:]' < "$GITHUB_ACTION_PATH/action/release-tag.txt")"
-  if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+$ ]]; then
+  if [[ ! "$release_tag" =~ ^v0\.1\.0-alpha\.[0-9]+$ && ! "$release_tag" =~ ^v1\.[0-9]+\.[0-9]+$ ]]; then
     echo "::error title=ExecSurface::invalid pinned release tag: $release_tag"
     exit 2
   fi

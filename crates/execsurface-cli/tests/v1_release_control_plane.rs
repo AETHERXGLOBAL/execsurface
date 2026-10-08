@@ -224,3 +224,21 @@ fn immutable_v1_tag_governance_is_fail_closed_and_no_bypass() {
         .status
         .success());
 }
+
+#[test]
+fn published_action_installer_accepts_bounded_alpha_and_final_v1_tags() {
+    let install = read("action/install.sh");
+
+    assert!(
+        install.contains(r#"^v0\.1\.0-alpha\."#),
+        "published Action installer must retain the qualified Alpha tag line"
+    );
+    assert!(
+        install.contains(r#"^v1\.[0-9]+\.[0-9]+$"#),
+        "published Action installer must accept final stable v1 tags"
+    );
+    assert!(
+        install.contains("invalid pinned release tag"),
+        "unsupported release-tag forms must remain fail-closed"
+    );
+}
