@@ -21,7 +21,7 @@ This directory separates **current public guidance** from **engineering evidence
 - [Technical Evaluation](TECHNICAL_EVALUATION.md) — repeatable technical evaluation pack.
 - [Team & Evidence Governance](TEAM_AND_EVIDENCE_GOVERNANCE.md) — evidence discipline, role separation and anti-drift rules.
 - [`external/`](external/) — external engagement protocols, baselines and evidence ledgers.
-- GitHub issue `#118` — public Alpha.5 post-release review hub.
+- GitHub issue `#118` — stable-v1 independent external evaluation and post-release review hub.
 - GitHub issue `#114` — P8 evidence qualification and tracking.
 - GitHub issue `#129` — P9 production-readiness and v1.0 qualification program.
 - GitHub issue `#134` — P9.3 compatibility and stability contract gate.
