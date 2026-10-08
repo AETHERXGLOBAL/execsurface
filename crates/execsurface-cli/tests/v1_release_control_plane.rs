@@ -21,7 +21,10 @@ fn temp_dir(name: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_nanos();
-    std::env::temp_dir().join(format!("execsurface-v1-r1-{name}-{}-{nonce}", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "execsurface-v1-r1-{name}-{}-{nonce}",
+        std::process::id()
+    ))
 }
 
 fn run_validator(request: &str, package_version: &str, release_tag: &str) -> std::process::Output {
@@ -131,8 +134,7 @@ fn workflows_use_release_classifier_and_do_not_hardcode_alpha_stable_channel() {
         "release job must export classified channel and release type"
     );
     assert!(
-        release.contains("STABLE_CHANNEL:")
-            && release.contains("IS_PRERELEASE:"),
+        release.contains("STABLE_CHANNEL:") && release.contains("IS_PRERELEASE:"),
         "release publication/promotion must consume classified release metadata"
     );
 }
