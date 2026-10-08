@@ -272,8 +272,7 @@ fn r4_duplicate_baseline_trust_pin_is_rejected_before_target() {
         "ambiguous duplicate baseline trust assertions must fail before target execution"
     );
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("duplicate --expect-baseline-digest"),
+        String::from_utf8_lossy(&output.stderr).contains("duplicate --expect-baseline-digest"),
         "duplicate trust assertion must be rejected explicitly: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -325,4 +324,3 @@ fn r4_duplicate_policy_trust_pin_is_rejected_before_target() {
 
     let _ = fs::remove_dir_all(dir);
 }
-
