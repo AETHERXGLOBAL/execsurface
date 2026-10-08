@@ -214,7 +214,6 @@ fn merge_auth_distinct_report_path_remains_available_after_workload_rename() {
     let _ = fs::remove_dir_all(dir);
 }
 
-
 #[test]
 fn merge_auth_written_object_hardlinked_to_report_then_source_removed_is_protected() {
     let dir = temp_dir("written-hardlink-unlink-output");
