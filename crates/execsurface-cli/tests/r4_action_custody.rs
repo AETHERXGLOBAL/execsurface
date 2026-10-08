@@ -209,3 +209,81 @@ fn r4_action_correct_external_pins_preserve_pass() {
 
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn r4_action_wrong_well_formed_baseline_pin_blocks_before_target() {
+    let dir = temp_dir("wrong-baseline-pin");
+    let baseline = dir.join("execsurface.lock.json");
+    let policy = dir.join("execsurface-policy.json");
+    let marker = dir.join("TARGET_RAN");
+
+    learn_action_baseline(&dir, &baseline);
+    fs::write(&policy, TRUSTED_POLICY).expect("write policy");
+    let wrong_baseline = format!("sha256:{}", "0".repeat(64));
+    let command = format!("touch {}", marker.display());
+
+    let (output, github_output) = run_action(
+        &dir,
+        &command,
+        &baseline,
+        &policy,
+        "true",
+        Some(&wrong_baseline),
+        Some(TRUSTED_POLICY_SHA256),
+    );
+
+    assert!(output.status.success());
+    assert!(
+        !marker.exists(),
+        "well-formed but unauthorized baseline identity must block target execution"
+    );
+    assert!(github_output.contains("verdict=error"));
+    assert!(github_output.contains("exit-code=2"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("baseline custody mismatch"),
+        "Action must expose baseline custody rejection: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn r4_action_wrong_well_formed_policy_pin_blocks_before_target() {
+    let dir = temp_dir("wrong-policy-pin");
+    let baseline = dir.join("execsurface.lock.json");
+    let policy = dir.join("execsurface-policy.json");
+    let marker = dir.join("TARGET_RAN");
+
+    learn_action_baseline(&dir, &baseline);
+    fs::write(&policy, TRUSTED_POLICY).expect("write policy");
+    let expected_baseline = baseline_digest(&baseline);
+    let wrong_policy = format!("sha256:{}", "0".repeat(64));
+    let command = format!("touch {}", marker.display());
+
+    let (output, github_output) = run_action(
+        &dir,
+        &command,
+        &baseline,
+        &policy,
+        "true",
+        Some(&expected_baseline),
+        Some(&wrong_policy),
+    );
+
+    assert!(output.status.success());
+    assert!(
+        !marker.exists(),
+        "well-formed but unauthorized policy identity must block target execution"
+    );
+    assert!(github_output.contains("verdict=error"));
+    assert!(github_output.contains("exit-code=2"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("policy custody mismatch"),
+        "Action must expose policy custody rejection: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
