@@ -137,3 +137,50 @@ fn stable_contract_uses_alpha6_as_upgrade_source_and_preserves_alpha5_boundary()
         "declared source MSRV changed unexpectedly"
     );
 }
+
+
+#[test]
+fn stable_contract_preserves_install_route_specific_environment_boundary() {
+    let compatibility = read("docs/COMPATIBILITY.md");
+
+    assert!(
+        compatibility.contains("exact public prebuilt artifact: PASS on Ubuntu 24.04 x86_64"),
+        "v1 contract must retain the qualified public-binary environment"
+    );
+    assert!(
+        compatibility.contains("FAIL on Ubuntu 22.04")
+            && compatibility.contains("GLIBC_2.39"),
+        "v1 contract must retain the current Alpha.6 prebuilt incompatibility as negative evidence"
+    );
+    assert!(
+        compatibility.contains("exact-version local build/install")
+            && compatibility.contains("Ubuntu 22.04 x86_64")
+            && compatibility.contains("Ubuntu 24.04 x86_64"),
+        "v1 contract must distinguish local-build evidence from prebuilt-binary evidence"
+    );
+}
+
+#[test]
+fn stable_support_policy_freezes_channel_deprecation_and_rollback_rules() {
+    let support = read("docs/SUPPORT_POLICY.md");
+
+    assert!(
+        support.contains("exact releases such as `v1.0.0`")
+            && support.contains("immutable release identities"),
+        "stable exact-release immutability must be explicit"
+    );
+    assert!(
+        support.contains("AETHERXGLOBAL/execsurface@v1")
+            && support.contains("moving stable GitHub Action channel"),
+        "stable Action channel semantics must be explicit"
+    );
+    assert!(
+        support.contains("No fixed calendar maintenance period or response-time SLA"),
+        "support policy must not invent an organizational SLA"
+    );
+    assert!(
+        support.contains("move the `@v1` channel back")
+            && support.contains("never rewrite user baselines or policies"),
+        "bad-release rollback must preserve user evidence"
+    );
+}
