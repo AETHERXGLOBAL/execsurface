@@ -137,8 +137,20 @@ jobs:
         run: cargo test --locked -p execsurface --test alpha6_productization_gate -- --test-threads=1 --nocapture
       - name: Existing self-service regression
         run: cargo test --locked -p execsurface --test self_service_linux -- --test-threads=1 --nocapture
-      - name: Registry packaging dry-run
-        run: cargo publish -p execsurface --locked --dry-run
+      - name: Registry packaging / unpublished-candidate chain proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="execsurface"))')"
+          if [[ "$version" == 0.1.0-alpha.* ]]; then
+            cargo publish -p execsurface --locked --dry-run
+          elif [[ "$version" =~ ^1\.[0-9]+\.[0-9]+$ ]]; then
+            cargo publish -p execsurface-model --locked --dry-run
+            cargo test --locked -p execsurface --test v1_internal_rc1 rc1_registry_publish_chain_is_complete_and_dependency_ordered -- --exact --nocapture
+          else
+            echo "::error::unsupported source maturity/version for productization packaging proof: $version"
+            exit 1
+          fi
 
   stable-action-contract:
     name: Stable @v0.1 / custody and verdict contract
