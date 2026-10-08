@@ -213,3 +213,47 @@ fn merge_auth_distinct_report_path_remains_available_after_workload_rename() {
 
     let _ = fs::remove_dir_all(dir);
 }
+
+
+#[test]
+fn merge_auth_written_object_hardlinked_to_report_then_source_removed_is_protected() {
+    let dir = temp_dir("written-hardlink-unlink-output");
+    let baseline = dir.join("baseline.lock.json");
+    let source = dir.join("workload-owned.bin");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "printf 'WORKLOAD-STATE' > '{}' && ln '{}' '{}' && rm '{}'",
+        source.display(),
+        source.display(),
+        report.display(),
+        source.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run hardlink-unlink destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a report path rebound to a hardlink of a workload-written object must fail closed"
+    );
+    assert_eq!(
+        fs::read(&report).expect("hardlinked workload object at report path"),
+        b"WORKLOAD-STATE",
+        "ExecSurface must not overwrite a workload-written inode after its original pathname is removed"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
