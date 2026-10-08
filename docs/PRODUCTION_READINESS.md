@@ -7,7 +7,9 @@ Current public release at program start: `v0.1.0-alpha.5`
 
 Current gap-analysis refresh: 2026-10-08  
 Current public release at refresh: `v0.1.0-alpha.6`  
-Current gap analysis: `docs/development/V1_PRODUCTION_READINESS_GAP_ANALYSIS.md`
+Current gap analysis: `docs/development/V1_PRODUCTION_READINESS_GAP_ANALYSIS.md`  
+Current frozen stable contract: `docs/COMPATIBILITY.md`  
+Stable support/deprecation policy: `docs/SUPPORT_POLICY.md`
 
 The original gate criteria below remain frozen. The 2026-10-08 gap analysis updates the factual state after Stage-2 remediation, Alpha.6 release, and the Alpha.6 Productization Gate without weakening any production criterion.
 
@@ -44,8 +46,8 @@ Dynamic specialists are added only when a gate requires them: Rust/SemVer, Linux
 | P9.0 | Freeze the production qualification contract | This document + issue #129 | ACTIVE | Criteria are versioned, bounded and linked from current roadmap/docs |
 | P9.1 | Independent external evidence | P8 issue #114 + public intake #118 | OPEN / BLOCKING | P8 current external-evidence minimum is genuinely satisfied |
 | P9.2 | Public-consumer reliability | Operational CI, public artifact, crates.io and Action consumption | STRONG INTERNAL EVIDENCE | Supported consumer paths repeatedly pass without semantic relaxation |
-| P9.3 | Compatibility & stability contract | Versioning/schema/CLI/migration evidence | OPEN | Stable compatibility promises and deprecation/migration rules are explicit and tested |
-| P9.4 | Repository & supply-chain controls | GitHub rules/protection, workflow permissions, release/provenance evidence | OPEN / ADMIN BLOCKER PRESENT | Release-critical changes cannot bypass the approved control plane |
+| P9.3 | Compatibility & stability contract | Versioning/schema/CLI/migration evidence | CONTRACT FROZEN / RC EVIDENCE PENDING | Stable compatibility promises and deprecation/migration rules are explicit and tested on the exact v1 RC |
+| P9.4 | Repository & supply-chain controls | GitHub rules/protection, workflow permissions, release/provenance evidence | PARTIAL / V1 CONTROL-PLANE BLOCKER | Release-critical changes cannot bypass the approved control plane and v1 immutable-tag/channel mechanics are qualified |
 | P9.5 | Real-workload adoption evidence | External workloads not created solely for demonstration | OPEN / BLOCKING | Qualified independent workload evidence exists, including negative/no-fit outcomes |
 | P9.6 | v1.0 RC qualification | Frozen RC source + full release/compatibility/adversarial evidence | BLOCKED | Exact public RC is reproducibly built, consumed and upgrade-tested |
 | P9.7 | Stable release decision | Independent critical review of P9.0–P9.6 | BLOCKED | `RELEASE_V1_0`, `REWORK_REQUIRED`, or `REMAIN_ALPHA_BETA` recorded with evidence |
