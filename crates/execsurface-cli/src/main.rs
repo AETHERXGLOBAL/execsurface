@@ -665,8 +665,9 @@ fn workload_mutated_paths_after_renames(observation: &Observation) -> Result<Vec
             } if path.starts_with('/') => {
                 let mutates = match operation {
                     FileOperation::Create => true,
-                    FileOperation::Open => flags
-                        .is_some_and(|flags| flags & libc::O_TRUNC as u64 != 0),
+                    FileOperation::Open => {
+                        flags.is_some_and(|flags| flags & libc::O_TRUNC as u64 != 0)
+                    }
                     _ => false,
                 };
                 if mutates {
