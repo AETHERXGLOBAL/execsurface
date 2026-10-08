@@ -297,7 +297,7 @@ The absence of an external blocker does not authorize phrases such as:
 - externally certified;
 - proven in production;
 - industry validated;
-- universally production-ready.
+- universally production-ready;
 
 Allowed bounded phrasing after a successful v1 release is:
 
