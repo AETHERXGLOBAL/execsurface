@@ -177,6 +177,49 @@ The Alpha release contract remains accepted as prerelease with moving channel `v
 
 No Alpha tag/release was rewritten.
 
+## Late destruction expansion — stable Action installer
+
+After the initial V1-R1 control-plane code was GREEN, the destruction team challenged the published Action install path itself.
+
+The existing `action/install.sh` accepted prerelease-shaped tags only. A future moving `v1` channel could therefore resolve to valid stable source while the Action rejected its pinned `v1.0.0` release tag before downloading the binary.
+
+A fail-first test was added before the fix.
+
+After formatting-only setup correction, the V1-R1 contract suite produced:
+
+**6/7 PASS, 1/7 FAIL**
+
+The only failing proposition was:
+
+`published_action_installer_accepts_bounded_alpha_and_final_v1_tags`
+
+### Bounded correction
+
+The published Action installer now accepts exactly these qualified release-tag families:
+
+- `v0.1.0-alpha.N`
+- final `v1.X.Y`
+
+It continues to reject unsupported tag forms through the existing fail-closed `invalid pinned release tag` path.
+
+The platform error wording was also made maturity-neutral: it now says the public Action supports Linux x86_64 rather than calling every future release an Alpha.
+
+Final corrected source:
+
+`a2fd697252ef2b8f4db457776f30d507d15efd5a`
+
+Exact-source qualification:
+
+- V1-R1 Release Control Plane — `37757518687` — SUCCESS
+- CI — `37757518616` — SUCCESS
+- Alpha.6 Productization Gate — `37757518585` — SUCCESS
+- Public Consumer Smoke — `37757518636` — SUCCESS
+- P9.3 Compatibility Contract — `37757518668` — SUCCESS
+- Stage-2 Final Internal Gate — `37757518655` — SUCCESS
+- Adversarial Regression — `37757518667` — SUCCESS
+
+This expansion does not change the remaining immutable-v1 tag administration precondition.
+
 ## Remaining action before actual stable v1 tag creation
 
 An administrator must configure an active tag ruleset protecting immutable v1 release tags, for example a bounded ref include matching exact stable tags such as:
