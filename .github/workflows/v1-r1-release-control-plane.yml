@@ -1,0 +1,95 @@
+name: V1-R1 Release Control Plane
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/v1-r1-release-control-plane.yml'
+      - '.github/workflows/promote-release.yml'
+      - '.github/workflows/release.yml'
+      - '.github/scripts/release_contract.py'
+      - 'crates/execsurface-cli/tests/v1_release_control_plane.rs'
+      - 'docs/development/V1_R1_RELEASE_CONTROL_PLANE_PROTOCOL.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  classifier-contract:
+    name: Release classifier and workflow contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Execute V1-R1 contract tests
+        run: cargo test --locked -p execsurface --test v1_release_control_plane -- --test-threads=1 --nocapture
+
+  synthetic-v1-dry-contract:
+    name: Synthetic stable-v1 classification / no publication
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Current active request remains Alpha.6
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          data=json.load(open(".release/release-request.json"))
+          assert data["version"] == "0.1.0-alpha.6"
+          assert data["tag"] == "v0.1.0-alpha.6"
+          assert data["stable_channel"] == "v0.1"
+          PY
+
+      - name: Classify current Alpha line
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$(python .github/scripts/release_contract.py classify --version 0.1.0-alpha.6 --tag v0.1.0-alpha.6)"
+          python -c 'import json,sys; d=json.load(sys.stdin); assert d["stable_channel"]=="v0.1"; assert d["release_kind"]=="prerelease"; assert d["is_prerelease"] is True' <<<"$out"
+
+      - name: Classify synthetic stable v1 line
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$(python .github/scripts/release_contract.py classify --version 1.0.0 --tag v1.0.0)"
+          python -c 'import json,sys; d=json.load(sys.stdin); assert d["stable_channel"]=="v1"; assert d["release_kind"]=="stable"; assert d["is_prerelease"] is False' <<<"$out"
+
+      - name: Reject synthetic wrong-channel stable request
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$RUNNER_TEMP/v1-wrong-channel.json"
+          cat > "$tmp" <<'JSON'
+          {"version":"1.0.0","tag":"v1.0.0","stable_channel":"v0.1","request_revision":1}
+          JSON
+          if python .github/scripts/release_contract.py validate-request \
+            --request "$tmp" \
+            --package-version 1.0.0 \
+            --release-tag-file v1.0.0; then
+            echo "wrong-channel stable v1 request was accepted" >&2
+            exit 1
+          fi
+
+  no-v1-side-effects:
+    name: No v1 tag/channel side effect during V1-R1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prove V1-R1 did not publish v1 refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git ls-remote --tags origin refs/tags/v1)"
+          test -z "$(git ls-remote --tags origin refs/tags/v1.0.0)"
