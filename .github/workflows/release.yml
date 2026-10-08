@@ -23,6 +23,9 @@ jobs:
       tag: ${{ steps.identity.outputs.tag }}
       version: ${{ steps.identity.outputs.version }}
       asset: ${{ steps.bundle.outputs.asset }}
+      stable-channel: ${{ steps.identity.outputs.stable-channel }}
+      release-kind: ${{ steps.identity.outputs.release-kind }}
+      is-prerelease: ${{ steps.identity.outputs.is-prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -38,8 +41,10 @@ jobs:
           test "$tag" = "$(tr -d '[:space:]' < action/release-tag.txt)"
           git fetch origin main --depth=100
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          python .github/scripts/release_contract.py classify \
+            --version "$version" \
+            --tag "$tag" \
+            --output-format github >> "$GITHUB_OUTPUT"
 
       - name: Full release gates
         run: |
