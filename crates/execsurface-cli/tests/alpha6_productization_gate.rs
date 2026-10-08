@@ -24,7 +24,7 @@ fn repo_root() -> std::path::PathBuf {
 }
 
 #[test]
-fn landing_and_current_docs_present_alpha6_as_current_not_final() {
+fn landing_and_current_docs_track_stable_v1_without_rewriting_alpha_history() {
     let root = repo_root();
     let readme = fs::read_to_string(root.join("README.md")).expect("README");
     let action = fs::read_to_string(root.join("docs/GITHUB_ACTION.md")).expect("Action guide");
@@ -32,24 +32,30 @@ fn landing_and_current_docs_present_alpha6_as_current_not_final() {
     let quickstart = fs::read_to_string(root.join("docs/QUICKSTART_5_MIN.md")).expect("quickstart");
 
     assert!(
-        readme.contains("status-Current%20Supported%20Alpha"),
-        "landing badge must say Current Supported Alpha"
+        readme.contains("status-Stable%20v1.0")
+            && readme.contains("Current stable release")
+            && readme.contains("v1.0.0"),
+        "landing page must present the published stable v1.0.0 state"
     );
     assert!(
         !readme.contains("status-Final%20Supported%20Alpha"),
-        "landing badge must not imply Alpha.6 is a final/stable product"
+        "landing page must not revive the historical Final Alpha label"
     );
     assert!(
-        action.contains("The current supported Alpha Action channel is:"),
-        "Action guide must describe @v0.1 as the current supported Alpha channel"
+        action.contains("The current stable Action channel is:")
+            && action.contains("AETHERXGLOBAL/execsurface@v1")
+            && action.contains("AETHERXGLOBAL/execsurface@v1.0.0"),
+        "Action guide must present the stable v1 channel and immutable v1.0.0 pin"
     );
     assert!(
-        status.contains("docs/releases/v0.1.0-alpha.6.md"),
-        "authoritative status must point current users to the Alpha.6 release record"
+        status.contains("Public release: `v1.0.0`")
+            && status.contains("docs/releases/v1.0.0.md"),
+        "authoritative status must point current users to the published v1.0.0 release"
     );
     assert!(
-        status.contains("Previous release `v0.1.0-alpha.5` remains immutable"),
-        "status must preserve Alpha.5 explicitly as historical/rollback evidence"
+        status.contains("Previous public Alpha `v0.1.0-alpha.6` remains immutable")
+            && status.contains("Alpha.5 also remains immutable historical evidence"),
+        "status must preserve Alpha.6 and Alpha.5 as historical/rollback evidence"
     );
     assert!(
         quickstart.contains("EXECSURFACE_BASELINE_DIGEST")
@@ -61,7 +67,6 @@ fn landing_and_current_docs_present_alpha6_as_current_not_final() {
         "Five-Minute Start must tell users that init prints the custody setup commands"
     );
 }
-
 #[test]
 fn generated_github_workflow_gates_target_success_before_execsurface() {
     let dir = temp_dir("target-gate");
