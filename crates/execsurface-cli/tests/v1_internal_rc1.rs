@@ -117,20 +117,22 @@ fn rc1_registry_publish_chain_is_complete_and_dependency_ordered() {
         "execsurface",
     ];
 
-    let mut last = 0usize;
-    for (index, crate_name) in expected.iter().enumerate() {
-        let needle = format!("publish_one {crate_name}");
-        let position = workflow
-            .find(&needle)
-            .unwrap_or_else(|| panic!("publish chain missing {crate_name}"));
-        if index > 0 {
-            assert!(
-                position > last,
-                "publish chain order is not dependency-safe at {crate_name}"
-            );
-        }
-        last = position;
-    }
+    let publish_lines: Vec<&str> = workflow
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("publish_one "))
+        .collect();
+
+    let expected_lines: Vec<String> = expected
+        .iter()
+        .map(|crate_name| format!("publish_one {crate_name}"))
+        .collect();
+
+    assert_eq!(
+        publish_lines,
+        expected_lines.iter().map(String::as_str).collect::<Vec<_>>(),
+        "publish chain must cover every publishable crate exactly once in dependency order"
+    );
 
     assert!(
         workflow.contains("cargo publish -p execsurface-model --locked --dry-run"),
