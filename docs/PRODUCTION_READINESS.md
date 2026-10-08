@@ -6,16 +6,21 @@ Program start HEAD: `88284764c70dddf137e89a34b48519328e530ad9`
 Current public release at program start: `v0.1.0-alpha.5`
 
 Current gap-analysis refresh: 2026-10-08  
-Current public release at refresh: `v0.1.0-alpha.6`  
+Current public release at closeout: `v1.0.0`  
 Current gap analysis: `docs/development/V1_PRODUCTION_READINESS_GAP_ANALYSIS.md`  
-Current frozen stable contract: `docs/COMPATIBILITY.md`  
+Current stable contract: `docs/COMPATIBILITY.md`  
 Stable support/deprecation policy: `docs/SUPPORT_POLICY.md`
 
-The original gate criteria below remain frozen. The 2026-10-08 gap analysis updates the factual state after Stage-2 remediation, Alpha.6 release, and the Alpha.6 Productization Gate without weakening any production criterion.
+The original gate criteria below remain retained as the frozen decision framework. The 2026-10-08 closeout records Stage-2 remediation, Alpha.6 productization, v1 stable-contract freeze, RC1 qualification, release-control hardening, stable publication and registry proof without rewriting earlier evidence.
 
 Governance amendment: `docs/development/V1_INTERNAL_QUALIFICATION_GOVERNANCE.md`
 
-The owner has explicitly removed P9.1 and P9.5 external evidence as mandatory release blockers. They are **WAIVED_AS_RELEASE_BLOCKER_BY_GOVERNANCE**, not PASS. Missing external evidence remains a disclosed limitation, and any v1 release under this path must state that independent external validation is not claimed. The strengthened internal IQ0-IQ9 qualification chain is mandatory in their place for release governance.
+The owner explicitly removed P9.1 and P9.5 external evidence as mandatory release blockers. They remain **WAIVED_AS_RELEASE_BLOCKER_BY_GOVERNANCE**, not PASS. Missing external evidence remains a disclosed limitation. Stable v1.0.0 was released only after the strengthened internal IQ0-IQ9 qualification chain, release-control proof and public artifact/registry verification. Independent external validation is not claimed.
+
+Final P9 decision: **`RELEASE_V1_0`**  
+Stable release workflow: `37771109825` — SUCCESS  
+Registry publication workflow: `37771295572` — SUCCESS  
+Release source: `e70169b959f2163715090c371335fa6c5591e3e4`
 
 This document freezes the evidence contract for deciding whether ExecSurface may move from public alpha to a production-qualified stable `v1.0` release.
 
@@ -47,14 +52,14 @@ Dynamic specialists are added only when a gate requires them: Rust/SemVer, Linux
 
 | Gate | Requirement | Evidence source | Start state | Closeout rule |
 |---|---|---|---|---|
-| P9.0 | Freeze the production qualification contract | This document + issue #129 | ACTIVE | Criteria are versioned, bounded and linked from current roadmap/docs |
+| P9.0 | Freeze the production qualification contract | This document + issue #129 | PASS / FROZEN | Criteria are versioned, bounded and linked from current roadmap/docs |
 | P9.1 | Independent external evidence | P8 issue #114 + public intake #118 | WAIVED AS RELEASE BLOCKER / EVIDENCE STILL INCOMPLETE | Historical/current external evidence is retained honestly; v1 release eligibility no longer depends on closing this row |
-| P9.2 | Public-consumer reliability | Operational CI, public artifact, crates.io and Action consumption | STRONG INTERNAL EVIDENCE | Supported consumer paths repeatedly pass without semantic relaxation |
-| P9.3 | Compatibility & stability contract | Versioning/schema/CLI/migration evidence | CONTRACT FROZEN / RC EVIDENCE PENDING | Stable compatibility promises and deprecation/migration rules are explicit and tested on the exact v1 RC |
-| P9.4 | Repository & supply-chain controls | GitHub rules/protection, workflow permissions, release/provenance evidence | PARTIAL / V1 CONTROL-PLANE BLOCKER | Release-critical changes cannot bypass the approved control plane and v1 immutable-tag/channel mechanics are qualified |
+| P9.2 | Public-consumer reliability | Operational CI, public artifact, crates.io and Action consumption | PASS / CONTINUOUS | Supported consumer paths repeatedly pass without semantic relaxation |
+| P9.3 | Compatibility & stability contract | Versioning/schema/CLI/migration evidence | PASS_BOUNDED / CLOSED | Stable compatibility promises and deprecation/migration rules were tested on the exact v1 RC |
+| P9.4 | Repository & supply-chain controls | GitHub rules/protection, workflow permissions, release/provenance evidence | PASS_BOUNDED / CLOSED | Release-critical changes are gated by the approved control plane and immutable-v1 tag/channel mechanics were verified |
 | P9.5 | Real-workload adoption evidence | External workloads not created solely for demonstration | WAIVED AS RELEASE BLOCKER / EVIDENCE STILL INCOMPLETE | External workload evidence remains valuable but is no longer mandatory for the v1 release decision |
-| P9.6 | v1.0 RC qualification | Frozen RC source + full release/compatibility/adversarial evidence | BLOCKED | Exact public RC is reproducibly built, consumed and upgrade-tested |
-| P9.7 | Stable release decision | Independent critical review of P9.0–P9.6 | BLOCKED | `RELEASE_V1_0`, `REWORK_REQUIRED`, or `REMAIN_ALPHA_BETA` recorded with evidence |
+| P9.6 | v1.0 RC qualification | Frozen RC source + full release/compatibility/adversarial evidence | PASS_BOUNDED / CLOSED | Exact RC was built, consumed, destructively tested and upgrade/rollback-qualified |
+| P9.7 | Stable release decision | Internal critical review under amended governance | `RELEASE_V1_0` / CLOSED | Stable v1.0.0 published with bounded claims; external independent validation is not claimed |
 
 ## P9.0 — frozen production criteria
 
