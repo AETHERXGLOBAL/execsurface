@@ -101,3 +101,44 @@ fn rc1_public_documents_still_identify_alpha6_as_published_release() {
         "unpublished RC must not rewrite authoritative public status to v1"
     );
 }
+
+
+#[test]
+fn rc1_registry_publish_chain_is_complete_and_dependency_ordered() {
+    let workflow = read(".github/workflows/publish-crates.yml");
+
+    let expected = [
+        "execsurface-model",
+        "execsurface-observe",
+        "execsurface-normalize",
+        "execsurface-baseline",
+        "execsurface-diff",
+        "execsurface-policy",
+        "execsurface-report",
+        "execsurface",
+    ];
+
+    let mut last = 0usize;
+    for (index, crate_name) in expected.iter().enumerate() {
+        let needle = format!("publish_one {crate_name}");
+        let position = workflow
+            .find(&needle)
+            .unwrap_or_else(|| panic!("publish chain missing {crate_name}"));
+        if index > 0 {
+            assert!(
+                position > last,
+                "publish chain order is not dependency-safe at {crate_name}"
+            );
+        }
+        last = position;
+    }
+
+    assert!(
+        workflow.contains("cargo publish -p execsurface-model --locked --dry-run"),
+        "first publishable crate must retain a real registry dry-run before publication"
+    );
+    assert!(
+        workflow.contains("cargo install execsurface --version \"=$version\" --locked"),
+        "publish chain must end with a zero-contact exact-version registry install"
+    );
+}
