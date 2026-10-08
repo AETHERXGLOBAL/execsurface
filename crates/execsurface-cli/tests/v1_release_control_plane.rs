@@ -191,15 +191,35 @@ fn stable_publication_and_channel_promotion_are_conditional_and_generic() {
 }
 
 #[test]
-fn v1_r1_does_not_arm_a_real_v1_release_request() {
+fn v1_release_request_requires_exact_state_and_explicit_authorization() {
     let request = read(".release/release-request.json");
+
+    let rc_unarmed = request.contains(r#""version": "0.1.0-alpha.6""#)
+        && request.contains(r#""tag": "v0.1.0-alpha.6""#)
+        && request.contains(r#""stable_channel": "v0.1""#)
+        && request.contains(r#""request_revision": 1"#);
+
+    let release_armed = request.contains(r#""version": "1.0.0""#)
+        && request.contains(r#""tag": "v1.0.0""#)
+        && request.contains(r#""stable_channel": "v1""#)
+        && request.contains(r#""request_revision": 2"#);
+
+    if release_armed {
+        let decision = read("docs/release/V1_0_0_RELEASE_DECISION.md");
+        let notes = read("docs/releases/v1.0.0.md");
+        assert!(
+            decision.contains("RELEASE_V1_0_AUTHORIZED_BOUNDED"),
+            "a real v1 release request must have explicit bounded release authorization"
+        );
+        assert!(
+            notes.contains("PUBLICATION PENDING"),
+            "release notes must preserve pre-publication state until the transaction succeeds"
+        );
+    }
+
     assert!(
-        request.contains(r#""version": "0.1.0-alpha.6""#),
-        "V1-R1 must not change the active release request to v1"
-    );
-    assert!(
-        !request.contains(r#""tag": "v1.0.0""#),
-        "V1-R1 must not arm an actual v1 release"
+        rc_unarmed || release_armed,
+        "active request must be either frozen RC-unarmed Alpha.6 or explicitly authorized v1.0.0"
     );
 }
 
