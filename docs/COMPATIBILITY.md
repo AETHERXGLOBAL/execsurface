@@ -1,124 +1,158 @@
 # ExecSurface Compatibility & Stability Contract
 
-Status: `PRE-V1 CANDIDATE CONTRACT — EVIDENCE-GATED`
-Tracking: P9.3 / issue `#134`
-Contract baseline: current public line `v0.1.0-alpha.6`
+Status: **V1_STABLE_CONTRACT_FROZEN_BOUNDED — RC EVIDENCE PENDING**  
+Tracking: P9.3 / issue #134  
+Current public baseline: `v0.1.0-alpha.6`  
+Stable-support policy: `docs/SUPPORT_POLICY.md`
 
-This document defines the candidate compatibility boundary that must be proved before ExecSurface may publish a stable `v1.0` release.
+This document freezes the bounded compatibility and stability contract proposed for the future stable v1 line.
 
-It does **not** claim that v1.0 is currently qualified or released.
+It does **not** claim that v1.0 is released or production-qualified.
 
 ## Compatibility principle
 
-ExecSurface treats compatibility as a semantic contract, not only a parser/API contract.
+ExecSurface treats compatibility as a semantic contract, not merely a parser/API contract.
 
-A future stable release must not silently reinterpret a baseline, policy, verdict, observer-completeness state, or release identity merely to keep an old input syntactically accepted.
+A stable release must not silently reinterpret a baseline, policy, verdict, observer-completeness state, target outcome or release identity merely to keep an old input syntactically accepted.
 
 When safe compatibility cannot be established, explicit rejection is preferred to silent reinterpretation.
 
-### Stage-2 R2 correctness boundary
+## 1. Verdict and exit-code contract
 
-The external Stage-2 falsification reproduced a stale file-descriptor attribution defect in the Alpha.5 observer: a successful `dup2`/equivalent replacement from an untracked source could leave the old destination identity authoritative. The R2 correction changes canonical equality because phantom fd-attributed file effects disappear and newly recovered non-filesystem kernel objects remain raw evidence rather than filesystem effects.
-
-Accordingly, the corrected development line uses normalization profile `4` while Alpha.5 baselines remain profile `3`. This is an explicit semantic boundary, not a rewrite of Alpha.5 history:
-
-- Alpha.5 lock schema `2` remains parseable and self-verifiable;
-- a profile-3 Alpha.5 baseline is not silently reinterpreted under profile 4;
-- candidate `check` rejects profile-3/profile-4 comparison as incomparable with exit code `2`;
-- profile-4 baselines are learned explicitly under corrected semantics;
-- no automatic baseline migration or relearning is permitted;
-- the exact Alpha.5 binary remains able to consume its original profile-3 baseline for rollback and reproduction.
-
-The P9.3 gate also contains a cross-version executable probe that must continue proving that Alpha.5 reproduces the stale-destination phantom write while profile 4 does not.
-
-## Candidate stable contract for v1
-
-### 1. Verdict and exit codes
-
-The following meanings are candidate stable v1 behavior:
+The stable v1 meanings are:
 
 | Verdict | Exit code | Stable meaning |
 |---|---:|---|
-| `PASS` | `0` | Evaluation completed and no review/block finding remains under the applicable evidence and policy boundary. |
+| `PASS` | `0` | Evaluation completed and no REVIEW/BLOCK finding remains under the applicable evidence/policy boundary. |
 | `ERROR` | `2` | Required execution/evidence/policy evaluation could not be established as specified. |
 | `REVIEW` | `10` | One or more findings require review. |
 | `BLOCK` | `20` | One or more findings matched blocking policy. |
 
-Inside the v1 major line these numeric meanings must not be reassigned.
+Inside v1.x these numeric meanings must not be reassigned.
 
-`PASS` remains unavailable when evidence required by the public semantics is incomplete, ambiguous, unsupported, or lost.
+Incomplete, ambiguous, unsupported or lost required evidence cannot silently become PASS.
 
-### 2. Baseline lock compatibility
+## 2. Target outcome contract
 
-Current public baseline facts at contract freeze:
+**Stable v1 decision: target outcome is not verdict-bearing.**
 
-- lock schema: `2`;
+The wrapped target's exit code or terminating signal remains report metadata.
+
+`ExecSurface: PASS` means the qualified observation/diff/policy evaluation left no REVIEW/BLOCK execution-surface finding.
+
+**PASS does not mean the wrapped target command succeeded.**
+
+The generated GitHub Actions onboarding path therefore preserves a separate native target-command correctness gate before the ExecSurface step.
+
+Changing target outcome into a verdict-bearing proposition would require a separately versioned compatibility decision; it is not required for v1.
+
+## 3. Baseline compatibility
+
+Stable facts:
+
+- baseline lock schema: `2`;
 - digest format: `2`;
-- baseline is separate from policy;
-- unsupported schema/version states are rejected rather than silently migrated.
+- current corrected normalization profile: `4`;
+- baseline remains separate from policy;
+- ordinary read/check must not mutate the baseline;
+- unsupported semantic states fail explicitly rather than being silently migrated.
 
-Candidate v1 requirements:
+### Current upgrade source
 
-1. A valid baseline-v2 lock produced by the supported Alpha.5/v0.1 public path must remain readable by v1.0. When the stored semantics remain compatible with the qualified v1 public reference observer it may be consumed directly; when a versioned semantic correction makes it incompatible, it must be rejected explicitly rather than reinterpreted. The Stage-2 R2 profile-3/profile-4 boundary is such a correction.
-2. Unsupported schema, digest, canonical-surface, observer, or semantic states must fail explicitly.
-3. Reading an old baseline must not mutate it.
-4. No automatic baseline relearning is an upgrade mechanism.
-5. Any future migration tool must be explicit, deterministic, preserve the original input, identify source/target versions, and be separately tested.
+**Alpha.6 profile-4 is the current supported upgrade source for the future v1 RC.**
 
-Compatibility means preserving meaning, not merely accepting JSON.
+A valid Alpha.6 profile-4 baseline may be consumed directly only when the exact v1 RC proves semantic compatibility.
 
-### 3. Policy and verdict-report compatibility
+### Historical Alpha.5 boundary
 
-Current public facts at contract freeze:
+**Alpha.5 profile-3 remains historical/rollback evidence and is explicitly rejected as semantically incomparable by profile-4 code.**
 
-- current policy schema: `2`;
-- current verdict schema: `2`;
-- policy parsing uses explicit schemas and rejects unsupported/invalid input rather than silently weakening policy.
+This preserves the Stage-2 R2 semantic correction:
 
-Candidate v1 requirements:
+- Alpha.5 lock schema 2 remains parseable/self-verifiable;
+- profile 3 is not silently reinterpreted under profile 4;
+- incompatible profile-3/profile-4 comparison fails explicitly with ERROR / exit 2;
+- no automatic baseline migration or relearning is permitted;
+- the exact Alpha.5 binary remains available for historical reproduction and rollback of its own profile-3 evidence.
 
-- stable policy-v2 constructs used by the qualified public path retain their documented meanings within v1.x;
-- unknown or unsupported fields/versions must not silently become permissive behavior;
-- machine-readable verdict/report output remains versioned;
-- a breaking schema change requires an explicit version boundary and migration story;
-- policy evaluation remains separate from baseline learning/mutation.
+Any future migration tool must be explicit, deterministic, preserve the original input and identify the source/target semantic versions.
 
-### 4. CLI compatibility
+## 4. Policy compatibility
 
-The candidate stable v1 CLI surface is intentionally narrow.
+Current accepted policy versions are explicit:
 
-#### Stable candidate commands
+- schema 1: legacy-read compatibility; deprecated for new authoring;
+- **schema 2 remains the default authored policy schema**;
+- **schema 3 is a stable opt-in extension** for the already-qualified exact matchers below.
+
+Stable schema-3 opt-in matchers:
+
+- `path_resolution`
+- `open_intent`
+- `rename_from_class`
+- `rename_from_prefix`
+- `rename_from_resolution`
+
+Schema 3 does not change schema-1/schema-2 meanings.
+
+Unknown fields, unsupported versions and invalid v3-only matcher use under an older schema must fail explicitly rather than becoming permissive fallback.
+
+Policy evaluation remains separate from baseline learning/mutation.
+
+Inside v1.x, removing or semantically reassigning the qualified schema-2 or schema-3 behavior is breaking unless an explicit compatible replacement is proved.
+
+## 5. Verdict/report compatibility
+
+Stable machine-readable verdict schema remains `2` at this freeze.
+
+Stable meanings include:
+
+- verdict;
+- baseline digest identity where present;
+- target outcome as non-verdict-bearing report metadata;
+- policy summary;
+- findings;
+- error state.
+
+A future breaking report/schema change requires an explicit version boundary and migration story.
+
+## 6. Stable CLI surface
+
+Stable v1 candidate commands:
 
 - `doctor`
 - `init`
 - `learn`
 - `check`
 - `--version` / `version`
-- help behavior needed for normal user orientation and automation diagnostics
+- `--help` / `help`
 
-For stable commands, v1.x should preserve documented argument meanings and automation-relevant output/exit semantics unless a change is explicitly backward compatible.
+For these stable commands, documented argument meanings and automation-relevant output/exit semantics must remain compatible inside v1.x unless a separately qualified correctness fix requires an explicit exception.
 
-#### Lower-level / non-stable-by-default surfaces
+### Lower-level / non-stable-by-default surfaces
 
-- `observe` is a lower-level evidence surface. Native ptrace behavior may be documented, but existence of the command does not stabilize every backend-specific raw field forever.
-- experimental libbpf/eBPF behavior is **not** part of the stable v1 compatibility promise unless a later evidence gate explicitly promotes a bounded proposition/capability.
-- `render-error` is an implementation/helper surface and is not automatically a supported public v1 API.
-- internal Rust crate APIs are not promised as stable merely because the workspace is public.
+- `observe` remains a lower-level evidence surface;
+- experimental libbpf/eBPF behavior is **not part of the stable v1 contract**;
+- `render-error` remains an implementation/helper surface;
+- internal Rust crate APIs are not stabilized merely because the workspace is public.
 
-### 5. GitHub Action compatibility
+Public documentation of a research/lower-level interface does not automatically stabilize every raw field.
 
-A future stable `AETHERXGLOBAL/execsurface@v1` channel must be qualified separately from the current `@v0.1` channel.
+## 7. Stable GitHub Action surface
 
-Candidate v1 public Action contract includes the documented meanings of these current public inputs where retained for v1:
+The future `AETHERXGLOBAL/execsurface@v1` stable candidate includes these inputs:
 
 - `command`
 - `baseline`
 - `policy`
+- `expected-baseline-digest`
+- `expected-policy-sha256`
+- `require-custody`
 - `fail-on-review`
 - `upload-artifact`
 - `artifact-name`
 
-Candidate public outputs where retained for v1:
+Candidate stable outputs:
 
 - `verdict`
 - `exit-code`
@@ -128,84 +162,171 @@ Candidate public outputs where retained for v1:
 - `artifact-url`
 - `artifact-digest`
 
-The v1 Action must preserve fail-closed verdict enforcement and must not silently change an ERROR/BLOCK into a successful workflow outcome. REVIEW behavior remains controlled only by the documented `fail-on-review` contract.
+Stable enforcement:
 
-Removal or semantic reassignment of a stable v1 Action input/output is a breaking change unless an explicit compatible replacement is provided.
+- PASS -> Action succeeds;
+- REVIEW -> succeeds by default;
+- REVIEW + `fail-on-review=true` -> Action fails with the REVIEW contract;
+- BLOCK -> fails closed;
+- ERROR -> fails closed;
+- custody-required mode must reject missing/mismatched externally anchored baseline/policy identities before target execution.
 
-### 6. Platform and observer boundary
+Removal or semantic reassignment of a stable v1 Action input/output is breaking unless an explicit compatible replacement is provided.
 
-At this freeze, the public support boundary remains:
+## 8. Workload-support boundary
+
+v1 does not promise that every syntactically unchanged command produces zero execution-surface drift.
+
+Historical external workload evidence distinguishes:
+
+- deterministic/stable execution surfaces where unchanged PASS is a qualified normal path; and
+- **highly nondeterministic build/test graphs** whose compiler/cache/temp/runtime effects can vary across nominally unchanged runs.
+
+Under exact baseline semantics, such build/test variation **may legitimately produce REVIEW**.
+
+The stable v1 decision is therefore:
+
+- keep exact evidence semantics;
+- do not add broad path/cache suppression merely to force PASS;
+- do not auto-authorize multi-run variance;
+- do not promise unchanged PASS for every build/test graph;
+- require users to interpret or policy-handle legitimate variation explicitly when using these workloads.
+
+This is a support-scope decision, not a feature gap.
+
+## 9. Platform, installation route and observer boundary
+
+Stable architecture boundary:
 
 - Linux x86_64;
 - native `ptrace` as the bounded public reference observer.
 
-This document does not promote ARM64, another operating system, eBPF/BPF-LSM, imported traces, or any research backend into v1 support.
+Explicitly not promoted:
 
-Platform/back-end expansion requires its own reproducible compatibility and semantic-authority evidence.
+- Windows;
+- macOS;
+- ARM64;
+- eBPF/BPF-LSM PASS authority;
+- backend auto-selection;
+- backend baseline interchangeability.
 
-### 7. Upgrade contract
+Experimental eBPF/BPF-LSM and imported/research backends are **not part of the stable v1 contract**.
 
-Before v1.0 release, the release candidate must prove at minimum:
+### Prebuilt GitHub Release binary
 
-- current Alpha.5/v0.1 baseline-v2 compatibility for the explicitly preserved path;
-- current stable verdict/exit-code behavior;
-- current supported policy behavior;
-- current public Action semantics or an explicitly documented compatible transition to `@v1`;
-- explicit rejection of unsupported old inputs;
-- no irreversible mutation of user baselines/policies during ordinary upgrade validation.
+Current Alpha.6 evidence proves:
 
-### 8. Rollback contract
+- exact public prebuilt artifact: PASS on Ubuntu 24.04 x86_64;
+- exact current prebuilt artifact: FAIL on Ubuntu 22.04 because it requires `GLIBC_2.39`.
 
-A failed/bad v1 release must be recoverable without rewriting user baseline/policy history.
+Therefore v1 must not claim that the current prebuilt-artifact strategy supports all Linux x86_64 userlands.
 
-Required properties:
+Unless V1-R1 deliberately changes the stable build floor and the exact v1 RC reproves older-userland compatibility, the qualified prebuilt-binary support floor is an Ubuntu-24.04 / glibc-2.39-class x86_64 environment with the required ptrace capability.
 
-- immutable release tags remain immutable;
-- stable moving channel changes are auditable;
-- rollback identifies the exact previously qualified release source;
-- rollback does not silently rewrite baseline or policy files;
-- release documentation records the reason and affected compatibility boundary.
+### crates.io / local-build path
 
-## Breaking-change classification inside v1
+Current Alpha.6 evidence proves exact-version local build/install plus `doctor -> learn -> check` on both:
 
-The following are breaking unless separately demonstrated to preserve the stable semantics:
+- Ubuntu 22.04 x86_64;
+- Ubuntu 24.04 x86_64.
+
+The source manifest declares Rust `1.82`, and the V1-R0 MSRV probe successfully checks the CLI package with Rust `1.82.0`.
+
+These facts do not imply universal Linux support. Kernel/ptrace/container restrictions still apply.
+
+## 10. Performance contract
+
+There is **no universal low-overhead promise** in stable v1.
+
+Measured historical evidence shows that **native ptrace overhead is workload-dependent** and can be material.
+
+A stable RC must characterize representative declared workload classes under a frozen protocol.
+
+Performance evidence may result in:
+
+- a bounded fit;
+- a noisy/high-overhead fit;
+- a narrower operational recommendation;
+- NO_FIT for a workload.
+
+No performance threshold may be weakened after observing results merely to obtain a stable-release label.
+
+A faster backend is not required for v1 unless the declared support/use contract cannot be met without it.
+
+## 11. Stable support and deprecation lifecycle
+
+The operating policy is frozen in `docs/SUPPORT_POLICY.md`.
+
+Core rules:
+
+- exact `v1.x.y` releases are immutable identities;
+- `@v1` is a deliberately movable stable Action channel;
+- the newest fully qualified stable release is the current supported stable release;
+- no fixed support duration or response-time SLA is invented by the project;
+- stable surfaces are normally deprecated before removal and are not removed inside v1 merely for cleanup;
+- bad-release rollback moves the stable channel to a previously qualified immutable release without rewriting user evidence;
+- historical failed/bad release evidence is retained.
+
+## 12. Upgrade and rollback contract
+
+Before v1.0 release, the exact frozen RC must prove:
+
+1. Alpha.6 profile-4 compatibility for the preserved stable path;
+2. explicit Alpha.5 profile-3 incompatibility handling where semantics differ;
+3. unsupported schema/semantic states fail closed;
+4. stable verdict/exit behavior;
+5. stable policy schema-2 and schema-3 behavior;
+6. stable GitHub Action inputs/outputs and custody enforcement;
+7. no baseline/policy mutation during upgrade validation;
+8. rollback to the previously qualified release path without rewriting user evidence;
+9. experimental backend/research surfaces were not accidentally promoted.
+
+## 13. Breaking-change classification inside v1
+
+The following are breaking unless separately proved compatible:
 
 - reassigning verdict exit codes;
+- making target outcome verdict-bearing without an explicit versioned contract;
 - silently accepting a previously unsupported schema with different meaning;
 - changing baseline digest/canonical meaning so old valid baselines are reinterpreted;
 - relaxing incomplete-evidence behavior into PASS eligibility;
 - changing a stable policy matcher/action meaning;
+- silently changing policy-v2 default or policy-v3 opt-in status;
 - removing or semantically reassigning a stable CLI command/argument;
 - removing or semantically reassigning a stable GitHub Action input/output;
-- broadening backend authority based only on backend identity or implementation availability.
+- broadening backend authority based only on backend identity/availability.
 
-Bug fixes are not automatically breaking merely because alpha behavior differed. If a bug affected a documented stable v1 semantic promise, the correction requires an explicit compatibility/security decision.
+Bug fixes are not automatically breaking merely because alpha behavior differed. If a correction changes a stable v1 promise, it requires an explicit compatibility decision and evidence.
 
-## Required executable proof before closeout
+## 14. Required executable proof before v1 closeout
 
-P9.3 remains OPEN until executable evidence covers this contract. Required proof set:
+P9.3 remains OPEN until the exact v1 RC passes:
 
-1. **Golden Alpha.5 baseline-v2 fixture** verified as immutable history, with explicit profile-3/profile-4 rejection where Stage-2 R2 changed semantics, plus exact-Alpha.5 rollback consumption.
-2. **Profile-4 self-compatibility fixture** proving corrected candidate semantics can learn/check deterministically without baseline mutation.
-3. **Stage-2 R2 cross-version counterexample** proving Alpha.5 emits the stale-destination phantom write and profile 4 removes it while the kernel victim remains untouched.
-4. **Unsupported-schema rejection fixtures** proving no silent migration/reinterpretation.
-5. **Verdict/exit regression** for PASS `0`, ERROR `2`, REVIEW `10`, BLOCK `20`.
-6. **Policy/report version regression** including unknown/unsupported input failure behavior.
-7. **GitHub Action contract test** for stable candidate inputs/outputs and verdict enforcement.
-8. **Upgrade rehearsal** from the frozen current public line to a frozen v1 release candidate, including explicit semantic-boundary handling.
-9. **Rollback rehearsal** back to the previously qualified release path without mutating user evidence.
-10. **Experimental-surface anti-drift review** proving experimental libbpf/research capabilities were not accidentally promoted.
+1. V1-R0 stable-contract sentinels;
+2. Alpha.6 profile-4 upgrade rehearsal;
+3. retained Alpha.5 profile-3 cross-version boundary proof;
+4. unsupported-schema rejection;
+5. verdict/exit regression;
+6. policy schema-2/schema-3 regression;
+7. GitHub Action contract/custody test;
+8. environment/install-route qualification;
+9. upgrade and rollback rehearsal;
+10. experimental-surface anti-drift review.
 
-Historical M12.2 evidence is relevant starting evidence, but it does not by itself qualify an unreleased v1 candidate.
+Historical Alpha.5/Alpha.6 evidence is starting evidence; it does not by itself qualify an unreleased v1 candidate.
 
-## Change control
+## 15. Change control
 
-Changes to this candidate contract before v1.0 must be recorded with:
+The frozen contract is:
 
-- the exact changed promise;
+**V1_STABLE_CONTRACT_FROZEN_BOUNDED**
+
+Any change before v1.0 must record:
+
+- exact changed promise;
 - rationale;
 - compatibility impact;
 - required new evidence;
 - anti-drift review.
 
-After v1.0, changes to a stable promise follow normal SemVer-breaking-change discipline and the evidence-gated release process.
+After v1.0, changes to a stable promise follow SemVer-breaking-change discipline plus the evidence-gated release process.
