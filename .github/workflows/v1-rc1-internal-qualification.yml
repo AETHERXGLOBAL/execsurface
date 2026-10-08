@@ -1,0 +1,304 @@
+name: V1 RC1 Internal Qualification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/v1-rc1-internal-qualification.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'action/**'
+      - 'action.yml'
+      - '.release/release-request.json'
+      - 'docs/COMPATIBILITY.md'
+      - 'docs/development/V1_INTERNAL_RC1_QUALIFICATION_PROTOCOL.md'
+      - 'docs/development/V1_INTERNAL_QUALIFICATION_GOVERNANCE.md'
+      - '.github/scripts/release_contract.py'
+      - '.github/scripts/verify_tag_ruleset.py'
+      - '.github/workflows/publish-crates.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ALPHA6_TAG: v0.1.0-alpha.6
+  ALPHA6_VERSION: 0.1.0-alpha.6
+  ALPHA6_ASSET: execsurface-v0.1.0-alpha.6-x86_64-unknown-linux-gnu.tar.gz
+
+jobs:
+  iq2-destruction-round-a:
+    name: IQ2 / Destruction Round A
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prove RC identity is internal-only and release request is not armed
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="execsurface"))')"
+          test "$version" = "1.0.0"
+          test "$(tr -d '[:space:]' < action/release-tag.txt)" = "v1.0.0"
+          python3 - <<'PY'
+          import json
+          request=json.load(open(".release/release-request.json"))
+          assert request == {
+              "version":"0.1.0-alpha.6",
+              "tag":"v0.1.0-alpha.6",
+              "stable_channel":"v0.1",
+              "request_revision":1,
+          }
+          PY
+          grep -F 'v0.1.0-alpha.6' README.md >/dev/null
+          grep -F 'v0.1.0-alpha.6' docs/STATUS.md >/dev/null
+
+      - name: Prove qualification has not created public v1 refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git ls-remote --tags origin refs/tags/v1 refs/tags/v1.0.0)"
+
+      - name: Attack RC identity, generated channel and registry chain
+        run: cargo test --locked -p execsurface --test v1_internal_rc1 -- --test-threads=1 --nocapture
+
+      - name: Attack frozen stable contract
+        run: cargo test --locked -p execsurface --test v1_stable_contract -- --test-threads=1 --nocapture
+
+      - name: Attack custody fail-closed contract
+        run: |
+          cargo test --locked -p execsurface --test r4_custody -- --test-threads=1 --nocapture
+          cargo test --locked -p execsurface --test r4_action_custody -- --test-threads=1 --nocapture
+
+      - name: Attack policy v1/v2/v3 semantic boundaries
+        run: cargo test --locked -p execsurface-policy --test r5_policy_expressiveness -- --test-threads=1 --nocapture
+
+  iq3-alpha6-upgrade-rollback:
+    name: IQ3 / Alpha.6 <-> v1 semantic upgrade and rollback
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p execsurface --bin execsurface
+          candidate="$GITHUB_WORKSPACE/target/release/execsurface"
+          test "$("$candidate" --version)" = "execsurface 1.0.0"
+          echo "CANDIDATE_BIN=$candidate" >> "$GITHUB_ENV"
+
+      - name: Materialize exact public Alpha.6
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/alpha6-upgrade"
+          mkdir -p "$root"
+          cd "$root"
+          gh release download "$ALPHA6_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ALPHA6_ASSET" --pattern "$ALPHA6_ASSET.sha256"
+          sha256sum -c "$ALPHA6_ASSET.sha256"
+          gh attestation verify "$ALPHA6_ASSET" -R "$GITHUB_REPOSITORY"
+          tar -xzf "$ALPHA6_ASSET"
+          alpha6="$root/execsurface-$ALPHA6_TAG-x86_64-unknown-linux-gnu/execsurface"
+          test -x "$alpha6"
+          test "$("$alpha6" --version)" = "execsurface $ALPHA6_VERSION"
+          echo "ALPHA6_BIN=$alpha6" >> "$GITHUB_ENV"
+
+      - name: Alpha.6 baseline -> v1 PASS / REVIEW without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/upgrade-rollback"
+          mkdir -p "$work"
+          cd "$work"
+
+          "$ALPHA6_BIN" learn --output alpha6.lock.json -- /bin/bash -lc true
+          python3 - <<'PY'
+          import json
+          lock=json.load(open("alpha6.lock.json"))
+          assert lock["payload"]["canonical_surface"]["normalization"]["profile_version"] == 4
+          assert lock["payload"]["tool"]["version"] == "0.1.0-alpha.6"
+          PY
+          before="$(sha256sum alpha6.lock.json | awk '{print $1}')"
+
+          pass="$("$CANDIDATE_BIN" check --baseline alpha6.lock.json -- /bin/bash -lc true)"
+          grep -F 'ExecSurface: PASS' <<<"$pass"
+          test "$before" = "$(sha256sum alpha6.lock.json | awk '{print $1}')"
+
+          set +e
+          review="$("$CANDIDATE_BIN" check --baseline alpha6.lock.json -- /bin/bash -lc 'true; /bin/echo v1-rc1-upgrade-drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 10
+          grep -F 'ExecSurface: REVIEW' <<<"$review"
+          test "$before" = "$(sha256sum alpha6.lock.json | awk '{print $1}')"
+
+      - name: v1 baseline -> Alpha.6 rollback PASS without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/upgrade-rollback"
+          cd "$work"
+
+          "$CANDIDATE_BIN" learn --output v1.lock.json -- /bin/bash -lc true
+          python3 - <<'PY'
+          import json
+          lock=json.load(open("v1.lock.json"))
+          assert lock["payload"]["canonical_surface"]["normalization"]["profile_version"] == 4
+          assert lock["payload"]["tool"]["version"] == "1.0.0"
+          PY
+          before="$(sha256sum v1.lock.json | awk '{print $1}')"
+
+          pass="$("$ALPHA6_BIN" check --baseline v1.lock.json -- /bin/bash -lc true)"
+          grep -F 'ExecSurface: PASS' <<<"$pass"
+          test "$before" = "$(sha256sum v1.lock.json | awk '{print $1}')"
+
+  iq4-source-environment:
+    name: IQ4 / Candidate source / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and exercise candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p execsurface --bin execsurface
+          bin="$GITHUB_WORKSPACE/target/release/execsurface"
+          test "$("$bin" --version)" = "execsurface 1.0.0"
+          work="$RUNNER_TEMP/rc1-env"
+          mkdir -p "$work"
+          cd "$work"
+          "$bin" doctor
+          "$bin" learn --output execsurface.lock.json -- /bin/bash -lc true
+          "$bin" check --baseline execsurface.lock.json -- /bin/bash -lc true
+
+  iq4-msrv:
+    name: IQ4 / Declared Rust 1.82 source floor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install declared MSRV
+        run: rustup toolchain install 1.82.0 --profile minimal
+      - name: Check candidate at MSRV
+        run: cargo +1.82.0 check --locked -p execsurface
+
+  iq5-performance:
+    name: IQ5 / Fixed performance characterization
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build candidate
+        run: cargo build --locked --release -p execsurface --bin execsurface
+      - name: Characterize fixed workloads without pass/fail threshold
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, statistics, subprocess, tempfile, time
+          from pathlib import Path
+
+          bin_path = Path(os.environ["GITHUB_WORKSPACE"]) / "target/release/execsurface"
+          root = Path(tempfile.mkdtemp(prefix="execsurface-v1-rc1-perf-"))
+
+          workloads = [
+              ("trivial-shell", "true"),
+              ("deterministic-python", "python3 -c 'sum(range(10000))'"),
+              ("small-file", "printf x > rc1-perf-file.txt; cat rc1-perf-file.txt >/dev/null; rm -f rc1-perf-file.txt"),
+          ]
+          repeats = 7
+          results = []
+
+          def timed(argv, cwd):
+              t0=time.perf_counter()
+              cp=subprocess.run(argv, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+              dt=time.perf_counter()-t0
+              if cp.returncode != 0:
+                  raise SystemExit(f"command failed ({cp.returncode}): {argv}")
+              return dt
+
+          for name, command in workloads:
+              work = root / name
+              work.mkdir()
+              baseline = work / "baseline.json"
+              subprocess.run(
+                  [str(bin_path), "learn", "--output", str(baseline), "--", "/bin/bash", "-lc", command],
+                  cwd=work, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+              )
+              native=[timed(["/bin/bash","-lc",command], work) for _ in range(repeats)]
+              checked=[timed([str(bin_path),"check","--baseline",str(baseline),"--","/bin/bash","-lc",command], work) for _ in range(repeats)]
+              native_m=statistics.median(native)
+              checked_m=statistics.median(checked)
+              results.append({
+                  "workload":name,
+                  "repeats":repeats,
+                  "native_median_seconds":native_m,
+                  "execsurface_median_seconds":checked_m,
+                  "ratio":checked_m/native_m if native_m else None,
+              })
+
+          out=Path(os.environ["RUNNER_TEMP"]) / "v1-rc1-performance.json"
+          out.write_text(json.dumps({"candidate":"1.0.0","results":results}, indent=2)+"\n")
+          print(out.read_text())
+          PY
+
+      - name: Upload retained performance evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: v1-rc1-performance
+          path: ${{ runner.temp }}/v1-rc1-performance.json
+          if-no-files-found: error
+          retention-days: 30
+
+  iq6-tag-governance:
+    name: IQ6 / Immutable v1 tag governance state
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Re-read repository rulesets and classify admin state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/rulesets.jsonl"
+          : > "$evidence"
+          gh api "repos/$GITHUB_REPOSITORY/rulesets" --paginate --jq '.[].id' |
+          while read -r id; do
+            gh api "repos/$GITHUB_REPOSITORY/rulesets/$id" >> "$evidence"
+            printf '\n' >> "$evidence"
+          done
+
+          if python3 .github/scripts/verify_tag_ruleset.py --rulesets-jsonl "$evidence" --tag v1.0.0; then
+            echo "IQ6_GOVERNANCE_READY"
+          else
+            echo "IQ6_ADMIN_PENDING"
+          fi
+
+          test -z "$(git ls-remote --tags origin refs/tags/v1 refs/tags/v1.0.0)"
