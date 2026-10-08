@@ -637,10 +637,7 @@ fn verdict_output_state(path: &Path) -> Result<VerdictOutputState, String> {
     }
 }
 
-fn validate_verdict_output_materialization_target(
-    kind: &str,
-    path: &Path,
-) -> Result<(), String> {
+fn validate_verdict_output_materialization_target(kind: &str, path: &Path) -> Result<(), String> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() {
