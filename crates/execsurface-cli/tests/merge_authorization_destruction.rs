@@ -87,3 +87,129 @@ fn merge_auth_written_object_renamed_onto_report_must_not_be_overwritten() {
 
     let _ = fs::remove_dir_all(dir);
 }
+
+
+#[test]
+fn merge_auth_written_object_chained_renames_onto_report_must_not_be_overwritten() {
+    let dir = temp_dir("written-chained-rename-output");
+    let baseline = dir.join("baseline.lock.json");
+    let source = dir.join("workload-owned.bin");
+    let middle = dir.join("middle.bin");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "printf 'WORKLOAD-STATE' > '{}' && mv '{}' '{}' && mv '{}' '{}'",
+        source.display(),
+        source.display(),
+        middle.display(),
+        middle.display(),
+        report.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run chained-rename destruction case");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        fs::read(&report).expect("workload object after chained rename"),
+        b"WORKLOAD-STATE"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_written_child_survives_parent_directory_rename_lineage() {
+    let dir = temp_dir("written-parent-rename-output");
+    let baseline = dir.join("baseline.lock.json");
+    let old_dir = dir.join("old");
+    let new_dir = dir.join("new");
+    let source = old_dir.join("owned.bin");
+    let report = new_dir.join("owned.bin");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "mkdir -p '{}' && printf 'WORKLOAD-STATE' > '{}' && mv '{}' '{}'",
+        old_dir.display(),
+        source.display(),
+        old_dir.display(),
+        new_dir.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run directory-rename destruction case");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        fs::read(&report).expect("workload child after parent rename"),
+        b"WORKLOAD-STATE"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_distinct_report_path_remains_available_after_workload_rename() {
+    let dir = temp_dir("distinct-report-control");
+    let baseline = dir.join("baseline.lock.json");
+    let source = dir.join("workload-owned.bin");
+    let final_workload = dir.join("workload-final.bin");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "printf 'WORKLOAD-STATE' > '{}' && mv '{}' '{}'",
+        source.display(),
+        source.display(),
+        final_workload.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run distinct-report control");
+
+    assert_eq!(
+        output.status.code(),
+        Some(10),
+        "ordinary drift should remain REVIEW when the report is disjoint"
+    );
+    assert_eq!(
+        fs::read(&final_workload).expect("final workload object"),
+        b"WORKLOAD-STATE"
+    );
+    let report_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&report).expect("report bytes")).expect("report JSON");
+    assert_eq!(report_json["verdict"], "review");
+
+    let _ = fs::remove_dir_all(dir);
+}
