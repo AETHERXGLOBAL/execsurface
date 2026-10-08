@@ -14,6 +14,18 @@ inputs:
     description: Optional policy JSON path
     required: false
     default: ""
+  expected-baseline-digest:
+    description: Optional externally trusted baseline semantic digest (sha256:...)
+    required: false
+    default: ""
+  expected-policy-sha256:
+    description: Optional externally trusted exact-byte policy SHA-256 (sha256:...)
+    required: false
+    default: ""
+  require-custody:
+    description: Require both external custody pins before the target command executes
+    required: false
+    default: "false"
   fail-on-review:
     description: Fail the Action when the ExecSurface verdict is REVIEW
     required: false
@@ -64,6 +76,9 @@ runs:
         EXECSURFACE_COMMAND: ${{ inputs.command }}
         EXECSURFACE_BASELINE: ${{ inputs.baseline }}
         EXECSURFACE_POLICY: ${{ inputs.policy }}
+        EXECSURFACE_EXPECTED_BASELINE_DIGEST: ${{ inputs.expected-baseline-digest }}
+        EXECSURFACE_EXPECTED_POLICY_SHA256: ${{ inputs.expected-policy-sha256 }}
+        EXECSURFACE_REQUIRE_CUSTODY: ${{ inputs.require-custody }}
       run: "$GITHUB_ACTION_PATH/action/run.sh"
 
     - name: Upload ExecSurface evidence
