@@ -114,42 +114,33 @@ fn release_request_validation_rejects_wrong_channel_and_stale_action_tag() {
 }
 
 #[test]
-fn release_state_cannot_be_armed_without_explicit_authorization_or_claim_publication_early() {
+fn published_release_state_requires_exact_authorization_and_bounded_public_claims() {
     let request = read(".release/release-request.json");
     let readme = read("README.md");
     let status = read("docs/STATUS.md");
-
-    let rc_unarmed = request.contains(r#""version": "0.1.0-alpha.6""#)
-        && request.contains(r#""tag": "v0.1.0-alpha.6""#)
-        && request.contains(r#""stable_channel": "v0.1""#);
-
-    let release_armed = request.contains(r#""version": "1.0.0""#)
-        && request.contains(r#""tag": "v1.0.0""#)
-        && request.contains(r#""stable_channel": "v1""#)
-        && request.contains(r#""request_revision": 2"#);
-
-    if release_armed {
-        let decision = read("docs/release/V1_0_0_RELEASE_DECISION.md");
-        let notes = read("docs/releases/v1.0.0.md");
-        assert!(
-            decision.contains("RELEASE_V1_0_AUTHORIZED_BOUNDED"),
-            "armed stable request requires explicit bounded release authorization"
-        );
-        assert!(
-            notes.contains("PUBLICATION PENDING"),
-            "release notes must not claim publication before the transaction succeeds"
-        );
-    }
+    let decision = read("docs/release/V1_0_0_RELEASE_DECISION.md");
+    let notes = read("docs/releases/v1.0.0.md");
 
     assert!(
-        rc_unarmed || release_armed,
-        "release state must be either frozen RC-unarmed Alpha.6 or explicitly authorized v1.0.0"
+        request.contains(r#""version": "1.0.0""#)
+            && request.contains(r#""tag": "v1.0.0""#)
+            && request.contains(r#""stable_channel": "v1""#)
+            && request.contains(r#""request_revision": 2"#),
+        "published state must retain the exact authorized stable-v1 request"
+    );
+    assert!(
+        decision.contains("RELEASE_V1_0_AUTHORIZED_BOUNDED"),
+        "published stable state requires explicit bounded release authorization"
+    );
+    assert!(
+        notes.contains("PUBLISHED STABLE RELEASE — INTERNALLY QUALIFIED BOUNDED"),
+        "release record must prove publication rather than remain in a pending state"
     );
 
     for doc in [&readme, &status] {
         assert!(
-            doc.contains("v0.1.0-alpha.6"),
-            "public documents must remain on Alpha.6 until the release transaction succeeds"
+            doc.contains("v1.0.0"),
+            "current public documents must identify stable v1.0.0 after publication"
         );
         for forbidden in [
             "independently validated",
@@ -164,8 +155,12 @@ fn release_state_cannot_be_armed_without_explicit_authorization_or_claim_publica
             );
         }
     }
-}
 
+    assert!(
+        status.contains("Previous public Alpha `v0.1.0-alpha.6` remains immutable"),
+        "published state must retain Alpha.6 as immutable historical/rollback evidence"
+    );
+}
 #[test]
 fn release_workflows_enforce_governance_and_consumer_ordering() {
     let promote = read(".github/workflows/promote-release.yml");
