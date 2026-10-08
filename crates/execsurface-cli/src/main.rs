@@ -641,8 +641,8 @@ fn validate_verdict_output_preflight(parsed: &CheckArgs) -> Result<VerdictOutput
     Ok(VerdictOutputGuard { protected })
 }
 
-fn workload_written_paths_after_renames(observation: &Observation) -> Result<Vec<PathBuf>, String> {
-    let mut written = Vec::<PathBuf>::new();
+fn workload_mutated_paths_after_renames(observation: &Observation) -> Result<Vec<PathBuf>, String> {
+    let mut mutated = Vec::<PathBuf>::new();
     let mut events = observation.events.iter().collect::<Vec<_>>();
     events.sort_by_key(|event| event.sequence);
 
@@ -654,8 +654,34 @@ fn workload_written_paths_after_renames(observation: &Observation) -> Result<Vec
                 ..
             } if path.starts_with('/') => {
                 let path = lexical_absolute_path(Path::new(path))?;
-                if !written.iter().any(|existing| existing == &path) {
-                    written.push(path);
+                if !mutated.iter().any(|existing| existing == &path) {
+                    mutated.push(path);
+                }
+            }
+            RawEventKind::FilePathAccess {
+                operation,
+                path,
+                flags,
+            } if path.starts_with('/') => {
+                let mutates = match operation {
+                    FileOperation::Create => true,
+                    FileOperation::Open => flags
+                        .is_some_and(|flags| flags & libc::O_TRUNC as u64 != 0),
+                    _ => false,
+                };
+                if mutates {
+                    let path = lexical_absolute_path(Path::new(path))?;
+                    if !mutated.iter().any(|existing| existing == &path) {
+                        mutated.push(path);
+                    }
+                }
+            }
+            RawEventKind::FileOpenAt2 { path, flags, .. }
+                if path.starts_with('/') && flags & libc::O_TRUNC as u64 != 0 =>
+            {
+                let path = lexical_absolute_path(Path::new(path))?;
+                if !mutated.iter().any(|existing| existing == &path) {
+                    mutated.push(path);
                 }
             }
             RawEventKind::FileRename { from, to }
@@ -667,8 +693,8 @@ fn workload_written_paths_after_renames(observation: &Observation) -> Result<Vec
                     continue;
                 }
 
-                let mut next = Vec::with_capacity(written.len());
-                for path in written.drain(..) {
+                let mut next = Vec::with_capacity(mutated.len());
+                for path in mutated.drain(..) {
                     if let Ok(suffix) = path.strip_prefix(&from) {
                         if suffix.as_os_str().is_empty() {
                             next.push(to.clone());
@@ -685,13 +711,13 @@ fn workload_written_paths_after_renames(observation: &Observation) -> Result<Vec
                 }
                 next.sort();
                 next.dedup();
-                written = next;
+                mutated = next;
             }
             _ => {}
         }
     }
 
-    Ok(written)
+    Ok(mutated)
 }
 
 fn validate_verdict_output_postflight(
@@ -702,7 +728,7 @@ fn validate_verdict_output_postflight(
     // Re-run path-based checks after the target because the target can rebind
     // an output path after initial preflight.
     let _ = validate_verdict_output_preflight(parsed)?;
-    let workload_written_paths = workload_written_paths_after_renames(observation)?;
+    let workload_mutated_paths = workload_mutated_paths_after_renames(observation)?;
 
     for (output_kind, output) in verdict_output_paths(parsed) {
         let output_object_identity = existing_object_identity(output)?;
@@ -720,10 +746,10 @@ fn validate_verdict_output_postflight(
             }
         }
 
-        for path in &workload_written_paths {
+        for path in &workload_mutated_paths {
             if artifact_paths_alias(output, path)? {
                 return Err(format!(
-                    "{output_kind} verdict output overlaps workload-written artifact after observed path transitions: {}",
+                    "{output_kind} verdict output overlaps workload-mutated artifact after observed path transitions: {}",
                     output.display()
                 ));
             }
