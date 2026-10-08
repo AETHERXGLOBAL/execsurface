@@ -2,7 +2,7 @@
 
 This file describes the **current forward roadmap**. The detailed M0–M9 historical roadmap is preserved unchanged at `docs/archive/ROADMAP_PRE_ALPHA5.md`.
 
-Current public state: `v0.1.0-alpha.5` is released for Linux x86_64, with native `ptrace` as the bounded public reference observer. See `docs/STATUS.md` for the authoritative current release state.
+Current public state: `v0.1.0-alpha.6` is released for Linux x86_64, with native `ptrace` as the bounded public reference observer. See `docs/STATUS.md` for the authoritative current release state.
 
 ## Operating principles
 
