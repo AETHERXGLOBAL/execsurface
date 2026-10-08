@@ -203,7 +203,6 @@ fn v1_r1_does_not_arm_a_real_v1_release_request() {
     );
 }
 
-
 #[test]
 fn immutable_v1_tag_governance_is_fail_closed_and_no_bypass() {
     let valid = r#"{"id":1,"name":"Protect v1 immutable releases","target":"tag","enforcement":"active","conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v1.*"]}},"rules":[{"type":"deletion"},{"type":"update"}],"bypass_actors":[],"current_user_can_bypass":"never"}"#;
@@ -221,9 +220,7 @@ fn immutable_v1_tag_governance_is_fail_closed_and_no_bypass() {
     assert!(!run_ruleset_verifier(bypass, "v1.0.0").status.success());
 
     let missing_update = r#"{"id":4,"name":"v1 deletion only","target":"tag","enforcement":"active","conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v1.*"]}},"rules":[{"type":"deletion"}],"bypass_actors":[],"current_user_can_bypass":"never"}"#;
-    assert!(
-        !run_ruleset_verifier(missing_update, "v1.0.0")
-            .status
-            .success()
-    );
+    assert!(!run_ruleset_verifier(missing_update, "v1.0.0")
+        .status
+        .success());
 }
