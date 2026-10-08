@@ -80,6 +80,9 @@ fn init_generates_files_but_never_runs_the_target_command() {
         fs::read_to_string(dir.join(".github/workflows/execsurface.yml")).expect("workflow");
     assert!(workflow.contains("AETHERXGLOBAL/execsurface@v0.1"));
     assert!(workflow.contains("3d3c42e5aac5ba805825da76410c181273ba90b1"));
+    assert!(workflow.contains("require-custody: \"true\""));
+    assert!(workflow.contains("${{ vars.EXECSURFACE_BASELINE_DIGEST }}"));
+    assert!(workflow.contains("${{ vars.EXECSURFACE_POLICY_SHA256 }}"));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("[NOT RUN] target command"));
     assert!(stdout.contains("/bin/bash -lc"));
@@ -106,4 +109,32 @@ fn init_refuses_existing_files_without_explicit_force() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("refusing to overwrite"));
     let _ = fs::remove_dir_all(dir);
+}
+#[test]
+fn action_contract_exposes_and_forwards_custody_inputs() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let action = fs::read_to_string(root.join("action.yml")).expect("action.yml");
+    let runner = fs::read_to_string(root.join("action/run.sh")).expect("action runner");
+
+    for input in [
+        "expected-baseline-digest:",
+        "expected-policy-sha256:",
+        "require-custody:",
+    ] {
+        assert!(
+            action.contains(input),
+            "Action contract must expose R4 custody input {input}"
+        );
+    }
+
+    assert!(action.contains("EXECSURFACE_EXPECTED_BASELINE_DIGEST"));
+    assert!(action.contains("EXECSURFACE_EXPECTED_POLICY_SHA256"));
+    assert!(action.contains("EXECSURFACE_REQUIRE_CUSTODY"));
+
+    assert!(runner.contains("--expect-baseline-digest"));
+    assert!(runner.contains("--expect-policy-sha256"));
+    assert!(
+        runner.contains("require-custody=true requires both"),
+        "runner must fail closed when custody is required but either external pin is absent"
+    );
 }

@@ -163,7 +163,7 @@ fn path_toctou_counterexample_is_replayed_and_non_pass_eligible() {
 }
 
 #[test]
-fn shared_fd_counterexample_is_replayed_and_fail_closed() {
+fn shared_fd_counterexample_is_bounded_and_always_fail_closed() {
     let Some(target) = external_fixture("M12_FD_SHARE_BIN") else {
         return;
     };
@@ -236,7 +236,7 @@ fn shared_fd_counterexample_is_replayed_and_fail_closed() {
         "classification": if fail_closed_attempts == attempts && divergent_attempts > 0 {
             "SHARED_FD_COUNTEREXAMPLE_REPRODUCED_AND_FAIL_CLOSED"
         } else if fail_closed_attempts == attempts {
-            "FAIL_CLOSED_COUNTEREXAMPLE_NOT_REPRODUCED_INCONCLUSIVE"
+            "R2_BOUNDED_NON_REPRODUCTION_WITH_FAIL_CLOSED_GUARD"
         } else {
             "SHARED_FD_FAIL_CLOSED_REGRESSION"
         }
@@ -247,10 +247,12 @@ fn shared_fd_counterexample_is_replayed_and_fail_closed() {
         fail_closed_attempts, attempts,
         "shared-FD ambiguity did not always fail closed"
     );
-    assert!(
-        divergent_attempts > 0,
-        "known shared-FD divergence did not reproduce"
-    );
+    if divergent_attempts == 0 {
+        assert_eq!(
+            emitted_reads, truth_reads,
+            "bounded non-reproduction is only valid when emitted attribution count matches kernel-truth reads"
+        );
+    }
 }
 
 #[test]

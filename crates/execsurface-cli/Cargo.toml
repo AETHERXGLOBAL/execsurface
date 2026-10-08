@@ -22,4 +22,6 @@ execsurface-normalize = { path = "../execsurface-normalize", version = "=0.1.0-a
 execsurface-observe = { path = "../execsurface-observe", version = "=0.1.0-alpha.5" }
 execsurface-policy = { path = "../execsurface-policy", version = "=0.1.0-alpha.5" }
 execsurface-report = { path = "../execsurface-report", version = "=0.1.0-alpha.5" }
+libc.workspace = true
 serde_json.workspace = true
+sha2.workspace = true

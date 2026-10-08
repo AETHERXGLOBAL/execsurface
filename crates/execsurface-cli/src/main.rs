@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,13 +16,14 @@ use execsurface_baseline::{
     ObserverIdentity, PlatformIdentity, ToolIdentity, DEFAULT_LOCKFILE_NAME,
 };
 use execsurface_diff::{diff, CandidateSnapshot, DiffReport};
-use execsurface_model::RawEventKind;
+use execsurface_model::{FileOperation, Observation, RawEventKind};
 use execsurface_normalize::{canonicalize, canonicalize_executable, NormalizationConfig};
 use execsurface_observe::{observe_command, observe_command_with_backend, CommandSpec};
 use execsurface_policy::{
     builtin_review_policy, error_report, evaluate, FindingAction, Policy, Verdict, VerdictReport,
 };
 use execsurface_report::render_markdown;
+use sha2::{Digest, Sha256};
 
 const EXPERIMENTAL_LIBBPF_BACKEND_ID: &str = "linux-libbpf-metadata-experimental-v1";
 
@@ -394,13 +397,17 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
     let parsed = parse_check_args(args)?;
     if parsed.diff_only
         && (parsed.policy.is_some()
+            || parsed.expected_policy_sha256.is_some()
             || parsed.json_output.is_some()
             || parsed.markdown_output.is_some())
     {
         return Err(
-            "cannot combine --diff-only with --policy/--json-output/--markdown-output".to_owned(),
+            "cannot combine --diff-only with --policy/--expect-policy-sha256/--json-output/--markdown-output"
+                .to_owned(),
         );
     }
+
+    let verdict_output_guard = validate_verdict_output_preflight(&parsed)?;
 
     let baseline_bytes = std::fs::read(&parsed.baseline).map_err(|error| {
         format!(
@@ -409,9 +416,26 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
         )
     })?;
     let baseline = parse_and_verify(&baseline_bytes).map_err(|error| error.to_string())?;
+    verify_custody_pin(
+        "baseline",
+        parsed.expected_baseline_digest.as_deref(),
+        &baseline.baseline_digest,
+    )?;
+
+    // Policy custody is established before the target executes. A parseable
+    // policy from the checkout is not authoritative merely because it is valid JSON.
+    let policy = if parsed.diff_only {
+        None
+    } else {
+        Some(load_policy(
+            parsed.policy.as_ref(),
+            parsed.expected_policy_sha256.as_deref(),
+        )?)
+    };
 
     let spec = CommandSpec::new(parsed.program.clone()).args(parsed.command_args.clone());
     let observation = observe_command(&spec).map_err(|error| error.to_string())?;
+    validate_verdict_output_postflight(&parsed, &observation, &verdict_output_guard)?;
     let normalization = parsed.normalization_config()?;
     let canonical_surface =
         canonicalize(&observation, &normalization).map_err(|error| error.to_string())?;
@@ -465,7 +489,7 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    let (policy, policy_source) = load_policy(parsed.policy.as_ref())?;
+    let (policy, policy_source) = policy.expect("non-diff check loads policy before execution");
     let verdict_report =
         evaluate(&report, &policy, policy_source).map_err(|error| error.to_string())?;
 
@@ -484,6 +508,373 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
     }
 
     Ok(exit_code_for_verdict(verdict_report.verdict))
+}
+
+fn lexical_absolute_path(path: &Path) -> Result<PathBuf, String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()
+            .map_err(|error| format!("cannot resolve current directory: {error}"))?
+            .join(path)
+    };
+
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::Normal(value) => normalized.push(value),
+        }
+    }
+    Ok(normalized)
+}
+
+fn artifact_path_identity(path: &Path) -> Result<PathBuf, String> {
+    if path.exists() {
+        return fs::canonicalize(path)
+            .map_err(|error| format!("cannot resolve path {}: {error}", path.display()));
+    }
+
+    let absolute = lexical_absolute_path(path)?;
+    let parent = absolute.parent().unwrap_or_else(|| Path::new("/"));
+    let resolved_parent = fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    let name = absolute
+        .file_name()
+        .ok_or_else(|| format!("artifact path has no file name: {}", path.display()))?;
+    Ok(resolved_parent.join(name))
+}
+
+#[cfg(unix)]
+fn existing_object_identity(path: &Path) -> Result<Option<(u64, u64)>, String> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(Some((metadata.dev(), metadata.ino()))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!(
+            "cannot inspect artifact identity {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+#[cfg(not(unix))]
+fn existing_object_identity(_path: &Path) -> Result<Option<(u64, u64)>, String> {
+    Ok(None)
+}
+
+fn artifact_paths_alias(left: &Path, right: &Path) -> Result<bool, String> {
+    if let (Some(left_id), Some(right_id)) = (
+        existing_object_identity(left)?,
+        existing_object_identity(right)?,
+    ) {
+        if left_id == right_id {
+            return Ok(true);
+        }
+    }
+
+    Ok(artifact_path_identity(left)? == artifact_path_identity(right)?)
+}
+
+fn verdict_output_paths(parsed: &CheckArgs) -> Vec<(&'static str, &Path)> {
+    let mut outputs = Vec::new();
+    if let Some(path) = parsed.json_output.as_deref() {
+        outputs.push(("JSON", path));
+    }
+    if let Some(path) = parsed.markdown_output.as_deref() {
+        outputs.push(("Markdown", path));
+    }
+    outputs
+}
+
+#[derive(Debug, Clone)]
+struct ProtectedArtifactSnapshot {
+    kind: &'static str,
+    path: PathBuf,
+    object_identity: Option<(u64, u64)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum VerdictOutputState {
+    Absent,
+    Present {
+        object_identity: Option<(u64, u64)>,
+        len: u64,
+        modified: Option<SystemTime>,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct VerdictOutputSnapshot {
+    kind: &'static str,
+    path: PathBuf,
+    state: VerdictOutputState,
+    parent_object_identity: Option<(u64, u64)>,
+}
+
+#[derive(Debug, Clone)]
+struct VerdictOutputGuard {
+    protected: Vec<ProtectedArtifactSnapshot>,
+    outputs: Vec<VerdictOutputSnapshot>,
+}
+
+fn verdict_output_state(path: &Path) -> Result<VerdictOutputState, String> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(VerdictOutputState::Present {
+            object_identity: existing_object_identity(path)?,
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(VerdictOutputState::Absent)
+        }
+        Err(error) => Err(format!(
+            "cannot inspect verdict output state {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn verdict_output_parent_object_identity(path: &Path) -> Result<Option<(u64, u64)>, String> {
+    let absolute = lexical_absolute_path(path)?;
+    let parent = absolute.parent().unwrap_or_else(|| Path::new("/"));
+    existing_object_identity(parent).map_err(|error| {
+        format!(
+            "cannot inspect verdict output parent identity {}: {error}",
+            parent.display()
+        )
+    })
+}
+
+fn validate_verdict_output_materialization_target(kind: &str, path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "{kind} verdict output path must not be a symbolic link: {}",
+                    path.display()
+                ));
+            }
+            if !metadata.file_type().is_file() {
+                return Err(format!(
+                    "{kind} verdict output path must be a regular file when it already exists: {}",
+                    path.display()
+                ));
+            }
+            #[cfg(unix)]
+            if metadata.nlink() != 1 {
+                return Err(format!(
+                    "{kind} verdict output file must have link count 1; found {}: {}",
+                    metadata.nlink(),
+                    path.display()
+                ));
+            }
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "cannot inspect {kind} verdict output path {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn validate_verdict_output_preflight(parsed: &CheckArgs) -> Result<VerdictOutputGuard, String> {
+    let outputs = verdict_output_paths(parsed);
+    for (output_kind, output) in &outputs {
+        validate_verdict_output_materialization_target(output_kind, output)?;
+    }
+
+    let mut protected = vec![("baseline", parsed.baseline.as_path())];
+    if let Some(policy) = parsed.policy.as_deref() {
+        protected.push(("policy", policy));
+    }
+
+    for (output_kind, output) in &outputs {
+        for (input_kind, input) in &protected {
+            if artifact_paths_alias(output, input)? {
+                return Err(format!(
+                    "{output_kind} verdict output aliases protected {input_kind} artifact: {}",
+                    output.display()
+                ));
+            }
+        }
+    }
+
+    if outputs.len() == 2 && artifact_paths_alias(outputs[0].1, outputs[1].1)? {
+        return Err(format!(
+            "JSON and Markdown verdict outputs alias the same artifact: {}",
+            outputs[0].1.display()
+        ));
+    }
+
+    let protected = protected
+        .into_iter()
+        .map(|(kind, path)| {
+            Ok(ProtectedArtifactSnapshot {
+                kind,
+                path: path.to_path_buf(),
+                object_identity: existing_object_identity(path)?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let outputs = outputs
+        .into_iter()
+        .map(|(kind, path)| {
+            Ok(VerdictOutputSnapshot {
+                kind,
+                path: path.to_path_buf(),
+                state: verdict_output_state(path)?,
+                parent_object_identity: verdict_output_parent_object_identity(path)?,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    Ok(VerdictOutputGuard { protected, outputs })
+}
+
+fn workload_mutated_paths_after_renames(observation: &Observation) -> Result<Vec<PathBuf>, String> {
+    let mut mutated = Vec::<PathBuf>::new();
+    let mut events = observation.events.iter().collect::<Vec<_>>();
+    events.sort_by_key(|event| event.sequence);
+
+    for event in events {
+        match &event.kind {
+            RawEventKind::FileDescriptorAccess {
+                operation: FileOperation::Write,
+                path,
+                ..
+            } if path.starts_with('/') => {
+                let path = lexical_absolute_path(Path::new(path))?;
+                if !mutated.iter().any(|existing| existing == &path) {
+                    mutated.push(path);
+                }
+            }
+            RawEventKind::FilePathAccess {
+                operation,
+                path,
+                flags,
+            } if path.starts_with('/') => {
+                let mutates = match operation {
+                    FileOperation::Create => true,
+                    FileOperation::Open => {
+                        flags.is_some_and(|flags| flags & libc::O_TRUNC as u64 != 0)
+                    }
+                    _ => false,
+                };
+                if mutates {
+                    let path = lexical_absolute_path(Path::new(path))?;
+                    if !mutated.iter().any(|existing| existing == &path) {
+                        mutated.push(path);
+                    }
+                }
+            }
+            RawEventKind::FileOpenAt2 { path, flags, .. }
+                if path.starts_with('/') && flags & libc::O_TRUNC as u64 != 0 =>
+            {
+                let path = lexical_absolute_path(Path::new(path))?;
+                if !mutated.iter().any(|existing| existing == &path) {
+                    mutated.push(path);
+                }
+            }
+            RawEventKind::FileRename { from, to }
+                if from.starts_with('/') && to.starts_with('/') =>
+            {
+                let from = lexical_absolute_path(Path::new(from))?;
+                let to = lexical_absolute_path(Path::new(to))?;
+                if from == to {
+                    continue;
+                }
+
+                let mut next = Vec::with_capacity(mutated.len());
+                for path in mutated.drain(..) {
+                    if let Ok(suffix) = path.strip_prefix(&from) {
+                        if suffix.as_os_str().is_empty() {
+                            next.push(to.clone());
+                        } else {
+                            next.push(to.join(suffix));
+                        }
+                    } else if path.strip_prefix(&to).is_ok() {
+                        // A successful rename replaces the destination object/tree.
+                        // Any earlier write lineage that belonged only to the replaced
+                        // destination no longer identifies the final object there.
+                    } else {
+                        next.push(path);
+                    }
+                }
+                next.sort();
+                next.dedup();
+                mutated = next;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(mutated)
+}
+
+fn validate_verdict_output_postflight(
+    parsed: &CheckArgs,
+    observation: &Observation,
+    guard: &VerdictOutputGuard,
+) -> Result<(), String> {
+    // Re-run path-based checks after the target because the target can rebind
+    // an output path after initial preflight.
+    let _ = validate_verdict_output_preflight(parsed)?;
+
+    for output in &guard.outputs {
+        let current_parent_object_identity = verdict_output_parent_object_identity(&output.path)?;
+        if current_parent_object_identity != output.parent_object_identity {
+            return Err(format!(
+                "{} verdict output parent identity changed during workload execution and is reserved from report materialization: {}",
+                output.kind,
+                output.path.display()
+            ));
+        }
+
+        let current = verdict_output_state(&output.path)?;
+        if current != output.state {
+            return Err(format!(
+                "{} verdict output path changed during workload execution and is reserved from report materialization: {}",
+                output.kind,
+                output.path.display()
+            ));
+        }
+    }
+
+    let workload_mutated_paths = workload_mutated_paths_after_renames(observation)?;
+
+    for (output_kind, output) in verdict_output_paths(parsed) {
+        let output_object_identity = existing_object_identity(output)?;
+
+        for protected in &guard.protected {
+            if output_object_identity.is_some()
+                && output_object_identity == protected.object_identity
+            {
+                return Err(format!(
+                    "{output_kind} verdict output aliases preflight-verified {} object after target execution: {} (original path {})",
+                    protected.kind,
+                    output.display(),
+                    protected.path.display()
+                ));
+            }
+        }
+
+        for path in &workload_mutated_paths {
+            if artifact_paths_alias(output, path)? {
+                return Err(format!(
+                    "{output_kind} verdict output overlaps workload-mutated artifact after observed path transitions: {}",
+                    output.display()
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn write_verdict_outputs(
@@ -544,19 +935,72 @@ fn run_render_error(args: &[OsString]) -> Result<(), String> {
     write_verdict_outputs(&report, Some(&json_output), Some(&markdown_output))
 }
 
-fn load_policy(path: Option<&PathBuf>) -> Result<(Policy, String), String> {
+fn validate_custody_digest(value: &str, kind: &str) -> Result<(), String> {
+    let valid = value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    });
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid expected {kind} digest: expected sha256:<64 lowercase hex>"
+        ))
+    }
+}
+
+fn verify_custody_pin(kind: &str, expected: Option<&str>, actual: &str) -> Result<(), String> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    validate_custody_digest(expected, kind)?;
+    if expected == actual {
+        Ok(())
+    } else {
+        Err(format!(
+            "{kind} custody mismatch: expected {expected}, loaded {actual}"
+        ))
+    }
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    format!("sha256:{hex}")
+}
+
+fn load_policy(
+    path: Option<&PathBuf>,
+    expected_sha256: Option<&str>,
+) -> Result<(Policy, String), String> {
     match path {
         Some(path) => {
             let bytes = std::fs::read(path)
                 .map_err(|error| format!("cannot read policy {}: {error}", path.display()))?;
+            let actual = sha256_bytes(&bytes);
+            verify_custody_pin("policy", expected_sha256, &actual)?;
             let policy: Policy = serde_json::from_slice(&bytes)
                 .map_err(|error| format!("cannot parse policy {}: {error}", path.display()))?;
             Ok((policy, path.display().to_string()))
         }
-        None => Ok((
-            builtin_review_policy(),
-            "builtin:review-unmatched-drift".to_owned(),
-        )),
+        None => {
+            if expected_sha256.is_some() {
+                return Err(
+                    "--expect-policy-sha256 requires --policy; the built-in policy is not a checkout artifact"
+                        .to_owned(),
+                );
+            }
+            Ok((
+                builtin_review_policy(),
+                "builtin:review-unmatched-drift".to_owned(),
+            ))
+        }
     }
 }
 
@@ -668,6 +1112,8 @@ fn print_diff_report(report: &DiffReport) -> Result<(), String> {
 struct CheckArgs {
     baseline: PathBuf,
     policy: Option<PathBuf>,
+    expected_baseline_digest: Option<String>,
+    expected_policy_sha256: Option<String>,
     diff_only: bool,
     json: bool,
     json_output: Option<PathBuf>,
@@ -696,6 +1142,8 @@ impl CheckArgs {
 fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
     let mut baseline = PathBuf::from(DEFAULT_LOCKFILE_NAME);
     let mut policy = None;
+    let mut expected_baseline_digest = None;
+    let mut expected_policy_sha256 = None;
     let mut diff_only = false;
     let mut json = false;
     let mut json_output = None;
@@ -717,6 +1165,8 @@ fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
             return Ok(CheckArgs {
                 baseline,
                 policy,
+                expected_baseline_digest,
+                expected_policy_sha256,
                 diff_only,
                 json,
                 json_output,
@@ -758,6 +1208,28 @@ fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
             }
             "--baseline" => {
                 baseline = PathBuf::from(option_value(args, index, "--baseline")?);
+                index += 2;
+            }
+            "--expect-baseline-digest" => {
+                if expected_baseline_digest.is_some() {
+                    return Err(usage("duplicate --expect-baseline-digest"));
+                }
+                expected_baseline_digest = Some(path_string(option_value(
+                    args,
+                    index,
+                    "--expect-baseline-digest",
+                )?));
+                index += 2;
+            }
+            "--expect-policy-sha256" => {
+                if expected_policy_sha256.is_some() {
+                    return Err(usage("duplicate --expect-policy-sha256"));
+                }
+                expected_policy_sha256 = Some(path_string(option_value(
+                    args,
+                    index,
+                    "--expect-policy-sha256",
+                )?));
                 index += 2;
             }
             "--workspace" => {
@@ -962,6 +1434,10 @@ fn usage(error: &str) -> String {
 check options:
   --baseline PATH     baseline lockfile (default: execsurface.lock.json)
   --policy PATH       explicit policy JSON (default: built-in REVIEW for unmatched drift)
+  --expect-baseline-digest DIGEST
+                      require the verified baseline semantic identity
+  --expect-policy-sha256 DIGEST
+                      require exact-byte SHA-256 identity for --policy
   --diff-only         emit raw M4 diff and do not evaluate policy
   --json              emit machine-readable JSON to stdout
   --json-output PATH  write verdict JSON directly to a file

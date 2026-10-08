@@ -194,6 +194,200 @@ fn main() {
             read.join().expect("read thread");
             assert_eq!(unsafe { libc::close(fd) }, 0, "close final shared fd");
         }
+        Some("stage2-dup2-untracked-write") => {
+            let victim_path = args.next().expect("victim file path");
+            let victim = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(victim_path)
+                .expect("open victim file");
+            let victim_fd = victim.as_raw_fd();
+
+            let mut pipe_fds = [-1_i32; 2];
+            assert_eq!(
+                unsafe { libc::pipe(pipe_fds.as_mut_ptr()) },
+                0,
+                "create untracked pipe"
+            );
+            assert_eq!(
+                unsafe { libc::dup2(pipe_fds[1], victim_fd) },
+                victim_fd,
+                "dup2 untracked pipe over tracked victim fd"
+            );
+            let byte = *b"x";
+            assert_eq!(
+                unsafe { libc::write(victim_fd, byte.as_ptr().cast(), byte.len()) },
+                1,
+                "write through replaced destination fd"
+            );
+            assert_eq!(
+                unsafe { libc::close(pipe_fds[0]) },
+                0,
+                "close pipe read end"
+            );
+            assert_eq!(
+                unsafe { libc::close(pipe_fds[1]) },
+                0,
+                "close pipe write end"
+            );
+        }
+        Some("stage2-dup3-untracked-write") => {
+            let victim_path = args.next().expect("victim file path");
+            let victim = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(victim_path)
+                .expect("open victim file");
+            let victim_fd = victim.as_raw_fd();
+
+            let mut pipe_fds = [-1_i32; 2];
+            assert_eq!(
+                unsafe { libc::pipe(pipe_fds.as_mut_ptr()) },
+                0,
+                "create untracked pipe"
+            );
+            assert_eq!(
+                unsafe { libc::dup3(pipe_fds[1], victim_fd, libc::O_CLOEXEC) },
+                victim_fd,
+                "dup3 untracked pipe over tracked victim fd"
+            );
+            let byte = *b"x";
+            assert_eq!(
+                unsafe { libc::write(victim_fd, byte.as_ptr().cast(), byte.len()) },
+                1,
+                "write through dup3-replaced destination fd"
+            );
+            assert_eq!(
+                unsafe { libc::close(pipe_fds[0]) },
+                0,
+                "close pipe read end"
+            );
+            assert_eq!(
+                unsafe { libc::close(pipe_fds[1]) },
+                0,
+                "close pipe write end"
+            );
+        }
+        Some("stage2-fcntl-dupfd-untracked-write") => {
+            let mut pipe_fds = [-1_i32; 2];
+            assert_eq!(
+                unsafe { libc::pipe(pipe_fds.as_mut_ptr()) },
+                0,
+                "create untracked pipe"
+            );
+            let duplicated_fd = unsafe { libc::fcntl(pipe_fds[1], libc::F_DUPFD_CLOEXEC, 64) };
+            assert!(duplicated_fd >= 0, "F_DUPFD_CLOEXEC must succeed");
+            let byte = *b"x";
+            assert_eq!(
+                unsafe { libc::write(duplicated_fd, byte.as_ptr().cast(), byte.len()) },
+                1,
+                "write through fcntl-duplicated fd"
+            );
+            assert_eq!(
+                unsafe { libc::close(duplicated_fd) },
+                0,
+                "close duplicated fd"
+            );
+            assert_eq!(
+                unsafe { libc::close(pipe_fds[0]) },
+                0,
+                "close pipe read end"
+            );
+            assert_eq!(
+                unsafe { libc::close(pipe_fds[1]) },
+                0,
+                "close pipe write end"
+            );
+        }
+        Some("stage2-dup2-same-fd-write") => {
+            let path = args.next().expect("file path");
+            let file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(path)
+                .expect("open same-fd target");
+            let fd = file.as_raw_fd();
+            assert_eq!(unsafe { libc::dup2(fd, fd) }, fd, "dup2 same fd");
+            let byte = *b"x";
+            assert_eq!(
+                unsafe { libc::write(fd, byte.as_ptr().cast(), byte.len()) },
+                1,
+                "write after dup2 same-fd no-op"
+            );
+        }
+        Some("stage2-stderr-write") => {
+            let byte = *b"x";
+            assert_eq!(
+                unsafe { libc::write(libc::STDERR_FILENO, byte.as_ptr().cast(), byte.len(),) },
+                1,
+                "write one byte to inherited stderr"
+            );
+        }
+        Some("stage2-shared-untracked-fd-write") => {
+            let worker = std::thread::spawn(|| {
+                let mut pipe_fds = [-1_i32; 2];
+                assert_eq!(
+                    unsafe { libc::pipe(pipe_fds.as_mut_ptr()) },
+                    0,
+                    "create worker-local untracked pipe"
+                );
+                let byte = *b"x";
+                assert_eq!(
+                    unsafe { libc::write(pipe_fds[1], byte.as_ptr().cast(), byte.len()) },
+                    1,
+                    "write through untracked fd while CLONE_FILES table is shared"
+                );
+                assert_eq!(
+                    unsafe { libc::close(pipe_fds[0]) },
+                    0,
+                    "close pipe read end"
+                );
+                assert_eq!(
+                    unsafe { libc::close(pipe_fds[1]) },
+                    0,
+                    "close pipe write end"
+                );
+            });
+            worker.join().expect("shared-fd worker");
+        }
+        Some("stage2-hardlink-after-open-write") => {
+            let target_path = args.next().expect("target path");
+            let alias_path = args.next().expect("alias path");
+            let mut file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&target_path)
+                .expect("open target before hardlink creation");
+            fs::hard_link(&target_path, &alias_path).expect("create hardlink after open");
+            file.seek(SeekFrom::End(0)).expect("seek target end");
+            file.write_all(b"x").expect("write after hardlink creation");
+            file.flush().expect("flush write after hardlink creation");
+        }
+        Some("stage2-hardlink-remove-before-write") => {
+            let target_path = args.next().expect("target path");
+            let alias_path = args.next().expect("alias path");
+            let mut file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&target_path)
+                .expect("open target before hardlink removal");
+            fs::remove_file(&alias_path).expect("remove hardlink before write");
+            file.seek(SeekFrom::End(0)).expect("seek target end");
+            file.write_all(b"x").expect("write after hardlink removal");
+            file.flush().expect("flush write after hardlink removal");
+        }
+        Some("stage2-symlink-truncate") => {
+            let link_path = args.next().expect("symlink path");
+            let file = OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .open(link_path)
+                .expect("open symlink target with truncate");
+            drop(file);
+        }
         Some("burst") => {
             let dir = args.next().expect("directory");
             let count: usize = args.next().expect("count").parse().expect("count");

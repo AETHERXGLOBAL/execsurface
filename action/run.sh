@@ -13,11 +13,39 @@ args=(check --baseline "$EXECSURFACE_BASELINE" --json-output "$report_json" --ma
 if [[ -n "${EXECSURFACE_POLICY:-}" ]]; then
   args+=(--policy "$EXECSURFACE_POLICY")
 fi
+if [[ -n "${EXECSURFACE_EXPECTED_BASELINE_DIGEST:-}" ]]; then
+  args+=(--expect-baseline-digest "$EXECSURFACE_EXPECTED_BASELINE_DIGEST")
+fi
+if [[ -n "${EXECSURFACE_EXPECTED_POLICY_SHA256:-}" ]]; then
+  args+=(--expect-policy-sha256 "$EXECSURFACE_EXPECTED_POLICY_SHA256")
+fi
 
-set +e
-"$EXECSURFACE_ACTION_BIN" "${args[@]}" -- /bin/bash -lc "$EXECSURFACE_COMMAND"
-status=$?
-set -e
+preflight_error=""
+case "${EXECSURFACE_REQUIRE_CUSTODY:-false}" in
+  true)
+    if [[ -z "${EXECSURFACE_EXPECTED_BASELINE_DIGEST:-}" || -z "${EXECSURFACE_EXPECTED_POLICY_SHA256:-}" ]]; then
+      preflight_error="require-custody=true requires both expected-baseline-digest and expected-policy-sha256"
+    fi
+    ;;
+  false) ;;
+  *)
+    preflight_error="require-custody must be true or false"
+    ;;
+esac
+
+if [[ -n "$preflight_error" ]]; then
+  status=2
+  echo "ExecSurface custody preflight: $preflight_error" >&2
+  "$EXECSURFACE_ACTION_BIN" render-error \
+    --message "$preflight_error" \
+    --json-output "$report_json" \
+    --markdown-output "$summary_markdown"
+else
+  set +e
+  "$EXECSURFACE_ACTION_BIN" "${args[@]}" -- /bin/bash -lc "$EXECSURFACE_COMMAND"
+  status=$?
+  set -e
+fi
 
 case "$status" in
   0) verdict="pass" ;;

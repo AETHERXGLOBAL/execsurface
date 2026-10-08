@@ -192,12 +192,24 @@ pub fn run_init(args: &[OsString]) -> Result<(), String> {
     );
     println!();
     println!("Review generated files and the baseline before committing them.");
+    if github_actions {
+        println!();
+        println!("GitHub Actions custody pins are required by the generated workflow:");
+        println!("  EXECSURFACE_BASELINE_DIGEST = the digest printed by `execsurface learn`");
+        println!(
+            "  EXECSURFACE_POLICY_SHA256 = sha256:<SHA-256 of the exact {} bytes>",
+            POLICY_PATH
+        );
+        println!(
+            "Store those values in trusted GitHub repository/environment variables, not in checkout files."
+        );
+    }
     Ok(())
 }
 
 fn render_workflow(command: &str) -> String {
     format!(
-        "name: ExecSurface\n\non:\n  pull_request:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\njobs:\n  execsurface:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: actions/checkout@{CHECKOUT_PIN} # v7.0.1\n\n      - name: ExecSurface runtime drift\n        uses: AETHERXGLOBAL/execsurface@v0.1\n        with:\n          command: >-\n            {command}\n          baseline: execsurface.lock.json\n          policy: {POLICY_PATH}\n          fail-on-review: \"false\"\n"
+        "name: ExecSurface\n\non:\n  pull_request:\n  push:\n    branches: [main]\n\npermissions:\n  contents: read\n\njobs:\n  execsurface:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: actions/checkout@{CHECKOUT_PIN} # v7.0.1\n\n      - name: ExecSurface runtime drift\n        uses: AETHERXGLOBAL/execsurface@v0.1\n        with:\n          command: >-\n            {command}\n          baseline: execsurface.lock.json\n          policy: {POLICY_PATH}\n          expected-baseline-digest: ${{{{ vars.EXECSURFACE_BASELINE_DIGEST }}}}\n          expected-policy-sha256: ${{{{ vars.EXECSURFACE_POLICY_SHA256 }}}}\n          require-custody: \"true\"\n          fail-on-review: \"false\"\n"
     )
 }
 

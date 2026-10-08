@@ -6,12 +6,15 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use execsurface_diff::{ChangedEffect, DiffReport, TargetOutcome};
-use execsurface_model::canonical::{CanonicalEffect, CanonicalNetworkEndpoint, PathClass};
+use execsurface_model::canonical::{
+    CanonicalEffect, CanonicalNetworkEndpoint, OpenIntent, PathClass, PathResolution,
+};
 use execsurface_model::FileOperation;
 use serde::{Deserialize, Serialize};
 
 pub const LEGACY_POLICY_SCHEMA_VERSION: u32 = 1;
 pub const POLICY_SCHEMA_VERSION: u32 = 2;
+pub const POLICY_SCHEMA_VERSION_V3: u32 = 3;
 pub const VERDICT_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -72,6 +75,63 @@ pub struct PolicyRule {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct OpenIntentMatcher {
+    #[serde(default)]
+    pub read: Option<bool>,
+    #[serde(default)]
+    pub write: Option<bool>,
+    #[serde(default)]
+    pub create: Option<bool>,
+    #[serde(default)]
+    pub truncate: Option<bool>,
+    #[serde(default)]
+    pub append: Option<bool>,
+    #[serde(default)]
+    pub path_only: Option<bool>,
+    #[serde(default)]
+    pub resolve_flags: Option<u64>,
+    #[serde(default)]
+    pub other_flags: Option<u64>,
+}
+
+impl OpenIntentMatcher {
+    fn is_empty(&self) -> bool {
+        self.read.is_none()
+            && self.write.is_none()
+            && self.create.is_none()
+            && self.truncate.is_none()
+            && self.append.is_none()
+            && self.path_only.is_none()
+            && self.resolve_flags.is_none()
+            && self.other_flags.is_none()
+    }
+
+    fn matches(&self, intent: &OpenIntent) -> bool {
+        !self.read.is_some_and(|expected| expected != intent.read)
+            && !self.write.is_some_and(|expected| expected != intent.write)
+            && !self
+                .create
+                .is_some_and(|expected| expected != intent.create)
+            && !self
+                .truncate
+                .is_some_and(|expected| expected != intent.truncate)
+            && !self
+                .append
+                .is_some_and(|expected| expected != intent.append)
+            && !self
+                .path_only
+                .is_some_and(|expected| expected != intent.path_only)
+            && !self
+                .resolve_flags
+                .is_some_and(|expected| expected != intent.resolve_flags)
+            && !self
+                .other_flags
+                .is_some_and(|expected| expected != intent.other_flags)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RuleMatcher {
     #[serde(default)]
     pub change: Option<ChangeKind>,
@@ -87,6 +147,16 @@ pub struct RuleMatcher {
     pub network_ip: Option<String>,
     #[serde(default)]
     pub network_port: Option<u16>,
+    #[serde(default)]
+    pub path_resolution: Option<PathResolution>,
+    #[serde(default)]
+    pub open_intent: Option<OpenIntentMatcher>,
+    #[serde(default)]
+    pub rename_from_class: Option<PathClass>,
+    #[serde(default)]
+    pub rename_from_prefix: Option<String>,
+    #[serde(default)]
+    pub rename_from_resolution: Option<PathResolution>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,6 +234,7 @@ pub fn builtin_review_policy() -> Policy {
 pub fn validate_policy(policy: &Policy) -> Result<(), PolicyError> {
     if policy.schema_version != LEGACY_POLICY_SCHEMA_VERSION
         && policy.schema_version != POLICY_SCHEMA_VERSION
+        && policy.schema_version != POLICY_SCHEMA_VERSION_V3
     {
         return Err(PolicyError::UnsupportedSchema(policy.schema_version));
     }
@@ -190,6 +261,41 @@ pub fn validate_policy(policy: &Policy) -> Result<(), PolicyError> {
                 reason: "path_prefix must not be empty".to_owned(),
             });
         }
+        if rule
+            .matcher
+            .rename_from_prefix
+            .as_deref()
+            .is_some_and(str::is_empty)
+        {
+            return Err(PolicyError::InvalidMatcher {
+                rule_id: rule.id.clone(),
+                reason: "rename_from_prefix must not be empty".to_owned(),
+            });
+        }
+        if rule
+            .matcher
+            .open_intent
+            .as_ref()
+            .is_some_and(OpenIntentMatcher::is_empty)
+        {
+            return Err(PolicyError::InvalidMatcher {
+                rule_id: rule.id.clone(),
+                reason: "open_intent must specify at least one field".to_owned(),
+            });
+        }
+
+        let uses_v3_matcher = rule.matcher.path_resolution.is_some()
+            || rule.matcher.open_intent.is_some()
+            || rule.matcher.rename_from_class.is_some()
+            || rule.matcher.rename_from_prefix.is_some()
+            || rule.matcher.rename_from_resolution.is_some();
+        if uses_v3_matcher && policy.schema_version != POLICY_SCHEMA_VERSION_V3 {
+            return Err(PolicyError::InvalidMatcher {
+                rule_id: rule.id.clone(),
+                reason: "path_resolution/open_intent/rename_from_* require policy schema version 3"
+                    .to_owned(),
+            });
+        }
         if let Some(effect) = rule.matcher.effect {
             if (rule.matcher.network_ip.is_some() || rule.matcher.network_port.is_some())
                 && effect != EffectKind::NetworkConnect
@@ -197,6 +303,24 @@ pub fn validate_policy(policy: &Policy) -> Result<(), PolicyError> {
                 return Err(PolicyError::InvalidMatcher {
                     rule_id: rule.id.clone(),
                     reason: "network_ip/network_port require effect=network_connect when effect is specified"
+                        .to_owned(),
+                });
+            }
+            if rule.matcher.open_intent.is_some() && effect != EffectKind::FileOpen {
+                return Err(PolicyError::InvalidMatcher {
+                    rule_id: rule.id.clone(),
+                    reason: "open_intent requires effect=file_open when effect is specified"
+                        .to_owned(),
+                });
+            }
+            if (rule.matcher.rename_from_class.is_some()
+                || rule.matcher.rename_from_prefix.is_some()
+                || rule.matcher.rename_from_resolution.is_some())
+                && effect != EffectKind::FileRename
+            {
+                return Err(PolicyError::InvalidMatcher {
+                    rule_id: rule.id.clone(),
+                    reason: "rename_from_* require effect=file_rename when effect is specified"
                         .to_owned(),
                 });
             }
@@ -338,6 +462,11 @@ impl RuleMatcher {
             && self.executable_family.is_none()
             && self.network_ip.is_none()
             && self.network_port.is_none()
+            && self.path_resolution.is_none()
+            && self.open_intent.is_none()
+            && self.rename_from_class.is_none()
+            && self.rename_from_prefix.is_none()
+            && self.rename_from_resolution.is_none()
     }
 
     fn matches(&self, change: ChangeKind, effect: &CanonicalEffect, kind: EffectKind) -> bool {
@@ -353,6 +482,12 @@ impl RuleMatcher {
         if self
             .path_class
             .is_some_and(|expected| metadata.path_class != Some(expected))
+        {
+            return false;
+        }
+        if self
+            .path_resolution
+            .is_some_and(|expected| metadata.path_resolution != Some(expected))
         {
             return false;
         }
@@ -380,6 +515,34 @@ impl RuleMatcher {
         {
             return false;
         }
+        if let Some(expected) = &self.open_intent {
+            let Some(actual) = metadata.open_intent else {
+                return false;
+            };
+            if !expected.matches(actual) {
+                return false;
+            }
+        }
+        if self
+            .rename_from_class
+            .is_some_and(|expected| metadata.rename_from_class != Some(expected))
+        {
+            return false;
+        }
+        if let Some(prefix) = &self.rename_from_prefix {
+            let Some(path) = metadata.rename_from_path else {
+                return false;
+            };
+            if !path_prefix_matches(path, prefix) {
+                return false;
+            }
+        }
+        if self
+            .rename_from_resolution
+            .is_some_and(|expected| metadata.rename_from_resolution != Some(expected))
+        {
+            return false;
+        }
 
         true
     }
@@ -388,9 +551,14 @@ impl RuleMatcher {
 struct EffectMetadata<'a> {
     path: Option<&'a str>,
     path_class: Option<PathClass>,
+    path_resolution: Option<PathResolution>,
     executable_family: Option<&'a str>,
     network_ip: Option<&'a str>,
     network_port: Option<u16>,
+    open_intent: Option<&'a OpenIntent>,
+    rename_from_path: Option<&'a str>,
+    rename_from_class: Option<PathClass>,
+    rename_from_resolution: Option<PathResolution>,
 }
 
 impl<'a> EffectMetadata<'a> {
@@ -399,30 +567,57 @@ impl<'a> EffectMetadata<'a> {
             CanonicalEffect::ProcessSpawn { actor, .. } => Self {
                 path: actor.as_ref().map(|actor| actor.path.value.as_str()),
                 path_class: actor.as_ref().map(|actor| actor.path.class),
+                path_resolution: actor.as_ref().map(|actor| actor.path.resolution),
                 executable_family: actor.as_ref().map(|actor| actor.family.as_str()),
                 network_ip: None,
                 network_port: None,
+                open_intent: None,
+                rename_from_path: None,
+                rename_from_class: None,
+                rename_from_resolution: None,
             },
             CanonicalEffect::ProcessExec { executable, .. } => Self {
                 path: Some(executable.path.value.as_str()),
                 path_class: Some(executable.path.class),
+                path_resolution: Some(executable.path.resolution),
                 executable_family: Some(executable.family.as_str()),
                 network_ip: None,
                 network_port: None,
+                open_intent: None,
+                rename_from_path: None,
+                rename_from_class: None,
+                rename_from_resolution: None,
             },
-            CanonicalEffect::FilePathAccess { actor, target, .. } => Self {
+            CanonicalEffect::FilePathAccess {
+                actor,
+                target,
+                open_intent,
+                ..
+            } => Self {
                 path: Some(target.value.as_str()),
                 path_class: Some(target.class),
+                path_resolution: Some(target.resolution),
                 executable_family: actor.as_ref().map(|actor| actor.family.as_str()),
                 network_ip: None,
                 network_port: None,
+                open_intent: open_intent.as_ref(),
+                rename_from_path: None,
+                rename_from_class: None,
+                rename_from_resolution: None,
             },
-            CanonicalEffect::FileRename { actor, to, .. } => Self {
+            CanonicalEffect::FileRename {
+                actor, from, to, ..
+            } => Self {
                 path: Some(to.value.as_str()),
                 path_class: Some(to.class),
+                path_resolution: Some(to.resolution),
                 executable_family: actor.as_ref().map(|actor| actor.family.as_str()),
                 network_ip: None,
                 network_port: None,
+                open_intent: None,
+                rename_from_path: Some(from.value.as_str()),
+                rename_from_class: Some(from.class),
+                rename_from_resolution: Some(from.resolution),
             },
             CanonicalEffect::NetworkConnectAttempt {
                 actor, endpoint, ..
@@ -431,23 +626,38 @@ impl<'a> EffectMetadata<'a> {
                 | CanonicalNetworkEndpoint::Inet6 { ip, port } => Self {
                     path: None,
                     path_class: None,
+                    path_resolution: None,
                     executable_family: actor.as_ref().map(|actor| actor.family.as_str()),
                     network_ip: Some(ip.as_str()),
                     network_port: Some(*port),
+                    open_intent: None,
+                    rename_from_path: None,
+                    rename_from_class: None,
+                    rename_from_resolution: None,
                 },
                 CanonicalNetworkEndpoint::Unix { path } => Self {
                     path: path.as_ref().map(|path| path.value.as_str()),
                     path_class: path.as_ref().map(|path| path.class),
+                    path_resolution: path.as_ref().map(|path| path.resolution),
                     executable_family: actor.as_ref().map(|actor| actor.family.as_str()),
                     network_ip: None,
                     network_port: None,
+                    open_intent: None,
+                    rename_from_path: None,
+                    rename_from_class: None,
+                    rename_from_resolution: None,
                 },
                 CanonicalNetworkEndpoint::Other { .. } => Self {
                     path: None,
                     path_class: None,
+                    path_resolution: None,
                     executable_family: actor.as_ref().map(|actor| actor.family.as_str()),
                     network_ip: None,
                     network_port: None,
+                    open_intent: None,
+                    rename_from_path: None,
+                    rename_from_class: None,
+                    rename_from_resolution: None,
                 },
             },
         }

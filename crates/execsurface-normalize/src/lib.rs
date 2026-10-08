@@ -218,6 +218,14 @@ pub fn canonicalize(
                 if !matches!(operation, FileOperation::Read | FileOperation::Write) {
                     return Err(NormalizeError::InvalidFdOperation(*operation));
                 }
+                // /proc/<pid>/fd can resolve descriptors to kernel pseudo-object
+                // names such as pipe:[...], socket:[...], or anon_inode:[...].
+                // Keep those identities in raw evidence, but do not project them
+                // into filesystem FileRead/FileWrite effects. Filesystem-backed
+                // fd links resolve to absolute paths on Linux.
+                if !is_filesystem_kernel_fd_path(path) {
+                    continue;
+                }
                 let state = processes.get(&event.tid).cloned().unwrap_or_default();
                 effects.insert(CanonicalEffect::FilePathAccess {
                     actor: state.current,
@@ -426,6 +434,10 @@ fn canonical_path(path: &str, roots: &[RootRule]) -> CanonicalPath {
         value: cleaned,
         resolution: PathResolution::Lexical,
     }
+}
+
+fn is_filesystem_kernel_fd_path(path: &str) -> bool {
+    path.starts_with('/')
 }
 
 fn canonical_kernel_fd_path(path: &str, roots: &[RootRule]) -> CanonicalPath {
@@ -1016,6 +1028,67 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn kernel_pseudo_fd_identities_do_not_become_filesystem_effects() {
+        let raw = observation(vec![
+            RawEvent {
+                sequence: 1,
+                tid: 10,
+                kind: RawEventKind::ProcessExec {
+                    path: "/bin/sh".to_owned(),
+                },
+            },
+            RawEvent {
+                sequence: 2,
+                tid: 10,
+                kind: RawEventKind::FileDescriptorAccess {
+                    operation: FileOperation::Write,
+                    fd: 1,
+                    path: "pipe:[12345]".to_owned(),
+                },
+            },
+            RawEvent {
+                sequence: 3,
+                tid: 10,
+                kind: RawEventKind::FileDescriptorAccess {
+                    operation: FileOperation::Read,
+                    fd: 4,
+                    path: "socket:[67890]".to_owned(),
+                },
+            },
+            RawEvent {
+                sequence: 4,
+                tid: 10,
+                kind: RawEventKind::FileDescriptorAccess {
+                    operation: FileOperation::Read,
+                    fd: 5,
+                    path: "anon_inode:[eventfd]".to_owned(),
+                },
+            },
+            RawEvent {
+                sequence: 5,
+                tid: 10,
+                kind: RawEventKind::FileDescriptorAccess {
+                    operation: FileOperation::Write,
+                    fd: 6,
+                    path: "memfd:r2-buffer".to_owned(),
+                },
+            },
+        ]);
+
+        let surface = canonicalize(&raw, &NormalizationConfig::default()).expect("canonicalize");
+        assert!(
+            !surface.effects.iter().any(|effect| matches!(
+                effect,
+                CanonicalEffect::FilePathAccess {
+                    operation: FileOperation::Read | FileOperation::Write,
+                    ..
+                }
+            )),
+            "kernel pseudo-object fd identities are raw runtime evidence, not filesystem effects"
+        );
     }
 
     #[test]

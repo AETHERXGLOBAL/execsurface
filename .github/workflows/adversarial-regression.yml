@@ -7,9 +7,9 @@ on:
     paths:
       - '.github/m12-fixtures/**'
       - '.github/workflows/adversarial-regression.yml'
-      - 'crates/execsurface-observe/**'
-      - 'crates/execsurface-cli/src/main.rs'
-      - 'crates/execsurface-cli/src/typed_evidence.rs'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'README.md'
   pull_request:
     branches:
@@ -17,7 +17,9 @@ on:
     paths:
       - '.github/m12-fixtures/**'
       - '.github/workflows/adversarial-regression.yml'
-      - 'crates/execsurface-observe/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'README.md'
   workflow_dispatch:
 

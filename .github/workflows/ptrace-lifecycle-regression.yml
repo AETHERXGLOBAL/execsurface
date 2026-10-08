@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - crates/execsurface-observe/src/linux_ptrace.rs
+      - crates/execsurface-observe/src/lib.rs
+      - crates/execsurface-observe/tests/m11_shared_fd_ambiguity.rs
       - tests/fixtures/m9/exit_group_sched_getaffinity_bounded_race.c
       - .github/workflows/ptrace-lifecycle-regression.yml
   push:
@@ -13,6 +15,8 @@ on:
       - main
     paths:
       - crates/execsurface-observe/src/linux_ptrace.rs
+      - crates/execsurface-observe/src/lib.rs
+      - crates/execsurface-observe/tests/m11_shared_fd_ambiguity.rs
       - tests/fixtures/m9/exit_group_sched_getaffinity_bounded_race.c
       - .github/workflows/ptrace-lifecycle-regression.yml
   workflow_dispatch:
@@ -72,7 +76,10 @@ jobs:
           from pathlib import Path
 
           data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          assert data.get("complete") is True, data.get("warnings")
+          warnings = data.get("warnings", [])
+          codes = [warning.get("code") for warning in warnings]
+          assert data.get("complete") is False, warnings
+          assert codes == ["shared_fd_table_ambiguity"], warnings
           outcome = data.get("outcome", {})
           assert outcome.get("exit_code") == 0, outcome
           assert outcome.get("signal") is None, outcome
@@ -126,59 +133,49 @@ jobs:
           printf 'alpha\n' > /tmp/m7-fd/m7-fixture/alpha.txt
           printf 'beta\n' > /tmp/m7-fd/m7-fixture/sub/beta.txt
 
-      - name: Learn and prove repeated no-drift compatibility
+      - name: Prove pinned fd repeated fail-closed compatibility
         shell: bash
         run: |
           set -euo pipefail
-          target/debug/execsurface learn \
-            --output /tmp/execsurface-m7-source/fd.lock.json \
-            -- /bin/bash -lc \
-            'cd /tmp/m7-fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
+          for n in 1 2 3; do
+            target/debug/execsurface observe -- /bin/bash -lc \
+              'cd /tmp/m7-fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null' \
+              >"/tmp/execsurface-m7-source/fd-observe-${n}.json"
 
-          for n in 1 2; do
-            target/debug/execsurface check \
-              --baseline /tmp/execsurface-m7-source/fd.lock.json \
-              --json-output "/tmp/execsurface-m7-source/fd-pass-${n}.json" \
-              --markdown-output "/tmp/execsurface-m7-source/fd-pass-${n}.md" \
-              -- /bin/bash -lc \
-              'cd /tmp/m7-fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null'
+            python3 - "/tmp/execsurface-m7-source/fd-observe-${n}.json" <<'PY'
+          import json
+          import sys
+          data = json.load(open(sys.argv[1]))
+          warnings = data.get("warnings", [])
+          codes = [warning.get("code") for warning in warnings]
+          assert data.get("complete") is False, warnings
+          assert codes == ["shared_fd_table_ambiguity"], warnings
+          assert data.get("outcome", {}).get("exit_code") == 0, data.get("outcome")
+          PY
           done
 
-          python3 - <<'PY'
-          import json
-          for n in (1, 2):
-              data = json.load(open(f"/tmp/execsurface-m7-source/fd-pass-{n}.json"))
-              assert data["verdict"] == "pass", data["verdict"]
-              assert data["findings"] == [], data["findings"]
-          PY
-
-      - name: Prove controlled runtime expansion remains visible
+      - name: Prove controlled runtime expansion remains visible in raw evidence
         shell: bash
         run: |
           set -euo pipefail
-          set +e
-          target/debug/execsurface check \
-            --baseline /tmp/execsurface-m7-source/fd.lock.json \
-            --json-output /tmp/execsurface-m7-source/fd-controlled.json \
-            --markdown-output /tmp/execsurface-m7-source/fd-controlled.md \
-            -- /bin/bash -lc \
-            'cd /tmp/m7-fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null; /usr/bin/sha256sum m7-fixture/alpha.txt >/dev/null'
-          status=$?
-          set -e
-          test "$status" -eq 10
+          target/debug/execsurface observe -- /bin/bash -lc \
+            'cd /tmp/m7-fd && ./target/release/fd --hidden --type f . m7-fixture >/dev/null; /usr/bin/sha256sum m7-fixture/alpha.txt >/dev/null' \
+            >/tmp/execsurface-m7-source/fd-controlled.json
 
           python3 - <<'PY'
           import json
           data = json.load(open("/tmp/execsurface-m7-source/fd-controlled.json"))
-          assert data["verdict"] == "review", data["verdict"]
-          hits = []
-          for finding in data["findings"]:
-              if finding["change"] != "added" or finding["effect_kind"] != "process_exec":
-                  continue
-              executable = finding.get("evidence", {}).get("effect", {}).get("executable", {})
-              if executable.get("family") == "sha256sum":
-                  hits.append(finding)
-          assert hits, "controlled sha256sum execution was not surfaced as an added process_exec"
+          warnings = data.get("warnings", [])
+          codes = [warning.get("code") for warning in warnings]
+          assert data.get("complete") is False, warnings
+          assert codes == ["shared_fd_table_ambiguity"], warnings
+          assert data.get("outcome", {}).get("exit_code") == 0, data.get("outcome")
+          hits = [
+              event for event in data.get("events", [])
+              if event.get("event_type") == "process_exec"
+              and event.get("path", "").endswith("/sha256sum")
+          ]
+          assert hits, "controlled sha256sum execution was not retained in raw evidence"
           PY
 
   pinned-casey-just-source-regression:
@@ -244,7 +241,10 @@ jobs:
           from pathlib import Path
 
           data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-          assert data.get("complete") is True, data.get("warnings")
+          warnings = data.get("warnings", [])
+          codes = [warning.get("code") for warning in warnings]
+          assert data.get("complete") is False, warnings
+          assert codes == ["shared_fd_table_ambiguity"], warnings
           outcome = data.get("outcome", {})
           assert outcome.get("exit_code") == 0, outcome
           assert outcome.get("signal") is None, outcome
