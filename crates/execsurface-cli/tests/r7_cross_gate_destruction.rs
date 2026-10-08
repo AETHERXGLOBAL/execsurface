@@ -268,3 +268,33 @@ fn r7_target_cannot_rebind_output_path_to_verified_baseline_after_preflight() {
 
     let _ = fs::remove_dir_all(dir);
 }
+
+
+#[test]
+fn r7_target_cannot_move_verified_baseline_onto_output_path() {
+    let dir = temp_dir("trusted-object-move");
+    let baseline = dir.join("baseline.lock.json");
+    let output_path = dir.join("report.json");
+    learn(&dir, &baseline);
+    let before = fs::read(&baseline).expect("baseline bytes before");
+
+    let target = format!("mv {} {}", baseline.display(), output_path.display());
+    let output = check(&dir, &baseline, None, Some(&output_path), None, &target);
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "report output must not overwrite the preflight-verified baseline object after target rename"
+    );
+    assert!(
+        !baseline.exists(),
+        "target should have executed and moved the original baseline pathname"
+    );
+    assert_eq!(
+        fs::read(&output_path).expect("moved baseline object"),
+        before,
+        "the original verified baseline object must remain intact at its new pathname"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
