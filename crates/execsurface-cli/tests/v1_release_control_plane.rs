@@ -225,7 +225,6 @@ fn immutable_v1_tag_governance_is_fail_closed_and_no_bypass() {
         .success());
 }
 
-
 #[test]
 fn published_action_installer_accepts_bounded_alpha_and_final_v1_tags() {
     let install = read("action/install.sh");
