@@ -5,6 +5,12 @@ Tracking issue: `#129`
 Program start HEAD: `88284764c70dddf137e89a34b48519328e530ad9`
 Current public release at program start: `v0.1.0-alpha.5`
 
+Current gap-analysis refresh: 2026-10-08  
+Current public release at refresh: `v0.1.0-alpha.6`  
+Current gap analysis: `docs/development/V1_PRODUCTION_READINESS_GAP_ANALYSIS.md`
+
+The original gate criteria below remain frozen. The 2026-10-08 gap analysis updates the factual state after Stage-2 remediation, Alpha.6 release, and the Alpha.6 Productization Gate without weakening any production criterion.
+
 This document freezes the evidence contract for deciding whether ExecSurface may move from public alpha to a production-qualified stable `v1.0` release.
 
 It is a gate document, not a marketing maturity claim.
