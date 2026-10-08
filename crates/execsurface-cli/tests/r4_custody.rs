@@ -20,10 +20,8 @@ fn cli() -> &'static str {
 
 fn temp_dir(name: &str) -> PathBuf {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
-        "execsurface-r4-{name}-{}-{id}",
-        std::process::id()
-    ));
+    let path =
+        std::env::temp_dir().join(format!("execsurface-r4-{name}-{}-{id}", std::process::id()));
     fs::create_dir_all(&path).expect("create r4 temp dir");
     path
 }
@@ -73,7 +71,14 @@ fn r4_self_consistent_baseline_substitution_is_rejected_before_target() {
         .current_dir(&dir)
         .args(["check", "--baseline"])
         .arg(&substitute)
-        .args(["--expect-baseline-digest", &expected, "--", "/bin/sh", "-c", &target])
+        .args([
+            "--expect-baseline-digest",
+            &expected,
+            "--",
+            "/bin/sh",
+            "-c",
+            &target,
+        ])
         .output()
         .expect("check substituted baseline");
 
@@ -98,7 +103,12 @@ fn r4_parseable_policy_substitution_is_rejected_before_target() {
     let policy = dir.join("execsurface-policy.json");
     let marker = dir.join("TARGET_RAN");
 
-    learn(&dir, &baseline, "policy-custody", &["/bin/sh", "-c", "true"]);
+    learn(
+        &dir,
+        &baseline,
+        "policy-custody",
+        &["/bin/sh", "-c", "true"],
+    );
     fs::write(&policy, SUBSTITUTE_POLICY).expect("write substitute policy");
 
     let target = format!("touch {}", marker.display());
@@ -158,7 +168,10 @@ fn r4_malformed_expected_digest_fails_closed_before_target() {
         .expect("check malformed pin");
 
     assert_eq!(output.status.code(), Some(2));
-    assert!(!marker.exists(), "malformed pin must fail before target execution");
+    assert!(
+        !marker.exists(),
+        "malformed pin must fail before target execution"
+    );
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("invalid expected baseline digest"),
         "malformed pin must fail for the frozen R4 reason: {}",
