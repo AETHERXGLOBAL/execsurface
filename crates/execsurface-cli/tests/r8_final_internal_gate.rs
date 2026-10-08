@@ -262,7 +262,10 @@ fn r8_c4_moved_trusted_baseline_inode_cannot_become_v3_report_output() {
         Some(2),
         "trusted-object move must fail before report materialization"
     );
-    assert!(!baseline.exists(), "target must have moved the baseline pathname");
+    assert!(
+        !baseline.exists(),
+        "target must have moved the baseline pathname"
+    );
     assert_eq!(
         fs::read(&report).expect("moved trusted object"),
         baseline_before,
@@ -285,11 +288,7 @@ fn r8_c5_target_policy_mutation_cannot_change_the_verified_policy_already_consum
     let expected_baseline = baseline_digest(&baseline);
     let expected_policy = policy_digest(V3_BLOCK_POLICY.as_bytes());
     let replacement = V3_ALLOW_POLICY.replace('\n', "");
-    let target = format!(
-        "printf '%s' '{}' > '{}'",
-        replacement,
-        policy.display()
-    );
+    let target = format!("printf '%s' '{}' > '{}'", replacement, policy.display());
 
     let output = run_check(
         &dir,
