@@ -1,31 +1,32 @@
 # ExecSurface — Current Status
 
-Date: 2026-10-03
-
-This file states the current public product state. Historical milestone, prerelease and engagement documents are evidence records and may describe the release that was current when they closed.
+This file is the authoritative current public product state. Historical milestone, prerelease and engagement documents are evidence records and may describe the release that was current when they closed.
 
 ## Current public product state
 
-**ExecSurface v0.1.0-alpha.5 is the Final Supported Alpha Release for Linux x86_64 within the documented native-ptrace product boundary.**
+**ExecSurface v0.1.0-alpha.6 is the current supported Alpha release for Linux x86_64 within the documented native-ptrace product boundary.**
 
 Current bounded state:
 
-`ALPHA5_FINAL_SUPPORTED_ALPHA_WITH_DECLARED_LIMITATIONS — LINUX_X86_64_PTRACE`
+`ALPHA6_SUPPORTED_ALPHA_WITH_STAGE2_SEMANTIC_REMEDIATION — LINUX_X86_64_PTRACE`
 
-- Public release: `v0.1.0-alpha.5`
-- Release source commit: `9e73b925d55557e33de1b0813995609aaefdc037`
-- Frozen product source used for Alpha.5 qualification: `5067200452c174da6bc8d9d7ecf6957ee379f0a2`
-- Stable GitHub Action: `AETHERXGLOBAL/execsurface@v0.1`
-- Stable `v0.1` resolves to the Alpha.5 release source commit above.
-- Immutable Action pin: `AETHERXGLOBAL/execsurface@v0.1.0-alpha.5`
-- Registry package: `execsurface = 0.1.0-alpha.5`
-- Supported public product scope: Linux x86_64
-- Public default/reference observer: native `ptrace`
-- ExecSurface verdict / exit-code contract: PASS `0`, ERROR `2`, REVIEW `10`, BLOCK `20`
+- Public release: `v0.1.0-alpha.6`
+- Immutable Action pin: `AETHERXGLOBAL/execsurface@v0.1.0-alpha.6`
+- Stable GitHub Action: `AETHERXGLOBAL/execsurface@v0.1`, promoted to Alpha.6 only after immutable release and consumer gates pass.
+- Registry package: `execsurface = 0.1.0-alpha.6`, published only after the GitHub release and stable Action gates pass.
+- Previous release `v0.1.0-alpha.5` remains immutable and available for historical reproduction and rollback.
+- Alpha.5 normalization profile 3 is **not** silently reinterpreted under Alpha.6 profile 4; incompatible Alpha.5 baselines are rejected explicitly and must be relearned under corrected semantics.
+- Policy schema v3 is opt-in; v1/v2 meanings remain unchanged.
+- Stage-2 adds bounded FD-state, object/path authority, custody, policy-expressiveness, CI, and verdict-materialization correctness repairs.
+- Supported public product scope: Linux x86_64.
+- Public default/reference observer: native `ptrace`.
+- ExecSurface verdict / exit-code contract: PASS `0`, ERROR `2`, REVIEW `10`, BLOCK `20`.
 
-`main` may advance with documentation, evaluation or maintenance commits after the immutable release source. Consumers that require immutable review should pin `v0.1.0-alpha.5`.
+The research/product classification remains runtime behavioral verification, execution semantics and semantic-evidence correctness. It is not cybersecurity research.
 
-## Final Alpha.5 qualification
+Alpha.6 supersedes Alpha.5 as the recommended public Alpha after the release pipeline succeeds. It does not delete or rewrite Alpha.5 artifacts, issues, pull requests, comments, review threads or external-engagement records.
+
+## Historical Alpha.5 qualification
 
 The supported-product closeout was executed against the already-published Alpha.5 artifact and immutable Alpha.5 source rather than a replacement build.
 
