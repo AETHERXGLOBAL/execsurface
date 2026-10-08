@@ -253,7 +253,7 @@ jobs:
         run: test "$VERDICT" = "pass"
 
   promote-stable:
-    name: Promote stable v0.1 channel
+    name: Promote classified stable channel
     needs: [release, binary-consumer, cargo-tag-consumer, immutable-action-consumer]
     runs-on: ubuntu-24.04
     permissions:
@@ -262,25 +262,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - name: Move v0.1 only after release gates
+      - name: Move classified channel only after release gates
         env:
           TAG: ${{ needs.release.outputs.tag }}
+          STABLE_CHANNEL: ${{ needs.release.outputs.stable-channel }}
         run: |
           set -euo pipefail
-          if [[ ! "$TAG" =~ ^v0\.1\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Refusing to move v0.1 for out-of-line release tag: $TAG" >&2
-            exit 1
-          fi
+          version="${TAG#v}"
+          classified="$(python .github/scripts/release_contract.py classify --version "$version" --tag "$TAG")"
+          expected_channel="$(python -c 'import json,sys; print(json.load(sys.stdin)["stable_channel"])' <<<"$classified")"
+          test "$STABLE_CHANNEL" = "$expected_channel"
           test "$TAG" = "$(tr -d '[:space:]' < action/release-tag.txt)"
           release_sha="$(git rev-list -n1 "$TAG")"
           test "$release_sha" = "$GITHUB_SHA"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -fa v0.1 "$release_sha" -m "ExecSurface stable v0.1 channel -> $TAG"
-          git push origin refs/tags/v0.1 --force
+          git tag -fa "$STABLE_CHANNEL" "$release_sha" -m "ExecSurface stable $STABLE_CHANNEL channel -> $TAG"
+          git push origin "refs/tags/$STABLE_CHANNEL" --force
 
   stable-action-consumer:
-    name: Stable @v0.1 zero-contact Action proof
+    name: Classified stable-channel zero-contact Action proof
     needs: [release, promote-stable]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -302,6 +303,27 @@ jobs:
           bin="$PWD/execsurface-${TAG}-x86_64-unknown-linux-gnu/execsurface"
           echo "PATH=$(dirname "$bin"):$PATH" >> "$GITHUB_ENV"
 
+      - name: Checkout classified stable Action channel
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.stable-channel }}
+          path: stable-action
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify moving channel resolves to immutable release source
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+          STABLE_CHANNEL: ${{ needs.release.outputs.stable-channel }}
+        run: |
+          set -euo pipefail
+          action_dir="$GITHUB_WORKSPACE/stable-action"
+          test "$(git -C "$action_dir" rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(tr -d '[:space:]' < "$action_dir/action/release-tag.txt")" = "$TAG"
+          echo "Verified $STABLE_CHANNEL -> $TAG -> $GITHUB_SHA"
+          rm -rf "$action_dir/.git"
+          test ! -e "$action_dir/.git"
+
       - name: Prepare baselines and blocking policy
         run: |
           set -euo pipefail
@@ -320,14 +342,14 @@ jobs:
 
       - name: Stable PASS
         id: pass
-        uses: AETHERXGLOBAL/execsurface@v0.1
+        uses: ./stable-action
         with:
           command: "true"
           baseline: pass.lock.json
           upload-artifact: "false"
       - name: Stable REVIEW
         id: review
-        uses: AETHERXGLOBAL/execsurface@v0.1
+        uses: ./stable-action
         with:
           command: "true; /bin/echo x >/dev/null"
           baseline: review.lock.json
@@ -335,7 +357,7 @@ jobs:
       - name: Stable BLOCK
         id: block
         continue-on-error: true
-        uses: AETHERXGLOBAL/execsurface@v0.1
+        uses: ./stable-action
         with:
           command: "true; /bin/echo x >/dev/null"
           baseline: block.lock.json
@@ -344,7 +366,7 @@ jobs:
       - name: Stable ERROR
         id: error
         continue-on-error: true
-        uses: AETHERXGLOBAL/execsurface@v0.1
+        uses: ./stable-action
         with:
           command: "true"
           baseline: missing.lock.json
