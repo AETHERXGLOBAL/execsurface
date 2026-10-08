@@ -102,7 +102,6 @@ fn rc1_public_documents_still_identify_alpha6_as_published_release() {
     );
 }
 
-
 #[test]
 fn rc1_registry_publish_chain_is_complete_and_dependency_ordered() {
     let workflow = read(".github/workflows/publish-crates.yml");
