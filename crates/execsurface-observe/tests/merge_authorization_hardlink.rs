@@ -30,12 +30,8 @@ fn successful_hardlink_creation_marks_raw_v2_incomplete() {
         alias.display()
     );
 
-    let observation = observe_command(
-        &CommandSpec::new("/bin/sh")
-            .arg("-c")
-            .arg(target),
-    )
-    .expect("observe successful hardlink creation");
+    let observation = observe_command(&CommandSpec::new("/bin/sh").arg("-c").arg(target))
+        .expect("observe successful hardlink creation");
 
     assert_eq!(fs::read(&alias).expect("alias bytes"), b"x");
     assert!(
@@ -62,12 +58,8 @@ fn failed_hardlink_attempt_does_not_claim_a_successful_alias_transition() {
     fs::write(&alias, b"existing").expect("seed destination");
 
     let target = format!("ln '{}' '{}'", source.display(), alias.display());
-    let observation = observe_command(
-        &CommandSpec::new("/bin/sh")
-            .arg("-c")
-            .arg(target),
-    )
-    .expect("observe failed hardlink attempt");
+    let observation = observe_command(&CommandSpec::new("/bin/sh").arg("-c").arg(target))
+        .expect("observe failed hardlink attempt");
 
     assert!(
         !observation
