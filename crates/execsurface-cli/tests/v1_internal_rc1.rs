@@ -130,7 +130,10 @@ fn rc1_registry_publish_chain_is_complete_and_dependency_ordered() {
 
     assert_eq!(
         publish_lines,
-        expected_lines.iter().map(String::as_str).collect::<Vec<_>>(),
+        expected_lines
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
         "publish chain must cover every publishable crate exactly once in dependency order"
     );
 
