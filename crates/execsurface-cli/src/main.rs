@@ -564,14 +564,12 @@ fn run_render_error(args: &[OsString]) -> Result<(), String> {
 }
 
 fn validate_custody_digest(value: &str, kind: &str) -> Result<(), String> {
-    let valid = value
-        .strip_prefix("sha256:")
-        .is_some_and(|hex| {
-            hex.len() == 64
-                && hex
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        });
+    let valid = value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    });
     if valid {
         Ok(())
     } else {
