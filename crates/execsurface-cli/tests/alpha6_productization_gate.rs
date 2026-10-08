@@ -29,8 +29,7 @@ fn landing_and_current_docs_present_alpha6_as_current_not_final() {
     let readme = fs::read_to_string(root.join("README.md")).expect("README");
     let action = fs::read_to_string(root.join("docs/GITHUB_ACTION.md")).expect("Action guide");
     let status = fs::read_to_string(root.join("docs/STATUS.md")).expect("status");
-    let quickstart =
-        fs::read_to_string(root.join("docs/QUICKSTART_5_MIN.md")).expect("quickstart");
+    let quickstart = fs::read_to_string(root.join("docs/QUICKSTART_5_MIN.md")).expect("quickstart");
 
     assert!(
         readme.contains("status-Current%20Supported%20Alpha"),
