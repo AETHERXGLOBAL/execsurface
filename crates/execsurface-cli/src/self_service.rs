@@ -110,9 +110,7 @@ pub fn run_init(args: &[OsString]) -> Result<(), String> {
                     return Err("init: --command cannot be empty".to_owned());
                 }
                 if value.contains('\n') || value.contains('\r') {
-                    return Err(
-                        "init: --command must be a single-line shell command".to_owned(),
-                    );
+                    return Err("init: --command must be a single-line shell command".to_owned());
                 }
                 command = Some(value);
                 index += 2;
