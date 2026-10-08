@@ -20,11 +20,11 @@ ExecSurface advances only through evidence-preserving changes:
 
 **OPEN / ACTIVE**
 
-The production-readiness program is tracked in issue `#129`, the frozen qualification contract is `docs/PRODUCTION_READINESS.md`, the current Alpha.6 gap analysis is `docs/development/V1_PRODUCTION_READINESS_GAP_ANALYSIS.md`, the frozen v1 stable contract is `docs/COMPATIBILITY.md`, and the stable support/deprecation policy is `docs/SUPPORT_POLICY.md`.
+The production-readiness program is tracked in issue `#129`, the frozen qualification contract is `docs/PRODUCTION_READINESS.md`, the current Alpha.6 gap analysis is `docs/development/V1_PRODUCTION_READINESS_GAP_ANALYSIS.md`, the frozen v1 stable contract is `docs/COMPATIBILITY.md`, and the stable support/deprecation policy is `docs/SUPPORT_POLICY.md`. The current release-governance amendment is `docs/development/V1_INTERNAL_QUALIFICATION_GOVERNANCE.md`.
 
 The program does not authorize a stable-release claim from internal CI alone. Production qualification requires independent external evidence, a stable compatibility contract, public-consumer reliability, repository/supply-chain controls, real-workload evidence, and an evidence-qualified release candidate.
 
-P8 remains the external-evidence authority for the independent validation portion of P9. Repository-administration controls that cannot be applied through the connected automation remain explicit blockers rather than being treated as complete by documentation.
+P8 remains the authority for classifying any genuine external evidence. Under the explicit 2026-10-08 governance amendment, P9.1/P9.5 external evidence is no longer a mandatory v1 release blocker; it remains a disclosed evidence limitation and must never be relabeled as internally supplied validation. Repository-administration controls that cannot be applied through the connected automation remain explicit blockers rather than being treated as complete by documentation.
 
 V1-R0 stable-contract freeze is now the active internal maturity boundary: do not add v1 features merely for breadth. The next internal engineering gate after R0 is V1-R1 release-control-plane hardening, while external Alpha.6 execution/use evidence proceeds independently.
 

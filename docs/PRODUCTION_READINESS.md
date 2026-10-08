@@ -13,6 +13,10 @@ Stable support/deprecation policy: `docs/SUPPORT_POLICY.md`
 
 The original gate criteria below remain frozen. The 2026-10-08 gap analysis updates the factual state after Stage-2 remediation, Alpha.6 release, and the Alpha.6 Productization Gate without weakening any production criterion.
 
+Governance amendment: `docs/development/V1_INTERNAL_QUALIFICATION_GOVERNANCE.md`
+
+The owner has explicitly removed P9.1 and P9.5 external evidence as mandatory release blockers. They are **WAIVED_AS_RELEASE_BLOCKER_BY_GOVERNANCE**, not PASS. Missing external evidence remains a disclosed limitation, and any v1 release under this path must state that independent external validation is not claimed. The strengthened internal IQ0-IQ9 qualification chain is mandatory in their place for release governance.
+
 This document freezes the evidence contract for deciding whether ExecSurface may move from public alpha to a production-qualified stable `v1.0` release.
 
 It is a gate document, not a marketing maturity claim.
@@ -44,11 +48,11 @@ Dynamic specialists are added only when a gate requires them: Rust/SemVer, Linux
 | Gate | Requirement | Evidence source | Start state | Closeout rule |
 |---|---|---|---|---|
 | P9.0 | Freeze the production qualification contract | This document + issue #129 | ACTIVE | Criteria are versioned, bounded and linked from current roadmap/docs |
-| P9.1 | Independent external evidence | P8 issue #114 + public intake #118 | OPEN / BLOCKING | P8 current external-evidence minimum is genuinely satisfied |
+| P9.1 | Independent external evidence | P8 issue #114 + public intake #118 | WAIVED AS RELEASE BLOCKER / EVIDENCE STILL INCOMPLETE | Historical/current external evidence is retained honestly; v1 release eligibility no longer depends on closing this row |
 | P9.2 | Public-consumer reliability | Operational CI, public artifact, crates.io and Action consumption | STRONG INTERNAL EVIDENCE | Supported consumer paths repeatedly pass without semantic relaxation |
 | P9.3 | Compatibility & stability contract | Versioning/schema/CLI/migration evidence | CONTRACT FROZEN / RC EVIDENCE PENDING | Stable compatibility promises and deprecation/migration rules are explicit and tested on the exact v1 RC |
 | P9.4 | Repository & supply-chain controls | GitHub rules/protection, workflow permissions, release/provenance evidence | PARTIAL / V1 CONTROL-PLANE BLOCKER | Release-critical changes cannot bypass the approved control plane and v1 immutable-tag/channel mechanics are qualified |
-| P9.5 | Real-workload adoption evidence | External workloads not created solely for demonstration | OPEN / BLOCKING | Qualified independent workload evidence exists, including negative/no-fit outcomes |
+| P9.5 | Real-workload adoption evidence | External workloads not created solely for demonstration | WAIVED AS RELEASE BLOCKER / EVIDENCE STILL INCOMPLETE | External workload evidence remains valuable but is no longer mandatory for the v1 release decision |
 | P9.6 | v1.0 RC qualification | Frozen RC source + full release/compatibility/adversarial evidence | BLOCKED | Exact public RC is reproducibly built, consumed and upgrade-tested |
 | P9.7 | Stable release decision | Independent critical review of P9.0–P9.6 | BLOCKED | `RELEASE_V1_0`, `REWORK_REQUIRED`, or `REMAIN_ALPHA_BETA` recorded with evidence |
 
@@ -154,14 +158,14 @@ Negative, partial, unsupported, reproduction-failure, interoperability and no-fi
 
 ExecSurface is not authorized to claim production-ready or stable `v1.0` status from the current evidence set.
 
-The immediate sequence is:
+The current sequence after the explicit internal-qualification governance amendment is:
 
-1. merge this production-criteria freeze after review/CI;
-2. apply and verify repository protection/rules for P9.4;
-3. freeze/test the P9.3 compatibility contract;
-4. continue P8 independent validation without contaminating independence;
-5. gather qualified external real-workload evidence;
-6. only then construct and qualify a v1.0 release candidate.
+1. preserve the frozen v1 stable contract and all Stage-2/Productization evidence;
+2. complete V1-R1 stable release-control-plane hardening;
+3. complete the strengthened IQ0-IQ9 internal qualification chain on the exact v1 RC;
+4. preserve external evidence honestly when it exists, but do not make P9.1/P9.5 release blockers;
+5. issue a separate internal critical-board decision that explicitly states external independent validation is not claimed;
+6. only then authorize or reject v1.0.
 
 ## Release-decision rule
 
