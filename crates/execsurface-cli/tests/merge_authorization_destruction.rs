@@ -534,3 +534,44 @@ fn merge_auth_target_created_broken_symlink_report_is_rejected_postflight() {
     let _ = fs::remove_file(&report);
     let _ = fs::remove_dir_all(dir);
 }
+
+
+#[test]
+fn merge_auth_preexisting_live_symlink_report_is_rejected_without_overwriting_target() {
+    let dir = temp_dir("preexisting-live-symlink-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+    let indirect_target = dir.join("indirect-target.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::write(&indirect_target, b"WORKLOAD-ADJACENT").expect("seed indirect target");
+    symlink(&indirect_target, &report).expect("create live report symlink");
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", "echo controlled-drift >/dev/null"])
+        .output()
+        .expect("run preexisting live-symlink destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "verdict materialization must not follow a preexisting live symlink output; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(report.is_symlink());
+    assert_eq!(
+        fs::read(&indirect_target).expect("indirect target bytes"),
+        b"WORKLOAD-ADJACENT",
+        "ExecSurface must not overwrite a symlink target while materializing its report"
+    );
+
+    let _ = fs::remove_file(&report);
+    let _ = fs::remove_dir_all(dir);
+}
