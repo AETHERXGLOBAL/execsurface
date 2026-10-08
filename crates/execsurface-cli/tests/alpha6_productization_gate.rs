@@ -48,8 +48,7 @@ fn landing_and_current_docs_track_stable_v1_without_rewriting_alpha_history() {
         "Action guide must present the stable v1 channel and immutable v1.0.0 pin"
     );
     assert!(
-        status.contains("Public release: `v1.0.0`")
-            && status.contains("docs/releases/v1.0.0.md"),
+        status.contains("Public release: `v1.0.0`") && status.contains("docs/releases/v1.0.0.md"),
         "authoritative status must point current users to the published v1.0.0 release"
     );
     assert!(
