@@ -257,7 +257,6 @@ fn merge_auth_written_object_hardlinked_to_report_then_source_removed_is_protect
     let _ = fs::remove_dir_all(dir);
 }
 
-
 #[test]
 fn merge_auth_truncate_only_report_path_must_not_be_overwritten() {
     let dir = temp_dir("truncate-only-output");
