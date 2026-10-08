@@ -574,3 +574,79 @@ fn merge_auth_preexisting_live_symlink_report_is_rejected_without_overwriting_ta
     let _ = fs::remove_file(&report);
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn merge_auth_preexisting_hardlinked_report_is_rejected_without_overwriting_peer() {
+    let dir = temp_dir("preexisting-hardlink-output");
+    let baseline = dir.join("baseline.lock.json");
+    let peer = dir.join("peer.bin");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::write(&peer, b"PEER-STATE").expect("seed peer");
+    fs::hard_link(&peer, &report).expect("hardlink report to peer");
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", "echo controlled-drift >/dev/null"])
+        .output()
+        .expect("run preexisting hardlink destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "verdict materialization must reject a multiply-linked output object; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&peer).expect("peer bytes"),
+        b"PEER-STATE",
+        "ExecSurface must not overwrite a collateral hardlink peer"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_preexisting_directory_report_is_rejected_before_target_execution() {
+    let dir = temp_dir("preexisting-directory-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+    let marker = dir.join("TARGET_RAN");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::create_dir(&report).expect("create directory at report path");
+    let target = format!("touch '{}'", marker.display());
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run directory-output destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a non-regular verdict output must fail preflight; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !marker.exists(),
+        "invalid verdict output type must be rejected before target execution"
+    );
+    assert!(report.is_dir());
+
+    let _ = fs::remove_dir_all(dir);
+}
