@@ -535,7 +535,6 @@ fn merge_auth_target_created_broken_symlink_report_is_rejected_postflight() {
     let _ = fs::remove_dir_all(dir);
 }
 
-
 #[test]
 fn merge_auth_preexisting_live_symlink_report_is_rejected_without_overwriting_target() {
     let dir = temp_dir("preexisting-live-symlink-output");
