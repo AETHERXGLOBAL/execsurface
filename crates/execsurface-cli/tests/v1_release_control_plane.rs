@@ -51,6 +51,27 @@ fn run_validator(request: &str, package_version: &str, release_tag: &str) -> std
     output
 }
 
+fn run_ruleset_verifier(ruleset_jsonl: &str, tag: &str) -> std::process::Output {
+    let dir = temp_dir("ruleset");
+    fs::create_dir_all(&dir).expect("temp dir");
+    let rulesets_path = dir.join("rulesets.jsonl");
+    fs::write(&rulesets_path, ruleset_jsonl).expect("rulesets");
+
+    let output = Command::new("python3")
+        .arg(root().join(".github/scripts/verify_tag_ruleset.py"))
+        .args([
+            "--rulesets-jsonl",
+            rulesets_path.to_str().expect("rulesets path"),
+            "--tag",
+            tag,
+        ])
+        .output()
+        .expect("run tag-ruleset verifier");
+
+    let _ = fs::remove_dir_all(dir);
+    output
+}
+
 #[test]
 fn alpha6_and_stable_v1_release_contracts_are_classified_explicitly() {
     let alpha = run_validator(
@@ -123,6 +144,10 @@ fn workflows_use_release_classifier_and_do_not_hardcode_alpha_stable_channel() {
         "promotion must use the testable release classifier"
     );
     assert!(
+        promote.contains(".github/scripts/verify_tag_ruleset.py"),
+        "stable-v1 promotion must verify immutable tag governance before tag creation"
+    );
+    assert!(
         !promote.contains(r#"test "$stable_channel" = "v0.1""#),
         "promotion must not hard-code v0.1 as the only accepted stable channel"
     );
@@ -175,5 +200,30 @@ fn v1_r1_does_not_arm_a_real_v1_release_request() {
     assert!(
         !request.contains(r#""tag": "v1.0.0""#),
         "V1-R1 must not arm an actual v1 release"
+    );
+}
+
+
+#[test]
+fn immutable_v1_tag_governance_is_fail_closed_and_no_bypass() {
+    let valid = r#"{"id":1,"name":"Protect v1 immutable releases","target":"tag","enforcement":"active","conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v1.*"]}},"rules":[{"type":"deletion"},{"type":"update"}],"bypass_actors":[],"current_user_can_bypass":"never"}"#;
+    let output = run_ruleset_verifier(valid, "v1.0.0");
+    assert!(
+        output.status.success(),
+        "valid immutable v1 tag ruleset must qualify: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let alpha_only = r#"{"id":2,"name":"Alpha only","target":"tag","enforcement":"active","conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v0.1.0-alpha.5"]}},"rules":[{"type":"deletion"},{"type":"update"}],"bypass_actors":[],"current_user_can_bypass":"never"}"#;
+    assert!(!run_ruleset_verifier(alpha_only, "v1.0.0").status.success());
+
+    let bypass = r#"{"id":3,"name":"v1 with bypass","target":"tag","enforcement":"active","conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v1.*"]}},"rules":[{"type":"deletion"},{"type":"update"}],"bypass_actors":[{"actor_id":1}],"current_user_can_bypass":"always"}"#;
+    assert!(!run_ruleset_verifier(bypass, "v1.0.0").status.success());
+
+    let missing_update = r#"{"id":4,"name":"v1 deletion only","target":"tag","enforcement":"active","conditions":{"ref_name":{"exclude":[],"include":["refs/tags/v1.*"]}},"rules":[{"type":"deletion"}],"bypass_actors":[],"current_user_can_bypass":"never"}"#;
+    assert!(
+        !run_ruleset_verifier(missing_update, "v1.0.0")
+            .status
+            .success()
     );
 }
