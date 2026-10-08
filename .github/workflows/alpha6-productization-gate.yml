@@ -1,0 +1,283 @@
+name: Alpha.6 Productization Gate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/alpha6-productization-gate.yml'
+      - 'README.md'
+      - 'docs/QUICKSTART_5_MIN.md'
+      - 'docs/GITHUB_ACTION.md'
+      - 'docs/STATUS.md'
+      - 'action.yml'
+      - 'action/**'
+      - 'crates/execsurface-cli/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/alpha6-productization-gate.yml'
+      - 'README.md'
+      - 'docs/QUICKSTART_5_MIN.md'
+      - 'docs/GITHUB_ACTION.md'
+      - 'docs/STATUS.md'
+      - 'action.yml'
+      - 'action/**'
+      - 'crates/execsurface-cli/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ALPHA6_TAG: v0.1.0-alpha.6
+  ALPHA6_VERSION: 0.1.0-alpha.6
+  TARGET: x86_64-unknown-linux-gnu
+  ASSET: execsurface-v0.1.0-alpha.6-x86_64-unknown-linux-gnu.tar.gz
+
+jobs:
+  public-first-run:
+    name: Public binary / first-run path
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5b1630ceea73d27597364c9af683 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prove stable channel resolves to immutable Alpha.6
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          stable="$(git rev-parse 'v0.1^{commit}')"
+          immutable="$(git rev-parse "$ALPHA6_TAG^{commit}")"
+          test "$stable" = "$immutable"
+          test "$(git show v0.1:action/release-tag.txt | tr -d '[:space:]')" = "$ALPHA6_TAG"
+
+      - name: Download checksum-verified attested Alpha.6
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/alpha6-public"
+          cd "$RUNNER_TEMP/alpha6-public"
+          gh release download "$ALPHA6_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ASSET" --pattern "$ASSET.sha256"
+          sha256sum -c "$ASSET.sha256"
+          gh attestation verify "$ASSET" -R "$GITHUB_REPOSITORY"
+          tar -xzf "$ASSET"
+          bin="$PWD/execsurface-${ALPHA6_TAG}-${TARGET}/execsurface"
+          test -x "$bin"
+          test "$("$bin" --version)" = "execsurface $ALPHA6_VERSION"
+          echo "EXECSURFACE_ALPHA6_BIN=$bin" >> "$GITHUB_ENV"
+
+      - name: Doctor
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alpha6-first-run"
+          mkdir -p "$work"
+          cd "$work"
+          "$EXECSURFACE_ALPHA6_BIN" doctor
+
+      - name: Learn once, prove PASS then controlled REVIEW without baseline mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alpha6-first-run"
+          cd "$work"
+          "$EXECSURFACE_ALPHA6_BIN" learn --output execsurface.lock.json -- /bin/bash -lc true
+          before="$(sha256sum execsurface.lock.json | awk '{print $1}')"
+
+          pass="$("$EXECSURFACE_ALPHA6_BIN" check --baseline execsurface.lock.json -- /bin/bash -lc true)"
+          grep -F 'ExecSurface: PASS' <<<"$pass"
+
+          set +e
+          review="$("$EXECSURFACE_ALPHA6_BIN" check --baseline execsurface.lock.json -- /bin/bash -lc 'true; /bin/echo productization-drift >/dev/null' 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 10
+          grep -F 'ExecSurface: REVIEW' <<<"$review"
+          test "$before" = "$(sha256sum execsurface.lock.json | awk '{print $1}')"
+
+  registry-first-run:
+    name: crates.io exact Alpha.6 / first-run path
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Install exact Alpha.6 from crates.io
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/alpha6-registry"
+          cargo install execsurface --version "=$ALPHA6_VERSION" --locked --root "$root"
+          bin="$root/bin/execsurface"
+          test "$("$bin" --version)" = "execsurface $ALPHA6_VERSION"
+          work="$RUNNER_TEMP/alpha6-registry-work"
+          mkdir -p "$work"
+          cd "$work"
+          "$bin" doctor
+          "$bin" learn --output execsurface.lock.json -- /bin/bash -lc true
+          "$bin" check --baseline execsurface.lock.json -- /bin/bash -lc true
+
+  source-onboarding-contract:
+    name: Source onboarding contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5b1630ceea73d27597364c9af683 # v7.0.1
+      - name: Productization acceptance tests
+        run: cargo test --locked -p execsurface --test alpha6_productization_gate -- --test-threads=1 --nocapture
+      - name: Existing self-service regression
+        run: cargo test --locked -p execsurface --test self_service_linux -- --test-threads=1 --nocapture
+
+  stable-action-contract:
+    name: Stable @v0.1 / custody and verdict contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout consumer workspace
+        uses: actions/checkout@3d3c42e5aac5b1630ceea73d27597364c9af683 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare Alpha.6 baseline and policies
+        id: pins
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download "$ALPHA6_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ASSET" --pattern "$ASSET.sha256"
+          sha256sum -c "$ASSET.sha256"
+          tar -xzf "$ASSET"
+          bin="$PWD/execsurface-${ALPHA6_TAG}-${TARGET}/execsurface"
+
+          "$bin" learn --output execsurface.lock.json -- /bin/bash -lc true
+          cat > review-policy.json <<'JSON'
+          {
+            "schema_version": 2,
+            "default_action": "review",
+            "rules": []
+          }
+          JSON
+          cat > block-policy.json <<'JSON'
+          {
+            "schema_version": 2,
+            "default_action": "review",
+            "rules": [
+              {
+                "id": "block-added-exec",
+                "action": "block",
+                "match": {
+                  "change": "added",
+                  "effect": "process_exec"
+                }
+              }
+            ]
+          }
+          JSON
+
+          baseline="$(python3 -c 'import json; print(json.load(open("execsurface.lock.json"))["baseline_digest"])')"
+          review_policy="sha256:$(sha256sum review-policy.json | awk '{print $1}')"
+          block_policy="sha256:$(sha256sum block-policy.json | awk '{print $1}')"
+          echo "baseline=$baseline" >> "$GITHUB_OUTPUT"
+          echo "review_policy=$review_policy" >> "$GITHUB_OUTPUT"
+          echo "block_policy=$block_policy" >> "$GITHUB_OUTPUT"
+
+      - name: Stable Action PASS with custody
+        id: pass
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "true"
+          baseline: execsurface.lock.json
+          policy: review-policy.json
+          expected-baseline-digest: ${{ steps.pins.outputs.baseline }}
+          expected-policy-sha256: ${{ steps.pins.outputs.review_policy }}
+          require-custody: "true"
+          upload-artifact: "false"
+
+      - name: Assert PASS
+        env:
+          VERDICT: ${{ steps.pass.outputs.verdict }}
+          CODE: ${{ steps.pass.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = pass
+          test "$CODE" = 0
+
+      - name: Stable Action REVIEW with custody
+        id: review
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "true; /bin/echo productization-review >/dev/null"
+          baseline: execsurface.lock.json
+          policy: review-policy.json
+          expected-baseline-digest: ${{ steps.pins.outputs.baseline }}
+          expected-policy-sha256: ${{ steps.pins.outputs.review_policy }}
+          require-custody: "true"
+          fail-on-review: "false"
+          upload-artifact: "false"
+
+      - name: Assert REVIEW
+        env:
+          VERDICT: ${{ steps.review.outputs.verdict }}
+          CODE: ${{ steps.review.outputs.exit-code }}
+        run: |
+          test "$VERDICT" = review
+          test "$CODE" = 10
+
+      - name: Stable Action BLOCK with custody
+        id: block
+        continue-on-error: true
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "true; /bin/echo productization-block >/dev/null"
+          baseline: execsurface.lock.json
+          policy: block-policy.json
+          expected-baseline-digest: ${{ steps.pins.outputs.baseline }}
+          expected-policy-sha256: ${{ steps.pins.outputs.block_policy }}
+          require-custody: "true"
+          upload-artifact: "false"
+
+      - name: Assert BLOCK
+        env:
+          OUTCOME: ${{ steps.block.outcome }}
+          VERDICT: ${{ steps.block.outputs.verdict }}
+          CODE: ${{ steps.block.outputs.exit-code }}
+        run: |
+          test "$OUTCOME" = failure
+          test "$VERDICT" = block
+          test "$CODE" = 20
+
+      - name: Stable Action ERROR when custody pin is unauthorized
+        id: error
+        continue-on-error: true
+        uses: AETHERXGLOBAL/execsurface@v0.1
+        with:
+          command: "true"
+          baseline: execsurface.lock.json
+          policy: review-policy.json
+          expected-baseline-digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          expected-policy-sha256: ${{ steps.pins.outputs.review_policy }}
+          require-custody: "true"
+          upload-artifact: "false"
+
+      - name: Assert ERROR
+        env:
+          OUTCOME: ${{ steps.error.outcome }}
+          VERDICT: ${{ steps.error.outputs.verdict }}
+          CODE: ${{ steps.error.outputs.exit-code }}
+        run: |
+          test "$OUTCOME" = failure
+          test "$VERDICT" = error
+          test "$CODE" = 2
