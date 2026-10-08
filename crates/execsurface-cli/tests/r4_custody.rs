@@ -239,3 +239,90 @@ fn r4_legacy_unpinned_check_remains_compatible_without_new_custody_claim() {
 
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn r4_duplicate_baseline_trust_pin_is_rejected_before_target() {
+    let dir = temp_dir("duplicate-baseline-pin");
+    let baseline = dir.join("baseline.lock.json");
+    let marker = dir.join("TARGET_RAN");
+
+    learn(
+        &dir,
+        &baseline,
+        "duplicate-baseline-pin",
+        &["/bin/sh", "-c", "true"],
+    );
+    let expected = baseline_digest(&baseline);
+    let wrong = format!("sha256:{}", "0".repeat(64));
+    let target = format!("touch {}", marker.display());
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &wrong])
+        .args(["--expect-baseline-digest", &expected])
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("check duplicate baseline trust pin");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        !marker.exists(),
+        "ambiguous duplicate baseline trust assertions must fail before target execution"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("duplicate --expect-baseline-digest"),
+        "duplicate trust assertion must be rejected explicitly: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn r4_duplicate_policy_trust_pin_is_rejected_before_target() {
+    let dir = temp_dir("duplicate-policy-pin");
+    let baseline = dir.join("baseline.lock.json");
+    let policy = dir.join("execsurface-policy.json");
+    let marker = dir.join("TARGET_RAN");
+
+    learn(
+        &dir,
+        &baseline,
+        "duplicate-policy-pin",
+        &["/bin/sh", "-c", "true"],
+    );
+    fs::write(&policy, TRUSTED_POLICY).expect("write trusted policy");
+    let expected_baseline = baseline_digest(&baseline);
+    let wrong = format!("sha256:{}", "0".repeat(64));
+    let target = format!("touch {}", marker.display());
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--policy"])
+        .arg(&policy)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--expect-policy-sha256", &wrong])
+        .args(["--expect-policy-sha256", TRUSTED_POLICY_SHA256])
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("check duplicate policy trust pin");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        !marker.exists(),
+        "ambiguous duplicate policy trust assertions must fail before target execution"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("duplicate --expect-policy-sha256"),
+        "duplicate trust assertion must be rejected explicitly: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
