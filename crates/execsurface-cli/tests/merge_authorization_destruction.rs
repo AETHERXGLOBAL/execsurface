@@ -448,7 +448,6 @@ fn merge_auth_untouched_preexisting_report_remains_usable() {
     let _ = fs::remove_dir_all(dir);
 }
 
-
 #[test]
 fn merge_auth_preexisting_broken_symlink_report_is_rejected_without_following_target() {
     let dir = temp_dir("preexisting-broken-symlink-output");
