@@ -41,6 +41,22 @@ def run_text(command: list[str], cwd: Path | None = None) -> tuple[int, str]:
     return proc.returncode, proc.stdout.strip()
 
 
+def run_privacy_bounded(command: list[str], cwd: Path) -> subprocess.CompletedProcess[bytes]:
+    """Run an untrusted trial stage without copying child output into public CI logs.
+
+    Never retain stdout/stderr or command text in the trial's shared artifacts.
+    Exit codes remain available for stage-level, non-sensitive diagnostics.
+    DEVNULL avoids unbounded PIPE memory and unbounded artifact creation.
+    """
+    return subprocess.run(
+        command,
+        cwd=cwd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+
 def git_head(path: Path) -> str:
     rc, out = run_text(["git", "rev-parse", "HEAD"], cwd=path)
     if rc != 0 or len(out) != 40:
@@ -235,15 +251,17 @@ def main() -> None:
         summary["stages"]["preflight"] = "pass"
         write_json(summary_path, summary)
 
-        build = subprocess.run(
+        build = run_privacy_bounded(
             ["cargo", "build", "--locked", "-p", "execsurface"],
             cwd=target_source,
-            check=False,
         )
         summary["build_exit_code"] = build.returncode
         if build.returncode != 0:
             summary["stages"]["build"] = "fail"
-            raise TrialError("build-failed", "frozen target source did not build")
+            raise TrialError(
+                "build-failed",
+                f"frozen target source did not build (exit code {build.returncode}); inspect privately",
+            )
         if not tracked_clean(target_source):
             raise TrialError(
                 "target-worktree-mutated-by-build",
@@ -256,15 +274,18 @@ def main() -> None:
         if not binary.is_file():
             raise TrialError("binary-missing-after-build", "execsurface binary not found")
 
-        doctor = subprocess.run([str(binary), "doctor"], cwd=workdir, check=False)
+        doctor = run_privacy_bounded([str(binary), "doctor"], cwd=workdir)
         summary["doctor_exit_code"] = doctor.returncode
         summary["stages"]["doctor"] = "pass" if doctor.returncode == 0 else "fail"
         write_json(summary_path, summary)
         if doctor.returncode != 0:
-            raise TrialError("doctor-failed", "execsurface doctor did not pass")
+            raise TrialError(
+                "doctor-failed",
+                f"execsurface doctor did not pass (exit code {doctor.returncode}); inspect privately",
+            )
 
         evidence = output_dir / EVIDENCE_NAME
-        observed = subprocess.run(
+        observed = run_privacy_bounded(
             [
                 str(binary),
                 "observe",
@@ -274,7 +295,6 @@ def main() -> None:
                 *command,
             ],
             cwd=workdir,
-            check=False,
         )
         summary["observe_exit_code"] = observed.returncode
         summary["stages"]["observe"] = "pass" if observed.returncode == 0 else "fail"
@@ -284,7 +304,7 @@ def main() -> None:
         if observed.returncode != 0:
             raise TrialError(
                 "observe-failed",
-                "experimental observe/evidence generation returned non-zero; preserve this initial result",
+                f"experimental observe/evidence generation returned exit code {observed.returncode}; preserve this initial result",
             )
         if not evidence.is_file():
             raise TrialError("evidence-missing", "observe returned success without evidence file")
