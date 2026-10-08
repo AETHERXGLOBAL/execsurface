@@ -294,3 +294,156 @@ fn merge_auth_truncate_only_report_path_must_not_be_overwritten() {
 
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn merge_auth_ftruncate_only_report_object_must_not_be_overwritten() {
+    let dir = temp_dir("ftruncate-only-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::write(&report, b"PREEXISTING").expect("seed report target");
+
+    let target = format!(
+        "python3 -c \"import os; p=r'{}'; fd=os.open(p, os.O_WRONLY); os.ftruncate(fd, 0); os.close(fd)\"",
+        report.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run ftruncate-only destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a report object truncated through ftruncate must remain workload-owned; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&report).expect("ftruncated report object"),
+        b"",
+        "ExecSurface must not overwrite the empty state produced by workload ftruncate"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_deleted_report_path_must_not_be_recreated() {
+    let dir = temp_dir("deleted-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::write(&report, b"PREEXISTING").expect("seed report target");
+
+    let target = format!("rm '{}'", report.display());
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run deleted-output destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a report path deleted by the workload must not be silently recreated; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !report.exists(),
+        "ExecSurface must preserve the workload's final deleted state"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_created_report_path_without_write_must_not_be_overwritten() {
+    let dir = temp_dir("created-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "python3 -c \"import os; p=r'{}'; fd=os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600); os.close(fd)\"",
+        report.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run created-output destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a report path created by the workload must remain workload-owned even without a write syscall; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&report).expect("workload-created report path"),
+        b"",
+        "ExecSurface must not overwrite the empty object created by the workload"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_untouched_preexisting_report_remains_usable() {
+    let dir = temp_dir("untouched-preexisting-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::write(&report, b"STALE-REPORT").expect("seed old report");
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", "echo controlled-drift >/dev/null"])
+        .output()
+        .expect("run untouched-output control");
+
+    assert_eq!(
+        output.status.code(),
+        Some(10),
+        "an untouched preexisting report path must remain available for ordinary report replacement; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&report).expect("report bytes")).expect("report JSON");
+    assert_eq!(report_json["verdict"], "review");
+
+    let _ = fs::remove_dir_all(dir);
+}
+
