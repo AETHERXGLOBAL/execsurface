@@ -612,6 +612,7 @@ struct VerdictOutputSnapshot {
     kind: &'static str,
     path: PathBuf,
     state: VerdictOutputState,
+    parent_object_identity: Option<(u64, u64)>,
 }
 
 #[derive(Debug, Clone)]
@@ -635,6 +636,17 @@ fn verdict_output_state(path: &Path) -> Result<VerdictOutputState, String> {
             path.display()
         )),
     }
+}
+
+fn verdict_output_parent_object_identity(path: &Path) -> Result<Option<(u64, u64)>, String> {
+    let absolute = lexical_absolute_path(path)?;
+    let parent = absolute.parent().unwrap_or_else(|| Path::new("/"));
+    existing_object_identity(parent).map_err(|error| {
+        format!(
+            "cannot inspect verdict output parent identity {}: {error}",
+            parent.display()
+        )
+    })
 }
 
 fn validate_verdict_output_materialization_target(kind: &str, path: &Path) -> Result<(), String> {
@@ -717,6 +729,7 @@ fn validate_verdict_output_preflight(parsed: &CheckArgs) -> Result<VerdictOutput
                 kind,
                 path: path.to_path_buf(),
                 state: verdict_output_state(path)?,
+                parent_object_identity: verdict_output_parent_object_identity(path)?,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -814,6 +827,16 @@ fn validate_verdict_output_postflight(
     let _ = validate_verdict_output_preflight(parsed)?;
 
     for output in &guard.outputs {
+        let current_parent_object_identity =
+            verdict_output_parent_object_identity(&output.path)?;
+        if current_parent_object_identity != output.parent_object_identity {
+            return Err(format!(
+                "{} verdict output parent identity changed during workload execution and is reserved from report materialization: {}",
+                output.kind,
+                output.path.display()
+            ));
+        }
+
         let current = verdict_output_state(&output.path)?;
         if current != output.state {
             return Err(format!(
