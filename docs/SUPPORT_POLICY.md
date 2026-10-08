@@ -1,13 +1,13 @@
 # ExecSurface Stable Support and Deprecation Policy
 
 Status: **V1 STABLE OPERATING POLICY — ACTIVE**  
-Applies when a stable `v1.x` line is published.
+Applies to the published stable `v1.x` line.
 
-This policy defines the operational lifecycle for the bounded stable surface. It does not claim that v1.0 is already released.
+This policy defines the operational lifecycle for the bounded stable surface. ExecSurface `v1.0.0` is the current published stable release.
 
 ## Supported stable line
 
-After v1.0 exists:
+For the published stable line:
 
 - exact releases such as `v1.0.0`, `v1.0.1` and later `v1.x.y` are immutable release identities;
 - `AETHERXGLOBAL/execsurface@v1` is the moving stable GitHub Action channel;

@@ -1,6 +1,6 @@
 # Support
 
-ExecSurface is currently a **public alpha** for Linux x86_64.
+ExecSurface `v1.0.0` is the current **stable release** for the documented Linux x86_64 + native `ptrace` support boundary.
 
 ## Before opening an issue
 
@@ -55,6 +55,6 @@ For a security vulnerability, follow [SECURITY.md](SECURITY.md) and use private 
 
 ## Support expectations
 
-There is no public-alpha SLA.
+There is no fixed calendar maintenance period or response-time SLA.
 
 A PASS verdict is not a safety certification, and support discussions will not reinterpret incomplete evidence as PASS.

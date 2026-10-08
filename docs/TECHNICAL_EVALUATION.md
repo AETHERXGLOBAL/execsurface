@@ -4,13 +4,13 @@
 
 **Current public release:** `v1.0.0`
 
-**Current boundary:** Linux x86_64 Public Alpha. Native `ptrace` is the public default/reference observer. This evaluation is not a malware test, sandbox, EDR assessment, enforcement-system test, or proof of program safety.
+**Current boundary:** stable `v1.0.0` on Linux x86_64. Native `ptrace` is the public default/reference observer. This evaluation is not a malware test, sandbox, EDR assessment, enforcement-system test, or proof of program safety.
 
 ## What this evaluation demonstrates
 
 The evaluator will:
 
-1. install the exact published alpha.4 binary and verify its checksum;
+1. install the exact published `v1.0.0` binary and verify its checksum;
 2. verify environment readiness;
 3. learn an explicit tiny baseline;
 4. re-run the same command and obtain `PASS`;
@@ -170,7 +170,7 @@ Inspect at least:
 
 ## 8. Current authority and limitation notes
 
-The public alpha.4 reference backend is native `ptrace`.
+The stable `v1.0.0` reference backend is native `ptrace`.
 
 Important boundaries:
 
@@ -189,7 +189,7 @@ See `docs/architecture/PTRACE_VS_LSM_ARCHITECTURE_REVIEW.md` and `docs/releases/
 
 A successful run supports only a bounded statement such as:
 
-> The evaluator installed the exact public ExecSurface alpha.4 release, learned an accepted runtime surface, reproduced an unchanged PASS, introduced controlled runtime drift, and obtained a machine-readable REVIEW under the declared policy in the recorded environment.
+> The evaluator installed the exact public ExecSurface `v1.0.0` release, learned an accepted runtime surface, reproduced an unchanged PASS, introduced controlled runtime drift, and obtained a machine-readable REVIEW under the declared policy in the recorded environment.
 
 It does **not** establish:
 

@@ -2,7 +2,7 @@
 
 This path is designed to prove the product workflow without requiring a real project or changing system security settings.
 
-Support: **Linux x86_64 public alpha**.
+Support: **Stable `v1.0.0` — Linux x86_64**.
 
 ## 1. Install
 
