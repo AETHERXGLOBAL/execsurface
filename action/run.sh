@@ -35,6 +35,7 @@ esac
 
 if [[ -n "$preflight_error" ]]; then
   status=2
+  echo "ExecSurface custody preflight: $preflight_error" >&2
   "$EXECSURFACE_ACTION_BIN" render-error \
     --message "$preflight_error" \
     --json-output "$report_json" \
