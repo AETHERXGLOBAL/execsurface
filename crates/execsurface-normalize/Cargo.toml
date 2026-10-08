@@ -9,9 +9,9 @@ description = "Deterministic canonicalization for AETHER X ExecSurface"
 readme.workspace = true
 
 [dependencies]
-execsurface-model = { path = "../execsurface-model", version = "=0.1.0-alpha.6" }
+execsurface-model = { path = "../execsurface-model", version = "=1.0.0" }
 libc.workspace = true
 
 [dev-dependencies]
-execsurface-observe = { path = "../execsurface-observe", version = "=0.1.0-alpha.6" }
+execsurface-observe = { path = "../execsurface-observe", version = "=1.0.0" }
 serde_json.workspace = true

@@ -9,7 +9,7 @@ description = "Deterministic baseline lockfile for AETHER X ExecSurface"
 readme.workspace = true
 
 [dependencies]
-execsurface-model = { path = "../execsurface-model", version = "=0.1.0-alpha.6" }
+execsurface-model = { path = "../execsurface-model", version = "=1.0.0" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

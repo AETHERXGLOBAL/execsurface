@@ -20,7 +20,7 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn version_reports_public_alpha_without_touching_schema_versions() {
+fn version_reports_current_package_without_touching_schema_versions() {
     let output = Command::new(binary())
         .arg("--version")
         .output()
@@ -78,7 +78,16 @@ fn init_generates_files_but_never_runs_the_target_command() {
     assert!(policy.contains("\"schema_version\": 2"));
     let workflow =
         fs::read_to_string(dir.join(".github/workflows/execsurface.yml")).expect("workflow");
-    assert!(workflow.contains("AETHERXGLOBAL/execsurface@v0.1"));
+    let expected_channel = if env!("CARGO_PKG_VERSION").starts_with("1.") {
+        "AETHERXGLOBAL/execsurface@v1"
+    } else {
+        "AETHERXGLOBAL/execsurface@v0.1"
+    };
+    assert!(
+        workflow.contains(expected_channel),
+        "generated workflow must use the qualified stable channel for package version {}",
+        env!("CARGO_PKG_VERSION")
+    );
     assert!(workflow.contains("3d3c42e5aac5ba805825da76410c181273ba90b1"));
     assert!(workflow.contains("require-custody: \"true\""));
     assert!(workflow.contains("${{ vars.EXECSURFACE_BASELINE_DIGEST }}"));
