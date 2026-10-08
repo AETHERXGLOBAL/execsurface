@@ -21,6 +21,7 @@ use execsurface_policy::{
     builtin_review_policy, error_report, evaluate, FindingAction, Policy, Verdict, VerdictReport,
 };
 use execsurface_report::render_markdown;
+use sha2::{Digest, Sha256};
 
 const EXPERIMENTAL_LIBBPF_BACKEND_ID: &str = "linux-libbpf-metadata-experimental-v1";
 
@@ -394,11 +395,13 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
     let parsed = parse_check_args(args)?;
     if parsed.diff_only
         && (parsed.policy.is_some()
+            || parsed.expected_policy_sha256.is_some()
             || parsed.json_output.is_some()
             || parsed.markdown_output.is_some())
     {
         return Err(
-            "cannot combine --diff-only with --policy/--json-output/--markdown-output".to_owned(),
+            "cannot combine --diff-only with --policy/--expect-policy-sha256/--json-output/--markdown-output"
+                .to_owned(),
         );
     }
 
@@ -409,6 +412,22 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
         )
     })?;
     let baseline = parse_and_verify(&baseline_bytes).map_err(|error| error.to_string())?;
+    verify_custody_pin(
+        "baseline",
+        parsed.expected_baseline_digest.as_deref(),
+        &baseline.baseline_digest,
+    )?;
+
+    // Policy custody is established before the target executes. A parseable
+    // policy from the checkout is not authoritative merely because it is valid JSON.
+    let policy = if parsed.diff_only {
+        None
+    } else {
+        Some(load_policy(
+            parsed.policy.as_ref(),
+            parsed.expected_policy_sha256.as_deref(),
+        )?)
+    };
 
     let spec = CommandSpec::new(parsed.program.clone()).args(parsed.command_args.clone());
     let observation = observe_command(&spec).map_err(|error| error.to_string())?;
@@ -465,7 +484,7 @@ fn run_check(args: &[OsString]) -> Result<ExitCode, String> {
         return Ok(ExitCode::SUCCESS);
     }
 
-    let (policy, policy_source) = load_policy(parsed.policy.as_ref())?;
+    let (policy, policy_source) = policy.expect("non-diff check loads policy before execution");
     let verdict_report =
         evaluate(&report, &policy, policy_source).map_err(|error| error.to_string())?;
 
@@ -544,19 +563,74 @@ fn run_render_error(args: &[OsString]) -> Result<(), String> {
     write_verdict_outputs(&report, Some(&json_output), Some(&markdown_output))
 }
 
-fn load_policy(path: Option<&PathBuf>) -> Result<(Policy, String), String> {
+fn validate_custody_digest(value: &str, kind: &str) -> Result<(), String> {
+    let valid = value
+        .strip_prefix("sha256:")
+        .is_some_and(|hex| {
+            hex.len() == 64
+                && hex
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        });
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid expected {kind} digest: expected sha256:<64 lowercase hex>"
+        ))
+    }
+}
+
+fn verify_custody_pin(kind: &str, expected: Option<&str>, actual: &str) -> Result<(), String> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    validate_custody_digest(expected, kind)?;
+    if expected == actual {
+        Ok(())
+    } else {
+        Err(format!(
+            "{kind} custody mismatch: expected {expected}, loaded {actual}"
+        ))
+    }
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    format!("sha256:{hex}")
+}
+
+fn load_policy(
+    path: Option<&PathBuf>,
+    expected_sha256: Option<&str>,
+) -> Result<(Policy, String), String> {
     match path {
         Some(path) => {
             let bytes = std::fs::read(path)
                 .map_err(|error| format!("cannot read policy {}: {error}", path.display()))?;
+            let actual = sha256_bytes(&bytes);
+            verify_custody_pin("policy", expected_sha256, &actual)?;
             let policy: Policy = serde_json::from_slice(&bytes)
                 .map_err(|error| format!("cannot parse policy {}: {error}", path.display()))?;
             Ok((policy, path.display().to_string()))
         }
-        None => Ok((
-            builtin_review_policy(),
-            "builtin:review-unmatched-drift".to_owned(),
-        )),
+        None => {
+            if expected_sha256.is_some() {
+                return Err(
+                    "--expect-policy-sha256 requires --policy; the built-in policy is not a checkout artifact"
+                        .to_owned(),
+                );
+            }
+            Ok((
+                builtin_review_policy(),
+                "builtin:review-unmatched-drift".to_owned(),
+            ))
+        }
     }
 }
 
@@ -668,6 +742,8 @@ fn print_diff_report(report: &DiffReport) -> Result<(), String> {
 struct CheckArgs {
     baseline: PathBuf,
     policy: Option<PathBuf>,
+    expected_baseline_digest: Option<String>,
+    expected_policy_sha256: Option<String>,
     diff_only: bool,
     json: bool,
     json_output: Option<PathBuf>,
@@ -696,6 +772,8 @@ impl CheckArgs {
 fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
     let mut baseline = PathBuf::from(DEFAULT_LOCKFILE_NAME);
     let mut policy = None;
+    let mut expected_baseline_digest = None;
+    let mut expected_policy_sha256 = None;
     let mut diff_only = false;
     let mut json = false;
     let mut json_output = None;
@@ -717,6 +795,8 @@ fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
             return Ok(CheckArgs {
                 baseline,
                 policy,
+                expected_baseline_digest,
+                expected_policy_sha256,
                 diff_only,
                 json,
                 json_output,
@@ -758,6 +838,22 @@ fn parse_check_args(args: &[OsString]) -> Result<CheckArgs, String> {
             }
             "--baseline" => {
                 baseline = PathBuf::from(option_value(args, index, "--baseline")?);
+                index += 2;
+            }
+            "--expect-baseline-digest" => {
+                expected_baseline_digest = Some(path_string(option_value(
+                    args,
+                    index,
+                    "--expect-baseline-digest",
+                )?));
+                index += 2;
+            }
+            "--expect-policy-sha256" => {
+                expected_policy_sha256 = Some(path_string(option_value(
+                    args,
+                    index,
+                    "--expect-policy-sha256",
+                )?));
                 index += 2;
             }
             "--workspace" => {
@@ -962,6 +1058,10 @@ fn usage(error: &str) -> String {
 check options:
   --baseline PATH     baseline lockfile (default: execsurface.lock.json)
   --policy PATH       explicit policy JSON (default: built-in REVIEW for unmatched drift)
+  --expect-baseline-digest DIGEST
+                      require the verified baseline semantic identity
+  --expect-policy-sha256 DIGEST
+                      require exact-byte SHA-256 identity for --policy
   --diff-only         emit raw M4 diff and do not evaluate policy
   --json              emit machine-readable JSON to stdout
   --json-output PATH  write verdict JSON directly to a file
