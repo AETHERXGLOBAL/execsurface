@@ -1,13 +1,13 @@
 # ExecSurface Compatibility & Stability Contract
 
-Status: **V1_STABLE_CONTRACT_FROZEN_BOUNDED — RC EVIDENCE PENDING**  
+Status: **V1_STABLE_CONTRACT_ACTIVE_BOUNDED — RELEASED**  
 Tracking: P9.3 / issue #134  
-Current public baseline: `v0.1.0-alpha.6`  
+Current public stable release: `v1.0.0`  
 Stable-support policy: `docs/SUPPORT_POLICY.md`
 
-This document freezes the bounded compatibility and stability contract proposed for the future stable v1 line.
+This document defines the bounded compatibility and stability contract for the released stable v1 line.
 
-It does **not** claim that v1.0 is released or production-qualified.
+v1.0.0 has been released through the qualified stable release-control chain. Independent external validation is not claimed.
 
 ## Compatibility principle
 
@@ -59,9 +59,9 @@ Stable facts:
 
 ### Current upgrade source
 
-**Alpha.6 profile-4 is the current supported upgrade source for the future v1 RC.**
+**Alpha.6 profile-4 was the qualified upgrade source for v1.0.0 and remains preserved rollback/upgrade evidence.**
 
-A valid Alpha.6 profile-4 baseline may be consumed directly only when the exact v1 RC proves semantic compatibility.
+The exact v1.0.0 RC proved that valid Alpha.6 profile-4 baselines can be consumed directly on the preserved stable path without baseline mutation.
 
 ### Historical Alpha.5 boundary
 
@@ -214,7 +214,7 @@ Experimental eBPF/BPF-LSM and imported/research backends are **not part of the s
 
 ### Prebuilt GitHub Release binary
 
-Current Alpha.6 evidence proves:
+Qualified Alpha.6 evidence, replayed through v1 qualification, proves:
 
 - exact public prebuilt artifact: PASS on Ubuntu 24.04 x86_64;
 - exact current prebuilt artifact: FAIL on Ubuntu 22.04 because it requires `GLIBC_2.39`.
@@ -225,7 +225,7 @@ Unless V1-R1 deliberately changes the stable build floor and the exact v1 RC rep
 
 ### crates.io / local-build path
 
-Current Alpha.6 evidence proves exact-version local build/install plus `doctor -> learn -> check` on both:
+Qualified Alpha.6/v1 evidence proves exact-version local build/install plus `doctor -> learn -> check` on both:
 
 - Ubuntu 22.04 x86_64;
 - Ubuntu 24.04 x86_64.
@@ -269,7 +269,7 @@ Core rules:
 
 ## 12. Upgrade and rollback contract
 
-Before v1.0 release, the exact frozen RC must prove:
+The exact frozen v1.0.0 RC proved:
 
 1. Alpha.6 profile-4 compatibility for the preserved stable path;
 2. explicit Alpha.5 profile-3 incompatibility handling where semantics differ;
@@ -300,7 +300,7 @@ Bug fixes are not automatically breaking merely because alpha behavior differed.
 
 ## 14. Required executable proof before v1 closeout
 
-P9.3 remains OPEN until the exact v1 RC passes:
+P9.3 is CLOSED for v1.0.0 after the exact RC passed:
 
 1. V1-R0 stable-contract sentinels;
 2. Alpha.6 profile-4 upgrade rehearsal;
@@ -313,7 +313,7 @@ P9.3 remains OPEN until the exact v1 RC passes:
 9. upgrade and rollback rehearsal;
 10. experimental-surface anti-drift review.
 
-Historical Alpha.5/Alpha.6 evidence is starting evidence; it does not by itself qualify an unreleased v1 candidate.
+Historical Alpha.5/Alpha.6 evidence remains retained and is supplemented by exact v1.0.0 RC and public-release evidence.
 
 ## 15. Change control
 
@@ -321,7 +321,7 @@ The frozen contract is:
 
 **V1_STABLE_CONTRACT_FROZEN_BOUNDED**
 
-Any change before v1.0 must record:
+Any stable-contract change after v1.0.0 must record:
 
 - exact changed promise;
 - rationale;
