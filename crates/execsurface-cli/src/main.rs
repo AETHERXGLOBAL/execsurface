@@ -637,8 +637,27 @@ fn verdict_output_state(path: &Path) -> Result<VerdictOutputState, String> {
     }
 }
 
+fn reject_verdict_output_symlink(kind: &str, path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
+            "{kind} verdict output path must not be a symbolic link: {}",
+            path.display()
+        )),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "cannot inspect {kind} verdict output path {}: {error}",
+            path.display()
+        )),
+    }
+}
+
 fn validate_verdict_output_preflight(parsed: &CheckArgs) -> Result<VerdictOutputGuard, String> {
     let outputs = verdict_output_paths(parsed);
+    for (output_kind, output) in &outputs {
+        reject_verdict_output_symlink(output_kind, output)?;
+    }
+
     let mut protected = vec![("baseline", parsed.baseline.as_path())];
     if let Some(policy) = parsed.policy.as_deref() {
         protected.push(("policy", policy));
