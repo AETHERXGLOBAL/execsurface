@@ -1,8 +1,8 @@
 # ExecSurface — OpenSSF Technical Review Pack
 
 Tracking: #94, #114, #118
-Current public release: `v0.1.0-alpha.5`
-Release source: `9e73b925d55557e33de1b0813995609aaefdc037`
+Current public release: `v1.0.0`
+Release source: `e70169b959f2163715090c371335fa6c5591e3e4`
 Audience: OpenSSF engineers, maintainers and researchers evaluating technical fit, overlap, reproducibility, architecture and interoperability.
 
 The prior Alpha.4 review pack is retained unchanged at `docs/archive/engagement/OPENSSF_TECHNICAL_REVIEW_ALPHA4.md`.
@@ -29,7 +29,7 @@ Native ptrace is the bounded public reference observer, not universal authority 
 
 ## Current limitations reviewers should challenge
 
-- Linux x86_64 public alpha only; ARM64 support is not claimed.
+- Stable v1.0.0 support is bounded to Linux x86_64; ARM64 support is not claimed.
 - ptrace availability depends on kernel/security/container/namespace configuration.
 - ptrace can perturb workloads and has workload-dependent overhead.
 - pathname userspace observations are not kernel-object identity.
@@ -44,23 +44,23 @@ Native ptrace is the bounded public reference observer, not universal authority 
 ### Registry
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.5" --locked
+cargo install execsurface --version "=1.0.0" --locked
 execsurface --version
 execsurface doctor
 ```
 
 ### GitHub Action
 
-Stable public-alpha channel:
+Stable v1 channel:
 
 ```yaml
-uses: AETHERXGLOBAL/execsurface@v0.1
+uses: AETHERXGLOBAL/execsurface@v1
 ```
 
 Immutable review pin:
 
 ```yaml
-uses: AETHERXGLOBAL/execsurface@v0.1.0-alpha.5
+uses: AETHERXGLOBAL/execsurface@v1.0.0
 ```
 
 ## Minimal falsification walkthrough
@@ -88,7 +88,7 @@ Do not send secrets or private payload data.
 
 ## Post-release validation governance
 
-Alpha.5 was published under explicit owner authorization before P8 independent external validation closed. P8 remains open after release. Internal release proofs do not become independent evidence merely because the release is public.
+Stable v1.0.0 was published after the repository's strengthened internal qualification and release-control gates. Independent external validation remains open as additional evidence and is not claimed. Internal release proofs do not become independent evidence merely because the release is public.
 
 Do not describe external interaction as OpenSSF validation, Linux Foundation approval, partnership, endorsement or adoption unless exact external evidence supports that wording.
 
