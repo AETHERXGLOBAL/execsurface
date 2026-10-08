@@ -137,6 +137,8 @@ jobs:
         run: cargo test --locked -p execsurface --test alpha6_productization_gate -- --test-threads=1 --nocapture
       - name: Existing self-service regression
         run: cargo test --locked -p execsurface --test self_service_linux -- --test-threads=1 --nocapture
+      - name: Registry packaging dry-run
+        run: cargo publish -p execsurface --locked --dry-run
 
   stable-action-contract:
     name: Stable @v0.1 / custody and verdict contract
