@@ -98,7 +98,7 @@ This repository does **not** claim independent validation, endorsement, adoption
 Current external-evidence paths remain:
 
 - evidence qualification/tracking: issue `#114`;
-- public Alpha.5 review hub: issue `#118`;
+- public Alpha review hub (opened during Alpha.5 and retained for continuity): issue `#118`;
 - external real-workload production evidence: issue `#140`.
 
 Any future external failure, counterexample, no-fit result or limitation remains valid evidence and may constrain later claims/releases.
@@ -107,4 +107,4 @@ Any future external failure, counterexample, no-fit result or limitation remains
 
 Historical failures, prerelease decisions, closed-gate workflows and negative evidence are retained. Operationally obsolete files may be moved out of active paths into `docs/archive/` or `.github/workflow-archive/`; that is repository hygiene, not evidence deletion or history rewriting.
 
-For current public facts, use this file, `README.md`, the latest GitHub Release and `docs/releases/v0.1.0-alpha.5.md`.
+For current public facts, use this file, `README.md`, the latest GitHub Release and `docs/releases/v0.1.0-alpha.6.md`. The Alpha.5 release record remains historical evidence.
