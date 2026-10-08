@@ -265,3 +265,190 @@ fn r5_v3_most_restrictive_wins_is_unchanged() {
         vec!["allow-open".to_owned(), "block-truncate".to_owned()]
     );
 }
+
+
+#[test]
+fn r5_open_intent_absence_is_not_synthesized_as_all_false() {
+    let policy = parse_policy(
+        r#"{
+          "schema_version": 3,
+          "default_action": "allow",
+          "rules": [{
+            "id": "block-nontruncate-open",
+            "action": "block",
+            "match": { "open_intent": { "truncate": false } }
+          }]
+        }"#,
+    );
+
+    let effect = CanonicalEffect::FilePathAccess {
+        actor: None,
+        execution_chain: vec![],
+        operation: FileOperation::Read,
+        target: path("$WORKSPACE/data.bin", PathResolution::KernelFdResolved),
+        open_intent: None,
+    };
+    let report = evaluate(&diff_with_added(effect), &policy, "r5").expect("evaluate");
+    assert_eq!(report.verdict, Verdict::Pass);
+}
+
+#[test]
+fn r5_rename_from_prefix_uses_component_boundary() {
+    let policy = parse_policy(
+        r#"{
+          "schema_version": 3,
+          "default_action": "allow",
+          "rules": [{
+            "id": "block-sensitive",
+            "action": "block",
+            "match": {
+              "effect": "file_rename",
+              "rename_from_prefix": "$WORKSPACE/sensitive"
+            }
+          }]
+        }"#,
+    );
+
+    let boundary = evaluate(
+        &diff_with_added(rename("$WORKSPACE/sensitive2/input.bin")),
+        &policy,
+        "r5",
+    )
+    .expect("boundary");
+    assert_eq!(boundary.verdict, Verdict::Pass);
+}
+
+#[test]
+fn r5_v2_rename_primary_path_remains_destination() {
+    let policy = parse_policy(
+        r#"{
+          "schema_version": 2,
+          "default_action": "allow",
+          "rules": [{
+            "id": "block-destination",
+            "action": "block",
+            "match": {
+              "effect": "file_rename",
+              "path_prefix": "$WORKSPACE/out"
+            }
+          }]
+        }"#,
+    );
+
+    for from in ["$WORKSPACE/a/input.bin", "$WORKSPACE/b/input.bin"] {
+        let report = evaluate(&diff_with_added(rename(from)), &policy, "r5").expect("evaluate");
+        assert_eq!(report.verdict, Verdict::Block);
+    }
+}
+
+#[test]
+fn r5_path_resolution_does_not_infer_a_path_for_inet_effects() {
+    let policy = parse_policy(
+        r#"{
+          "schema_version": 3,
+          "default_action": "allow",
+          "rules": [{
+            "id": "must-have-path-resolution",
+            "action": "block",
+            "match": { "path_resolution": "lexical" }
+          }]
+        }"#,
+    );
+
+    let effect = CanonicalEffect::NetworkConnectAttempt {
+        actor: None,
+        execution_chain: vec![],
+        endpoint: execsurface_model::canonical::CanonicalNetworkEndpoint::Inet {
+            ip: "192.0.2.1".to_owned(),
+            port: 443,
+        },
+    };
+    let report = evaluate(&diff_with_added(effect), &policy, "r5").expect("evaluate");
+    assert_eq!(report.verdict, Verdict::Pass);
+}
+
+#[test]
+fn r5_open_intent_flag_constraints_are_exact() {
+    let policy = parse_policy(
+        r#"{
+          "schema_version": 3,
+          "default_action": "allow",
+          "rules": [{
+            "id": "block-specific-flags",
+            "action": "block",
+            "match": {
+              "effect": "file_open",
+              "open_intent": {
+                "write": true,
+                "resolve_flags": 4,
+                "other_flags": 8
+              }
+            }
+          }]
+        }"#,
+    );
+
+    let make = |resolve_flags, other_flags| CanonicalEffect::FilePathAccess {
+        actor: None,
+        execution_chain: vec![],
+        operation: FileOperation::Open,
+        target: path("$WORKSPACE/data.bin", PathResolution::Lexical),
+        open_intent: Some(OpenIntent {
+            read: false,
+            write: true,
+            create: false,
+            truncate: false,
+            append: false,
+            path_only: false,
+            resolve_flags,
+            other_flags,
+        }),
+    };
+
+    let exact = evaluate(&diff_with_added(make(4, 8)), &policy, "r5").expect("exact");
+    let different = evaluate(&diff_with_added(make(4, 9)), &policy, "r5").expect("different");
+    assert_eq!(exact.verdict, Verdict::Block);
+    assert_eq!(different.verdict, Verdict::Pass);
+}
+
+#[test]
+fn r5_empty_rename_from_prefix_is_rejected() {
+    let policy = parse_policy(
+        r#"{
+          "schema_version": 3,
+          "default_action": "review",
+          "rules": [{
+            "id": "empty-rename-prefix",
+            "action": "block",
+            "match": {
+              "effect": "file_rename",
+              "rename_from_prefix": ""
+            }
+          }]
+        }"#,
+    );
+
+    assert!(matches!(
+        validate_policy(&policy),
+        Err(PolicyError::InvalidMatcher { rule_id, .. }) if rule_id == "empty-rename-prefix"
+    ));
+}
+
+#[test]
+fn r5_v3_unknown_fields_remain_parse_errors() {
+    let parsed = serde_json::from_str::<Policy>(
+        r#"{
+          "schema_version": 3,
+          "default_action": "review",
+          "rules": [{
+            "id": "unknown",
+            "action": "block",
+            "match": {
+              "effect": "file_open",
+              "imaginary_semantic": true
+            }
+          }]
+        }"#,
+    );
+    assert!(parsed.is_err(), "unknown v3 matcher fields must not be ignored");
+}
