@@ -2,7 +2,7 @@
 
 No signup, meeting, API key, or AETHER X approval is required.
 
-Public Alpha support: **Linux x86_64**.
+Stable `v1.0.0` support: **Linux x86_64**.
 
 ## Install — recommended path (no Rust required)
 
