@@ -2,7 +2,7 @@
 
 This guide is for developers, maintainers, security engineers, CI owners, and researchers who want to evaluate ExecSurface independently, without contacting AETHER X first.
 
-Current public version: `v0.1.0-alpha.5`
+Current public version: `v0.1.0-alpha.6`
 
 Supported public environment: Linux x86_64
 
@@ -36,7 +36,7 @@ execsurface --version
 ### crates.io alternative
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.5" --locked
+cargo install execsurface --version "=0.1.0-alpha.6" --locked
 execsurface --version
 ```
 

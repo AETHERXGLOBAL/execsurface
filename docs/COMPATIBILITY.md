@@ -2,7 +2,7 @@
 
 Status: `PRE-V1 CANDIDATE CONTRACT — EVIDENCE-GATED`
 Tracking: P9.3 / issue `#134`
-Contract baseline: current public line `v0.1.0-alpha.5`
+Contract baseline: current public line `v0.1.0-alpha.6`
 
 This document defines the candidate compatibility boundary that must be proved before ExecSurface may publish a stable `v1.0` release.
 

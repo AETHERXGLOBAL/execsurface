@@ -44,7 +44,7 @@ execsurface doctor
 Expected version:
 
 ```text
-execsurface 0.1.0-alpha.5
+execsurface 0.1.0-alpha.6
 ```
 
 Optional build-provenance verification when GitHub CLI attestation support is available:
@@ -60,7 +60,7 @@ A valid build attestation binds an artifact to a build source/workflow. It does 
 If Rust/Cargo is already installed:
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.5" --locked
+cargo install execsurface --version "=0.1.0-alpha.6" --locked
 execsurface --version
 execsurface doctor
 ```

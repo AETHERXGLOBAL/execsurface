@@ -26,6 +26,7 @@ jobs:
       - name: Checkout release pointer
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install checksum-verified public release
@@ -34,7 +35,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="$(tr -d '[:space:]' < action/release-tag.txt)"
+          git fetch --force --tags origin
+          version="$(git show v0.1:action/release-tag.txt | tr -d '[:space:]')"
           target="x86_64-unknown-linux-gnu"
           asset="execsurface-${version}-${target}.tar.gz"
           install_dir="$RUNNER_TEMP/execsurface-public-release"
@@ -88,13 +90,15 @@ jobs:
       - name: Checkout release pointer
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install exact registry release
         shell: bash
         run: |
           set -euo pipefail
-          tag="$(tr -d '[:space:]' < action/release-tag.txt)"
+          git fetch --force --tags origin
+          tag="$(git show v0.1:action/release-tag.txt | tr -d '[:space:]')"
           version="${tag#v}"
           root="$RUNNER_TEMP/execsurface-registry"
           cargo install execsurface --version "=$version" --locked --root "$root"
@@ -132,7 +136,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(tr -d '[:space:]' < action/release-tag.txt)"
+          git fetch --force --tags origin
+          version="$(git show v0.1:action/release-tag.txt | tr -d '[:space:]')"
           remote="https://github.com/AETHERXGLOBAL/execsurface.git"
 
           resolve_tag() {

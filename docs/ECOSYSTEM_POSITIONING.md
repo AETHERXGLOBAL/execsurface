@@ -4,7 +4,7 @@ Last reviewed: 2026-10-01
 
 This document explains where ExecSurface fits relative to adjacent open-source security and provenance systems. It is a **scope and interoperability map**, not a winner ranking.
 
-ExecSurface Alpha.5 is a public alpha for Linux x86_64. Native `ptrace` is the bounded public reference observer. ARM64 support and independent external validation are not claimed.
+ExecSurface Alpha.6 is a public alpha for Linux x86_64. Native `ptrace` is the bounded public reference observer. ARM64 support and independent external validation are not claimed.
 
 ## The question ExecSurface is designed to answer
 
@@ -78,14 +78,14 @@ source / artifact / workflow identity
 
 Backend identity alone never grants authority. Any future external trace or kernel backend must be qualified proposition-by-proposition for authority, completeness, loss and semantic compatibility before it can support the same verdict claims.
 
-## Current Alpha.5 boundary
+## Current Alpha.6 boundary
 
-Alpha.5 currently provides public distribution through:
+Alpha.6 currently provides public distribution through:
 
 - checksum-verifiable GitHub Release artifacts for Linux x86_64;
-- `cargo install execsurface --version "=0.1.0-alpha.5" --locked`;
+- `cargo install execsurface --version "=0.1.0-alpha.6" --locked`;
 - GitHub Action `AETHERXGLOBAL/execsurface@v0.1`;
-- immutable Action pin `AETHERXGLOBAL/execsurface@v0.1.0-alpha.5`.
+- immutable Action pin `AETHERXGLOBAL/execsurface@v0.1.0-alpha.6`.
 
 The public release has internal release, reproducibility, compatibility, artifact-binding and consumer-path evidence. Those results are not independent external validation. External review remains open in [Issue #118](https://github.com/AETHERXGLOBAL/execsurface/issues/118).
 

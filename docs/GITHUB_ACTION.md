@@ -13,7 +13,7 @@ AETHERXGLOBAL/execsurface@v0.1
 For maximum pinning after this release, use:
 
 ```text
-AETHERXGLOBAL/execsurface@v0.1.0-alpha.5
+AETHERXGLOBAL/execsurface@v0.1.0-alpha.6
 ```
 
 Do not use `@main` as the normal consumer path.
@@ -49,7 +49,7 @@ jobs:
         run: echo "ExecSurface verdict: ${{ steps.execsurface.outputs.verdict }}"
 ```
 
-The separate target-command step above is intentional. In Alpha.5, ExecSurface evaluates execution-surface drift; it does not turn the wrapped target's native exit code or signal into the ExecSurface verdict.
+The separate target-command step above is intentional. In Alpha.6, unchanged from Alpha.5, ExecSurface evaluates execution-surface drift; it does not turn the wrapped target's native exit code or signal into the ExecSurface verdict.
 
 ## Binary installation inside the Action
 
@@ -69,9 +69,9 @@ execsurface learn -- /bin/bash -lc 'cargo test --locked'
 
 Without an explicit policy, unmatched drift is REVIEW. PASS succeeds; REVIEW succeeds by default; `fail-on-review=true` makes REVIEW fail; BLOCK fails; ERROR fails.
 
-### Alpha.5 target-outcome boundary
+### Alpha.6 target-outcome boundary (unchanged from Alpha.5)
 
-The Alpha.5 target command's native `exit_code` / terminating `signal` is retained in the structured report, but it is **report metadata rather than a verdict input**.
+The Alpha.6 target command's native `exit_code` / terminating `signal` is retained in the structured report, but it is **report metadata rather than a verdict input**. This meaning is unchanged from Alpha.5.
 
 Consequences:
 
@@ -81,7 +81,7 @@ Consequences:
 - run/gate a command such as `cargo test`, `pytest` or a build separately when its success is itself required;
 - do not use the Action's `exit-code` output as the target command's native exit status.
 
-This immutable Alpha.5 behavior is recorded as issue `#143`. Any future target-outcome enforcement must be introduced as a versioned contract change rather than silently changing Alpha.5 semantics.
+This target-outcome behavior was first frozen for Alpha.5 in issue `#143` and remains unchanged in Alpha.6. Any future target-outcome enforcement must be introduced as a versioned contract change rather than silently reinterpreting either release.
 
 ## Outputs
 

@@ -7,7 +7,7 @@ Public Alpha support: **Linux x86_64**.
 ## Install — recommended path (no Rust required)
 
 ```bash
-VERSION=v0.1.0-alpha.5
+VERSION=v0.1.0-alpha.6
 TARGET=x86_64-unknown-linux-gnu
 ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
 
@@ -28,7 +28,7 @@ Do not run the binary if checksum verification fails.
 ## Alternative install — crates.io
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.5" --locked
+cargo install execsurface --version "=0.1.0-alpha.6" --locked
 execsurface --version
 execsurface doctor
 ```
@@ -59,4 +59,4 @@ Run `execsurface doctor`, then use [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md). E
 
 ## Product boundary
 
-Public Alpha `v0.1.0-alpha.5` supports Linux x86_64 with native `ptrace` as the correctness-reference backend. ExecSurface reports observed runtime execution-surface drift; it does not prove software is safe and is not antivirus, EDR, malware detection, or a sandbox.
+Public Alpha `v0.1.0-alpha.6` supports Linux x86_64 with native `ptrace` as the correctness-reference backend. ExecSurface reports observed runtime execution-surface drift; it does not prove software is safe and is not antivirus, EDR, malware detection, or a sandbox.

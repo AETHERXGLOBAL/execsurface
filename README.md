@@ -16,11 +16,11 @@ ExecSurface learns an accepted **runtime execution surface**, runs the same comm
 
 It is intended for CI pipelines, dependencies, developer tools and AI-assisted workflows where source review alone does not show every runtime effect.
 
-> **Final Supported Alpha:** **v0.1.0-alpha.5** is the supported finished Alpha release for the documented Linux x86_64 + native `ptrace` product boundary.
+> **Current Supported Alpha:** **v0.1.0-alpha.6** is the supported finished Alpha release for the documented Linux x86_64 + native `ptrace` product boundary.
 >
 > **Self-service:** no signup, API key, meeting, or AETHER X approval is required.
 >
-> **Important Alpha.5 boundary:** an ExecSurface PASS is a drift-verdict PASS, not proof that the wrapped target command itself exited successfully. See [What a result means](#what-a-result-means) and [Current Status](docs/STATUS.md).
+> **Important Alpha.6 boundary:** an ExecSurface PASS is a drift-verdict PASS, not proof that the wrapped target command itself exited successfully. See [What a result means](#what-a-result-means) and [Current Status](docs/STATUS.md).
 
 ## Why developers use it
 
@@ -59,7 +59,7 @@ Choose the path that matches your environment.
 Download the published release, verify its checksum, and install it in your user path:
 
 ```bash
-VERSION=v0.1.0-alpha.5
+VERSION=v0.1.0-alpha.6
 TARGET=x86_64-unknown-linux-gnu
 ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
 
@@ -81,7 +81,7 @@ Then run the controlled **PASS → REVIEW** walkthrough in **[Five-Minute Start]
 ### B. Rust already installed
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.5" --locked
+cargo install execsurface --version "=0.1.0-alpha.6" --locked
 execsurface --version
 execsurface doctor
 ```
@@ -106,7 +106,7 @@ AETHERXGLOBAL/execsurface@v0.1
 
 Do not use `@main` as the normal consumer path. See the **[GitHub Action guide](docs/GITHUB_ACTION.md)**.
 
-If the wrapped command's own success matters—for example `cargo test`, `pytest` or a build—keep that command as its own CI gate as well. In Alpha.5, target exit/signal is report metadata and does not by itself change the ExecSurface drift verdict.
+If the wrapped command's own success matters—for example `cargo test`, `pytest` or a build—keep that command as its own CI gate as well. In Alpha.6, target exit/signal is report metadata and does not by itself change the ExecSurface drift verdict.
 
 ## First real project
 
@@ -132,7 +132,7 @@ If `doctor` fails, follow the action it prints and see **[Troubleshooting](docs/
 | REVIEW | 10 | one or more findings require review |
 | BLOCK | 20 | one or more findings matched blocking policy |
 
-**Alpha.5 target-outcome boundary:** these exit codes are ExecSurface verdict codes. The wrapped target command's native exit code or terminating signal is retained in the structured report but is **not verdict-bearing in Alpha.5**. Therefore `ExecSurface: PASS` does not mean the wrapped target command succeeded. A nonzero or signalled target can still receive PASS when there is no policy-relevant execution-surface finding. Keep the target command's own success/failure gate when correctness of that command matters. This immutable Alpha.5 limitation is tracked in **[Issue #143](https://github.com/AETHERXGLOBAL/execsurface/issues/143)**.
+**Alpha.6 target-outcome boundary:** these exit codes are ExecSurface verdict codes. The wrapped target command's native exit code or terminating signal is retained in the structured report but is **not verdict-bearing in Alpha.6**. Therefore `ExecSurface: PASS` does not mean the wrapped target command succeeded. A nonzero or signalled target can still receive PASS when there is no policy-relevant execution-surface finding. Keep the target command's own success/failure gate when correctness of that command matters. This immutable Alpha.6 limitation is tracked in **[Issue #143](https://github.com/AETHERXGLOBAL/execsurface/issues/143)**.
 
 ExecSurface does **not** infer that drift is malicious. It reports observed drift and evaluates the explicit policy you selected.
 
@@ -170,11 +170,11 @@ The baseline answers what canonical execution surface was accepted. The policy a
 
 ## Qualification and independent evaluation
 
-Alpha.5 has completed the repository's bounded Final Supported Alpha qualification for Linux x86_64 + native `ptrace`. The qualification exercised the exact published artifact, Ubuntu 22.04/24.04, Debian 12/Fedora 42 userlands, repeated PASS/REVIEW stress, fail-closed corruption cases, immutable-source adversarial replay, crates.io and the stable Action. See **[Current Status](docs/STATUS.md)** for exact run IDs and limitations.
+Alpha.6 has completed the repository's bounded Final Supported Alpha qualification for Linux x86_64 + native `ptrace`. The qualification exercised the exact published artifact, Ubuntu 22.04/24.04, Debian 12/Fedora 42 userlands, repeated PASS/REVIEW stress, fail-closed corruption cases, immutable-source adversarial replay, crates.io and the stable Action. See **[Current Status](docs/STATUS.md)** for exact run IDs and limitations.
 
 Independent external validation remains open as additional evidence rather than a blocker to this bounded supported-Alpha state. Use [Self-Service Start](docs/SELF_SERVICE_START.md), [Five-Minute Start](docs/QUICKSTART_5_MIN.md), [Independent Evaluation](docs/INDEPENDENT_EVALUATION.md), and [Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md).
 
-Public findings can be reported through **[Issue #118 — Alpha.5 Independent External Validation & Post-Release Review](https://github.com/AETHERXGLOBAL/execsurface/issues/118)**. Negative, partial, unsupported-environment, usability and performance-problem results are welcome. Internal qualification is not evidence of independent adoption or external validation.
+Public findings can be reported through **[Issue #118 — Alpha.6 Independent External Validation & Post-Release Review](https://github.com/AETHERXGLOBAL/execsurface/issues/118)**. Negative, partial, unsupported-environment, usability and performance-problem results are welcome. Internal qualification is not evidence of independent adoption or external validation.
 
 ## Selected external technical engagement
 
@@ -195,10 +195,10 @@ For the company-level evidence summary, see the **[AETHER X GLOBAL organization 
 The supported Alpha distribution surfaces are:
 
 - checksum-verified GitHub Release binary for Linux x86_64;
-- exact prerelease install `cargo install execsurface --version "=0.1.0-alpha.5" --locked` for Rust users;
+- exact prerelease install `cargo install execsurface --version "=0.1.0-alpha.6" --locked` for Rust users;
 - GitHub Action `AETHERXGLOBAL/execsurface@v0.1` after stable-channel promotion.
 
-For maximum Action pinning, use `AETHERXGLOBAL/execsurface@v0.1.0-alpha.5`.
+For maximum Action pinning, use `AETHERXGLOBAL/execsurface@v0.1.0-alpha.6`.
 
 Optional GitHub build provenance verification:
 
@@ -220,7 +220,8 @@ Key documents:
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Independent Evaluation](docs/INDEPENDENT_EVALUATION.md)
 - [Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md)
-- [Alpha.5 release record](docs/releases/v0.1.0-alpha.5.md)
+- [Alpha.6 release record](docs/releases/v0.1.0-alpha.6.md)
+- [Alpha.5 historical release record](docs/releases/v0.1.0-alpha.5.md)
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)
 - [Governance](GOVERNANCE.md)
