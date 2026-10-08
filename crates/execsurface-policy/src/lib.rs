@@ -660,7 +660,7 @@ impl<'a> EffectMetadata<'a> {
     }
 }
 
-fn effect_kindfn effect_kind(effect: &CanonicalEffect) -> EffectKind {
+fn effect_kind(effect: &CanonicalEffect) -> EffectKind {
     match effect {
         CanonicalEffect::ProcessSpawn { .. } => EffectKind::ProcessSpawn,
         CanonicalEffect::ProcessExec { .. } => EffectKind::ProcessExec,
