@@ -199,27 +199,27 @@ fn v1_release_request_requires_exact_state_and_explicit_authorization() {
         && request.contains(r#""stable_channel": "v0.1""#)
         && request.contains(r#""request_revision": 1"#);
 
-    let release_armed = request.contains(r#""version": "1.0.0""#)
+    let release_published = request.contains(r#""version": "1.0.0""#)
         && request.contains(r#""tag": "v1.0.0""#)
         && request.contains(r#""stable_channel": "v1""#)
         && request.contains(r#""request_revision": 2"#);
 
-    if release_armed {
+    if release_published {
         let decision = read("docs/release/V1_0_0_RELEASE_DECISION.md");
         let notes = read("docs/releases/v1.0.0.md");
         assert!(
             decision.contains("RELEASE_V1_0_AUTHORIZED_BOUNDED"),
-            "a real v1 release request must have explicit bounded release authorization"
+            "published v1 state must retain explicit bounded release authorization"
         );
         assert!(
-            notes.contains("PUBLICATION PENDING"),
-            "release notes must preserve pre-publication state until the transaction succeeds"
+            notes.contains("PUBLISHED STABLE RELEASE — INTERNALLY QUALIFIED BOUNDED"),
+            "release record must identify the completed stable publication"
         );
     }
 
     assert!(
-        rc_unarmed || release_armed,
-        "active request must be either frozen RC-unarmed Alpha.6 or explicitly authorized v1.0.0"
+        rc_unarmed || release_published,
+        "active request must be either frozen RC-unarmed Alpha.6 or the exact published v1.0.0 state"
     );
 }
 
