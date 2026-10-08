@@ -286,4 +286,3 @@ fn r4_action_wrong_well_formed_policy_pin_blocks_before_target() {
 
     let _ = fs::remove_dir_all(dir);
 }
-
