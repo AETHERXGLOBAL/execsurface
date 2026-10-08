@@ -93,6 +93,12 @@ jobs:
       - name: Execute R8 composed hostile corpus
         run: cargo test --locked -p execsurface --test r8_final_internal_gate -- --test-threads=1 --nocapture
 
+      - name: Execute post-R8 merge-authorization destruction
+        run: cargo test --locked -p execsurface --test merge_authorization_destruction -- --test-threads=1 --nocapture
+
+      - name: Certify hardlink alias fail-closed boundary
+        run: cargo test --locked -p execsurface-observe --test merge_authorization_hardlink -- --test-threads=1 --nocapture
+
       - name: Full workspace qualification
         run: cargo test --locked --workspace --all-targets
 
