@@ -269,7 +269,6 @@ fn r7_target_cannot_rebind_output_path_to_verified_baseline_after_preflight() {
     let _ = fs::remove_dir_all(dir);
 }
 
-
 #[test]
 fn r7_target_cannot_move_verified_baseline_onto_output_path() {
     let dir = temp_dir("trusted-object-move");
