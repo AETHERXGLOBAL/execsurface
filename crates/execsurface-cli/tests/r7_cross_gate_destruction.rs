@@ -240,7 +240,6 @@ fn r7_verdict_output_cannot_overwrite_workload_written_object() {
     let _ = fs::remove_dir_all(dir);
 }
 
-
 #[test]
 fn r7_target_cannot_rebind_output_path_to_verified_baseline_after_preflight() {
     let dir = temp_dir("post-target-rebind");
@@ -249,19 +248,8 @@ fn r7_target_cannot_rebind_output_path_to_verified_baseline_after_preflight() {
     learn(&dir, &baseline);
     let before = fs::read(&baseline).expect("baseline bytes before");
 
-    let target = format!(
-        "ln -s {} {}",
-        baseline.display(),
-        output_path.display()
-    );
-    let output = check(
-        &dir,
-        &baseline,
-        None,
-        Some(&output_path),
-        None,
-        &target,
-    );
+    let target = format!("ln -s {} {}", baseline.display(), output_path.display());
+    let output = check(&dir, &baseline, None, Some(&output_path), None, &target);
 
     assert_eq!(
         output.status.code(),
