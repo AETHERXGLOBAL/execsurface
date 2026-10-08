@@ -28,7 +28,7 @@ jobs:
         run: cargo test --locked -p execsurface --test v1_release_control_plane -- --test-threads=1 --nocapture
 
   synthetic-v1-dry-contract:
-    name: Synthetic stable-v1 classification / no publication
+    name: Published stable-v1 contract / classifier regression
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -36,7 +36,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Active request is frozen RC or explicitly authorized stable v1
+      - name: Active request and records identify the published stable v1 state
         shell: bash
         run: |
           set -euo pipefail
@@ -45,26 +45,18 @@ jobs:
           from pathlib import Path
 
           data=json.load(open(".release/release-request.json"))
-          rc_unarmed = data == {
-              "version":"0.1.0-alpha.6",
-              "tag":"v0.1.0-alpha.6",
-              "stable_channel":"v0.1",
-              "request_revision":1,
-          }
-          release_armed = data == {
+          assert data == {
               "version":"1.0.0",
               "tag":"v1.0.0",
               "stable_channel":"v1",
               "request_revision":2,
           }
 
-          if release_armed:
-              decision=Path("docs/release/V1_0_0_RELEASE_DECISION.md").read_text()
-              notes=Path("docs/releases/v1.0.0.md").read_text()
-              assert "RELEASE_V1_0_AUTHORIZED_BOUNDED" in decision
-              assert "PUBLICATION PENDING" in notes
-
-          assert rc_unarmed or release_armed
+          decision=Path("docs/release/V1_0_0_RELEASE_DECISION.md").read_text()
+          notes=Path("docs/releases/v1.0.0.md").read_text()
+          assert "RELEASE_V1_0_AUTHORIZED_BOUNDED" in decision
+          assert "PUBLISHED STABLE RELEASE — INTERNALLY QUALIFIED BOUNDED" in notes
+          assert "Independent external validation is not claimed" in notes
           PY
 
       - name: Classify current Alpha line
@@ -98,7 +90,7 @@ jobs:
           fi
 
   no-v1-side-effects:
-    name: No v1 tag/channel side effect during V1-R1
+    name: Published v1 tag/channel source identity
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -106,9 +98,13 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Prove V1-R1 did not publish v1 refs
+      - name: Prove published moving and immutable refs resolve to one source
         shell: bash
         run: |
           set -euo pipefail
-          test -z "$(git ls-remote --tags origin refs/tags/v1)"
-          test -z "$(git ls-remote --tags origin refs/tags/v1.0.0)"
+          git fetch --force --tags origin
+          stable_sha="$(git rev-parse 'v1^{commit}')"
+          immutable_sha="$(git rev-parse 'v1.0.0^{commit}')"
+          test "$stable_sha" = "$immutable_sha"
+          git merge-base --is-ancestor "$immutable_sha" HEAD
+          test "$(git show v1.0.0:action/release-tag.txt | tr -d '[:space:]')" = "v1.0.0"

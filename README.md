@@ -9,18 +9,18 @@
   <a href="https://github.com/AETHERXGLOBAL/execsurface/releases"><img alt="Release" src="https://img.shields.io/github/v/release/AETHERXGLOBAL/execsurface?include_prereleases&label=release"></a>
   <img alt="License Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue">
   <img alt="Linux x86_64" src="https://img.shields.io/badge/platform-Linux%20x86__64-informational">
-  <img alt="Current Supported Alpha" src="https://img.shields.io/badge/status-Current%20Supported%20Alpha-yellow">
+  <img alt="Stable v1.0" src="https://img.shields.io/badge/status-Stable%20v1.0-brightgreen">
 </p>
 
 ExecSurface learns an accepted **runtime execution surface**, runs the same command later, and reports execution behavior that appeared, disappeared, or changed.
 
 It is intended for CI pipelines, dependencies, developer tools and AI-assisted workflows where source review alone does not show every runtime effect.
 
-> **Current Supported Alpha:** **v0.1.0-alpha.6** is the supported finished Alpha release for the documented Linux x86_64 + native `ptrace` product boundary.
+> **Current stable release:** **v1.0.0** is the supported stable release for the documented Linux x86_64 + native `ptrace` product boundary.
 >
 > **Self-service:** no signup, API key, meeting, or AETHER X approval is required.
 >
-> **Important Alpha.6 boundary:** an ExecSurface PASS is a drift-verdict PASS, not proof that the wrapped target command itself exited successfully. See [What a result means](#what-a-result-means) and [Current Status](docs/STATUS.md).
+> **Important stable-v1 boundary:** an ExecSurface PASS is a drift-verdict PASS, not proof that the wrapped target command itself exited successfully. See [What a result means](#what-a-result-means) and [Current Status](docs/STATUS.md).
 
 ## Why developers use it
 
@@ -59,7 +59,7 @@ Choose the path that matches your environment.
 Download the published release, verify its checksum, and install it in your user path:
 
 ```bash
-VERSION=v0.1.0-alpha.6
+VERSION=v1.0.0
 TARGET=x86_64-unknown-linux-gnu
 ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
 
@@ -81,12 +81,12 @@ Then run the controlled **PASS → REVIEW** walkthrough in **[Five-Minute Start]
 ### B. Rust already installed
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.6" --locked
+cargo install execsurface --version "=1.0.0" --locked
 execsurface --version
 execsurface doctor
 ```
 
-The current supported Alpha release is still a SemVer prerelease, so request the exact prerelease version explicitly. The crates.io channel is published only after the immutable GitHub release and stable Action gates succeed. See [crates.io Publishing](docs/CRATES_IO_PUBLISHING.md).
+The current stable release is `v1.0.0`. Exact-version installation remains recommended for reproducible evaluation. See [crates.io Publishing](docs/CRATES_IO_PUBLISHING.md).
 
 ### C. Add it to a GitHub Actions project
 
@@ -98,15 +98,15 @@ execsurface init --command "cargo test --locked" --github-actions
 
 `init` creates a starter policy and workflow. It **does not run your target command** and does not create a baseline automatically.
 
-The generated workflow uses the current supported Alpha Action channel:
+The generated workflow uses the stable v1 Action channel:
 
 ```text
-AETHERXGLOBAL/execsurface@v0.1
+AETHERXGLOBAL/execsurface@v1
 ```
 
 Do not use `@main` as the normal consumer path. See the **[GitHub Action guide](docs/GITHUB_ACTION.md)**.
 
-If the wrapped command's own success matters—for example `cargo test`, `pytest` or a build—keep that command as its own CI gate as well. In Alpha.6, target exit/signal is report metadata and does not by itself change the ExecSurface drift verdict.
+If the wrapped command's own success matters—for example `cargo test`, `pytest` or a build—keep that command as its own CI gate as well. In v1.0, target exit/signal remains report metadata and does not by itself change the ExecSurface drift verdict.
 
 ## First real project
 
@@ -132,7 +132,7 @@ If `doctor` fails, follow the action it prints and see **[Troubleshooting](docs/
 | REVIEW | 10 | one or more findings require review |
 | BLOCK | 20 | one or more findings matched blocking policy |
 
-**Alpha.6 target-outcome boundary:** these exit codes are ExecSurface verdict codes. The wrapped target command's native exit code or terminating signal is retained in the structured report but is **not verdict-bearing in Alpha.6**. Therefore `ExecSurface: PASS` does not mean the wrapped target command succeeded. A nonzero or signalled target can still receive PASS when there is no policy-relevant execution-surface finding. Keep the target command's own success/failure gate when correctness of that command matters. This immutable Alpha.6 limitation is tracked in **[Issue #143](https://github.com/AETHERXGLOBAL/execsurface/issues/143)**.
+**Stable v1 target-outcome boundary:** these exit codes are ExecSurface verdict codes. The wrapped target command's native exit code or terminating signal is retained in the structured report but is **not verdict-bearing in v1.0.0**. Therefore `ExecSurface: PASS` does not mean the wrapped target command succeeded. A nonzero or signalled target can still receive PASS when there is no policy-relevant execution-surface finding. Keep the target command's own success/failure gate when correctness of that command matters. This contract was explicitly frozen before v1 release.
 
 ExecSurface does **not** infer that drift is malicious. It reports observed drift and evaluates the explicit policy you selected.
 
@@ -170,11 +170,11 @@ The baseline answers what canonical execution surface was accepted. The policy a
 
 ## Qualification and independent evaluation
 
-Alpha.6 has completed the repository's bounded Final Supported Alpha qualification for Linux x86_64 + native `ptrace`. The qualification exercised the exact published artifact, Ubuntu 22.04/24.04, Debian 12/Fedora 42 userlands, repeated PASS/REVIEW stress, fail-closed corruption cases, immutable-source adversarial replay, crates.io and the stable Action. See **[Current Status](docs/STATUS.md)** for exact run IDs and limitations.
+ExecSurface v1.0.0 completed the repository's strengthened internal stable-release qualification for the documented Linux x86_64 + native `ptrace` boundary. The release chain proved exact source/tag identity, checksum and provenance, zero-contact public binary consumption, immutable-tag installation, stable `@v1` PASS/REVIEW/BLOCK/ERROR behavior, and exact crates.io installation. Independent external validation is not claimed. See **[Current Status](docs/STATUS.md)** for exact run IDs and limitations.
 
 Independent external validation remains open as additional evidence rather than a blocker to this bounded supported-Alpha state. Use [Self-Service Start](docs/SELF_SERVICE_START.md), [Five-Minute Start](docs/QUICKSTART_5_MIN.md), [Independent Evaluation](docs/INDEPENDENT_EVALUATION.md), and [Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md).
 
-Public findings can be reported through **[Issue #118 — Alpha.6 Independent External Validation & Post-Release Review](https://github.com/AETHERXGLOBAL/execsurface/issues/118)**. Negative, partial, unsupported-environment, usability and performance-problem results are welcome. Internal qualification is not evidence of independent adoption or external validation.
+External findings remain welcome through **[Issue #118 — Independent External Validation & Post-Release Review](https://github.com/AETHERXGLOBAL/execsurface/issues/118)**. Negative, partial, unsupported-environment, usability and performance-problem results are welcome. Internal qualification is not evidence of independent adoption or external validation.
 
 ## Selected external technical engagement
 
@@ -195,10 +195,10 @@ For the company-level evidence summary, see the **[AETHER X GLOBAL organization 
 The supported Alpha distribution surfaces are:
 
 - checksum-verified GitHub Release binary for Linux x86_64;
-- exact prerelease install `cargo install execsurface --version "=0.1.0-alpha.6" --locked` for Rust users;
-- GitHub Action `AETHERXGLOBAL/execsurface@v0.1` after stable-channel promotion.
+- exact stable install `cargo install execsurface --version "=1.0.0" --locked` for Rust users;
+- GitHub Action `AETHERXGLOBAL/execsurface@v1` after stable-channel promotion.
 
-For maximum Action pinning, use `AETHERXGLOBAL/execsurface@v0.1.0-alpha.6`.
+For maximum Action pinning, use `AETHERXGLOBAL/execsurface@v1.0.0`.
 
 Optional GitHub build provenance verification:
 
@@ -220,7 +220,8 @@ Key documents:
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Independent Evaluation](docs/INDEPENDENT_EVALUATION.md)
 - [Technical Evaluation Pack](docs/TECHNICAL_EVALUATION.md)
-- [Alpha.6 release record](docs/releases/v0.1.0-alpha.6.md)
+- [v1.0.0 stable release record](docs/releases/v1.0.0.md)
+- [Alpha.6 historical release record](docs/releases/v0.1.0-alpha.6.md)
 - [Alpha.5 historical release record](docs/releases/v0.1.0-alpha.5.md)
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)

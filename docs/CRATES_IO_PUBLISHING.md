@@ -5,20 +5,20 @@ ExecSurface uses GitHub Releases as its checksum-verifiable, provenance-attested
 ## Current public install
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.6" --locked
+cargo install execsurface --version "=1.0.0" --locked
 execsurface --version
 execsurface doctor
 ```
 
-Alpha.6 is a prerelease, so consumers should request the exact prerelease version explicitly.
+v1.0.0 is the current stable release. Exact-version installation remains recommended for reproducible evaluation.
 
 ## Verified publication order
 
-The Alpha.6 publication chain publishes only after the immutable GitHub release and public-artifact checks succeed:
+The stable-v1 publication chain publishes only after the immutable GitHub release and public-artifact checks succeed:
 
-`immutable source/tag -> GitHub Release -> public binary proofs -> stable v0.1 proofs -> registry publication -> zero-contact registry install`
+`immutable source/tag -> GitHub Release -> public binary proofs -> stable v1 proofs -> registry publication -> zero-contact registry install`
 
-Canonical Alpha.6 release workflow run: `36910725515`.
+Canonical v1.0.0 release workflow run: `37771109825`. Registry publication workflow: `37771295572`.
 
 ## Publishable crate chain
 

@@ -21,8 +21,8 @@ fn stable_contract_freezes_target_outcome_and_policy_v3_without_semantic_expansi
     let compatibility = read("docs/COMPATIBILITY.md");
 
     assert!(
-        compatibility.contains("V1_STABLE_CONTRACT_FROZEN_BOUNDED"),
-        "compatibility document must declare the frozen bounded v1 contract"
+        compatibility.contains("V1_STABLE_CONTRACT_ACTIVE_BOUNDED"),
+        "compatibility document must declare the active bounded stable-v1 contract"
     );
     assert!(
         compatibility.contains("target outcome is not verdict-bearing")
@@ -124,8 +124,8 @@ fn stable_contract_uses_alpha6_as_upgrade_source_and_preserves_alpha5_boundary()
 
     assert!(
         compatibility.contains("Alpha.6 profile-4")
-            && compatibility.contains("current supported upgrade source"),
-        "v1 upgrade contract must start from current Alpha.6/profile-4"
+            && compatibility.contains("qualified upgrade source"),
+        "v1 upgrade contract must preserve Alpha.6/profile-4 as the qualified upgrade source"
     );
     assert!(
         compatibility.contains("Alpha.5 profile-3")

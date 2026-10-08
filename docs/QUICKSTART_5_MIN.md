@@ -9,7 +9,7 @@ Support: **Linux x86_64 public alpha**.
 No Rust toolchain is required for this path.
 
 ```bash
-VERSION=v0.1.0-alpha.6
+VERSION=v1.0.0
 TARGET=x86_64-unknown-linux-gnu
 ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
 
@@ -77,7 +77,7 @@ execsurface check --policy execsurface-policy.json -- /bin/bash -lc 'cargo test 
 
 ### Before pushing the generated GitHub workflow
 
-The generated workflow runs the target command as its own correctness gate **and** runs ExecSurface against the same command. This is intentional because an Alpha.6 ExecSurface PASS is not the target command's native exit status.
+The generated workflow runs the target command as its own correctness gate **and** runs ExecSurface against the same command. This is intentional because a stable-v1 ExecSurface PASS is not the target command's native exit status.
 
 The generated workflow also requires two externally trusted GitHub variables:
 

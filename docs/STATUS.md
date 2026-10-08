@@ -4,18 +4,19 @@ This file is the authoritative current public product state. Historical mileston
 
 ## Current public product state
 
-**ExecSurface v0.1.0-alpha.6 is the current supported Alpha release for Linux x86_64 within the documented native-ptrace product boundary.**
+**ExecSurface v1.0.0 is the current supported stable release for Linux x86_64 within the documented native-ptrace product boundary.**
 
 Current bounded state:
 
-`ALPHA6_SUPPORTED_ALPHA_WITH_STAGE2_SEMANTIC_REMEDIATION — LINUX_X86_64_PTRACE`
+`V1_0_0_STABLE_INTERNALLY_QUALIFIED — LINUX_X86_64_PTRACE`
 
-- Public release: `v0.1.0-alpha.6`
-- Immutable Action pin: `AETHERXGLOBAL/execsurface@v0.1.0-alpha.6`
-- Stable GitHub Action: `AETHERXGLOBAL/execsurface@v0.1`, promoted to Alpha.6 only after immutable release and consumer gates pass.
-- Registry package: `execsurface = 0.1.0-alpha.6`, published only after the GitHub release and stable Action gates pass.
-- Previous release `v0.1.0-alpha.5` remains immutable and available for historical reproduction and rollback.
-- Alpha.5 normalization profile 3 is **not** silently reinterpreted under Alpha.6 profile 4; incompatible Alpha.5 baselines are rejected explicitly and must be relearned under corrected semantics.
+- Public release: `v1.0.0`
+- Immutable Action pin: `AETHERXGLOBAL/execsurface@v1.0.0`
+- Stable GitHub Action: `AETHERXGLOBAL/execsurface@v1`, promoted to v1.0.0 only after immutable release and consumer gates passed.
+- Registry package: `execsurface = 1.0.0`; exact-version zero-contact registry installation passed after publication.
+- Previous public Alpha `v0.1.0-alpha.6` remains immutable and available for historical reproduction and rollback.
+- Alpha.5 also remains immutable historical evidence.
+- Alpha.5 normalization profile 3 is **not** silently reinterpreted under stable profile 4; incompatible Alpha.5 baselines are rejected explicitly. Alpha.6 profile-4 baselines were qualification inputs for v1 and remain rollback-compatible within the frozen contract.
 - Policy schema v3 is opt-in; v1/v2 meanings remain unchanged.
 - Stage-2 adds bounded FD-state, object/path authority, custody, policy-expressiveness, CI, and verdict-materialization correctness repairs.
 - Supported public product scope: Linux x86_64.
@@ -24,7 +25,15 @@ Current bounded state:
 
 The research/product classification remains runtime behavioral verification, execution semantics and semantic-evidence correctness. It is not cybersecurity research.
 
-Alpha.6 supersedes Alpha.5 as the recommended public Alpha after the release pipeline succeeds. It does not delete or rewrite Alpha.5 artifacts, issues, pull requests, comments, review threads or external-engagement records.
+v1.0.0 supersedes Alpha.6 as the recommended stable public release. The v1 release does not delete or rewrite Alpha.6/Alpha.5 artifacts, issues, pull requests, comments, review threads or external-engagement records.
+
+Stable release transaction evidence:
+
+- GitHub Release workflow `37771109825` — SUCCESS;
+- crates.io publication workflow `37771295572` — SUCCESS;
+- stable `v1` channel resolves to immutable `v1.0.0` source;
+- release asset SHA-256: `6892dc54e6f3f842cfecffa77ae0814c9e30aec219f2251c7c39a9f19f02ca7b`;
+- external independent validation is not claimed.
 
 ## Historical Alpha.5 qualification
 
@@ -91,7 +100,7 @@ It is not antivirus, EDR, SIEM, malware detection, a sandbox, a general mandator
 
 ## External validation state
 
-Independent external validation remains open as additional evidence, not as a blocker to the bounded Final Supported Alpha state above.
+Independent external validation remains open as additional evidence. Under the recorded v1 governance amendment it was not a release blocker, and v1.0.0 does not claim independent external validation.
 
 This repository does **not** claim independent validation, endorsement, adoption or approval by external reviewers or organizations merely from internal qualification, downloads, stars, outreach or community participation.
 
@@ -107,4 +116,4 @@ Any future external failure, counterexample, no-fit result or limitation remains
 
 Historical failures, prerelease decisions, closed-gate workflows and negative evidence are retained. Operationally obsolete files may be moved out of active paths into `docs/archive/` or `.github/workflow-archive/`; that is repository hygiene, not evidence deletion or history rewriting.
 
-For current public facts, use this file, `README.md`, the latest GitHub Release and `docs/releases/v0.1.0-alpha.6.md`. The Alpha.5 release record remains historical evidence.
+For current public facts, use this file, `README.md`, the latest GitHub Release and `docs/releases/v1.0.0.md`. Alpha.6 and Alpha.5 release records remain historical evidence.

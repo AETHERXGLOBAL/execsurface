@@ -134,12 +134,12 @@ We want reports such as:
 - evidence that an adjacent system already solves the same problem more directly;
 - a counterexample to the claimed product boundary.
 
-Current public release: `v0.1.0-alpha.6`
+Current public release: `v1.0.0`
 
 Install:
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.6" --locked
+cargo install execsurface --version "=1.0.0" --locked
 execsurface --version
 execsurface doctor
 ```

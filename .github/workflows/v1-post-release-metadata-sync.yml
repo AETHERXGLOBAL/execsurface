@@ -1,0 +1,68 @@
+name: V1 Post-Release Metadata Sync
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/releases/v1.0.0.md'
+      - '.github/workflows/v1-post-release-metadata-sync.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/releases/v1.0.0.md'
+      - '.github/workflows/v1-post-release-metadata-sync.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate published v1 metadata source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate repository release record and live stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'PUBLISHED STABLE RELEASE — INTERNALLY QUALIFIED BOUNDED' docs/releases/v1.0.0.md
+          grep -F 'Independent external validation is not claimed' docs/releases/v1.0.0.md
+          grep -F '37771109825' docs/releases/v1.0.0.md
+          grep -F '37771295572' docs/releases/v1.0.0.md
+          gh release view v1.0.0 --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isDraft,isPrerelease \
+            --jq 'select(.tagName == "v1.0.0" and .isDraft == false and .isPrerelease == false)' >/dev/null
+
+  sync:
+    name: Synchronize GitHub Release body
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Replace release body without changing tag or maturity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(gh release view v1.0.0 --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease)"
+          python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["tagName"]=="v1.0.0"; assert d["isDraft"] is False; assert d["isPrerelease"] is False' "$before"
+
+          gh release edit v1.0.0 \
+            --repo "$GITHUB_REPOSITORY" \
+            --notes-file docs/releases/v1.0.0.md
+
+          after="$(gh release view v1.0.0 --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease,body)"
+          python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["tagName"]=="v1.0.0"; assert d["isDraft"] is False; assert d["isPrerelease"] is False; assert "PUBLISHED STABLE RELEASE — INTERNALLY QUALIFIED BOUNDED" in d["body"]; assert "PUBLICATION PENDING" not in d["body"]' "$after"

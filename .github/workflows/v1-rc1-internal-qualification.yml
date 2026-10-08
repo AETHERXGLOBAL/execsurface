@@ -38,7 +38,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Prove v1 release state is frozen or explicitly authorized
+      - name: Prove published v1 release state is exact and bounded
         shell: bash
         run: |
           set -euo pipefail
@@ -50,35 +50,35 @@ jobs:
           from pathlib import Path
 
           request=json.load(open(".release/release-request.json"))
-          rc_unarmed = request == {
-              "version":"0.1.0-alpha.6",
-              "tag":"v0.1.0-alpha.6",
-              "stable_channel":"v0.1",
-              "request_revision":1,
-          }
-          release_armed = request == {
+          assert request == {
               "version":"1.0.0",
               "tag":"v1.0.0",
               "stable_channel":"v1",
               "request_revision":2,
           }
 
-          if release_armed:
-              decision=Path("docs/release/V1_0_0_RELEASE_DECISION.md").read_text()
-              notes=Path("docs/releases/v1.0.0.md").read_text()
-              assert "RELEASE_V1_0_AUTHORIZED_BOUNDED" in decision
-              assert "PUBLICATION PENDING" in notes
+          decision=Path("docs/release/V1_0_0_RELEASE_DECISION.md").read_text()
+          notes=Path("docs/releases/v1.0.0.md").read_text()
+          readme=Path("README.md").read_text()
+          status=Path("docs/STATUS.md").read_text()
 
-          assert rc_unarmed or release_armed
+          assert "RELEASE_V1_0_AUTHORIZED_BOUNDED" in decision
+          assert "PUBLISHED STABLE RELEASE — INTERNALLY QUALIFIED BOUNDED" in notes
+          assert "Current stable release" in readme and "v1.0.0" in readme
+          assert "Public release: `v1.0.0`" in status
+          assert "Independent external validation is not claimed" in notes
           PY
-          grep -F 'v0.1.0-alpha.6' README.md >/dev/null
-          grep -F 'v0.1.0-alpha.6' docs/STATUS.md >/dev/null
 
-      - name: Prove qualification has not created public v1 refs
+      - name: Prove published v1 channel and immutable tag resolve to one release source
         shell: bash
         run: |
           set -euo pipefail
-          test -z "$(git ls-remote --tags origin refs/tags/v1 refs/tags/v1.0.0)"
+          git fetch --force --tags origin
+          stable_sha="$(git rev-parse 'v1^{commit}')"
+          immutable_sha="$(git rev-parse 'v1.0.0^{commit}')"
+          test "$stable_sha" = "$immutable_sha"
+          git merge-base --is-ancestor "$immutable_sha" HEAD
+          test "$(git show v1.0.0:action/release-tag.txt | tr -d '[:space:]')" = "v1.0.0"
 
       - name: Attack RC identity, generated channel and registry chain
         run: cargo test --locked -p execsurface --test v1_internal_rc1 -- --test-threads=1 --nocapture
@@ -296,6 +296,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: Re-read repository rulesets and classify admin state
         env:
@@ -311,13 +312,14 @@ jobs:
             printf '\n' >> "$evidence"
           done
 
-          if python3 .github/scripts/verify_tag_ruleset.py --rulesets-jsonl "$evidence" --tag v1.0.0; then
-            echo "IQ6_GOVERNANCE_READY"
-          else
-            echo "IQ6_ADMIN_PENDING"
-          fi
+          python3 .github/scripts/verify_tag_ruleset.py --rulesets-jsonl "$evidence" --tag v1.0.0
+          echo "IQ6_GOVERNANCE_READY"
 
-          test -z "$(git ls-remote --tags origin refs/tags/v1 refs/tags/v1.0.0)"
+          git fetch --force --tags origin
+          stable_sha="$(git rev-parse 'v1^{commit}')"
+          immutable_sha="$(git rev-parse 'v1.0.0^{commit}')"
+          test "$stable_sha" = "$immutable_sha"
+          git merge-base --is-ancestor "$immutable_sha" HEAD
 
 
   iq8-destruction-round-b:
@@ -340,11 +342,15 @@ jobs:
       - name: Execute release-lifecycle destruction corpus
         run: cargo test --locked -p execsurface --test v1_internal_destruction_b -- --test-threads=1 --nocapture
 
-      - name: Re-prove no v1 public refs exist
+      - name: Re-prove published v1 refs remain source-identical
         shell: bash
         run: |
           set -euo pipefail
-          test -z "$(git ls-remote --tags origin refs/tags/v1 refs/tags/v1.0.0)"
+          git fetch --force --tags origin
+          stable_sha="$(git rev-parse 'v1^{commit}')"
+          immutable_sha="$(git rev-parse 'v1.0.0^{commit}')"
+          test "$stable_sha" = "$immutable_sha"
+          git merge-base --is-ancestor "$immutable_sha" HEAD
 
       - name: Build candidate for cross-version custody attack
         shell: bash

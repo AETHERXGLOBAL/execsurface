@@ -4,7 +4,29 @@ All notable public-product changes are recorded here. The detailed pre-Alpha.5 e
 
 ## Unreleased
 
-- No unreleased public-product changes after Alpha.6 release preparation.
+- No unreleased public-product changes after the v1.0.0 stable release.
+
+## v1.0.0 — 2026-10-08
+
+### Stable contract
+
+- Published the first stable ExecSurface release for the documented Linux x86_64 + native ptrace boundary.
+- Froze PASS=0, ERROR=2, REVIEW=10, BLOCK=20 semantics and retained fail-closed incomplete-evidence behavior.
+- Froze the target-outcome separation: ExecSurface PASS does not prove the wrapped target command succeeded.
+- Preserved Alpha.6 profile-4 upgrade/rollback compatibility and explicit Alpha.5 profile-3 incompatibility.
+- Preserved policy schemas v1/v2 and opt-in v3 matcher semantics.
+
+### Release and distribution
+
+- Published stable GitHub Release `v1.0.0` with checksum and GitHub provenance attestation.
+- Promoted stable Action channel `AETHERXGLOBAL/execsurface@v1` only after immutable artifact and Action consumer proofs.
+- Published the full crates.io dependency chain and proved exact zero-contact installation of `execsurface = 1.0.0`.
+- Protected immutable `v1.*` release tags against update/deletion with no bypass actors.
+
+Release workflow: `37771109825`.  
+Registry publication workflow: `37771295572`.
+
+Independent external validation is not claimed.
 
 ## v0.1.0-alpha.6 — 2026-10-08
 

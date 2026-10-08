@@ -1,6 +1,6 @@
 # ExecSurface Stable Support and Deprecation Policy
 
-Status: **PRE-V1 FROZEN OPERATING POLICY — RELEASE PENDING**  
+Status: **V1 STABLE OPERATING POLICY — ACTIVE**  
 Applies when a stable `v1.x` line is published.
 
 This policy defines the operational lifecycle for the bounded stable surface. It does not claim that v1.0 is already released.
