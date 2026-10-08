@@ -19,10 +19,8 @@ fn cli() -> &'static str {
 
 fn temp_dir(name: &str) -> PathBuf {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
-        "execsurface-r7-{name}-{}-{id}",
-        std::process::id()
-    ));
+    let path =
+        std::env::temp_dir().join(format!("execsurface-r7-{name}-{}-{id}", std::process::id()));
     fs::create_dir_all(&path).expect("create temp dir");
     path
 }
@@ -135,14 +133,7 @@ fn r7_markdown_output_symlink_alias_cannot_replace_verified_policy() {
     let before = fs::read(&policy).expect("policy bytes before");
     let target = format!("touch {}", marker.display());
 
-    let output = check(
-        &dir,
-        &baseline,
-        Some(&policy),
-        None,
-        Some(&alias),
-        &target,
-    );
+    let output = check(&dir, &baseline, Some(&policy), None, Some(&alias), &target);
 
     assert_eq!(output.status.code(), Some(2));
     assert!(
