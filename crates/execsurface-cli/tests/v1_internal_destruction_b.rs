@@ -114,22 +114,42 @@ fn release_request_validation_rejects_wrong_channel_and_stale_action_tag() {
 }
 
 #[test]
-fn rc_branch_cannot_accidentally_claim_public_v1_or_external_validation() {
+fn release_state_cannot_be_armed_without_explicit_authorization_or_claim_publication_early() {
     let request = read(".release/release-request.json");
     let readme = read("README.md");
     let status = read("docs/STATUS.md");
 
+    let rc_unarmed = request.contains(r#""version": "0.1.0-alpha.6""#)
+        && request.contains(r#""tag": "v0.1.0-alpha.6""#)
+        && request.contains(r#""stable_channel": "v0.1""#);
+
+    let release_armed = request.contains(r#""version": "1.0.0""#)
+        && request.contains(r#""tag": "v1.0.0""#)
+        && request.contains(r#""stable_channel": "v1""#)
+        && request.contains(r#""request_revision": 2"#);
+
+    if release_armed {
+        let decision = read("docs/release/V1_0_0_RELEASE_DECISION.md");
+        let notes = read("docs/releases/v1.0.0.md");
+        assert!(
+            decision.contains("RELEASE_V1_0_AUTHORIZED_BOUNDED"),
+            "armed stable request requires explicit bounded release authorization"
+        );
+        assert!(
+            notes.contains("PUBLICATION PENDING"),
+            "release notes must not claim publication before the transaction succeeds"
+        );
+    }
+
     assert!(
-        request.contains(r#""version": "0.1.0-alpha.6""#)
-            && request.contains(r#""tag": "v0.1.0-alpha.6""#)
-            && request.contains(r#""stable_channel": "v0.1""#),
-        "internal RC branch must not arm the real v1 release request"
+        rc_unarmed || release_armed,
+        "release state must be either frozen RC-unarmed Alpha.6 or explicitly authorized v1.0.0"
     );
 
     for doc in [&readme, &status] {
         assert!(
             doc.contains("v0.1.0-alpha.6"),
-            "current public documents must still identify Alpha.6 as published"
+            "public documents must remain on Alpha.6 until the release transaction succeeds"
         );
         for forbidden in [
             "independently validated",
