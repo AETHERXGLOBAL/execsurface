@@ -75,6 +75,19 @@ execsurface learn -- /bin/bash -lc 'cargo test --locked'
 execsurface check --policy execsurface-policy.json -- /bin/bash -lc 'cargo test --locked'
 ```
 
+### Before pushing the generated GitHub workflow
+
+The generated workflow runs the target command as its own correctness gate **and** runs ExecSurface against the same command. This is intentional because an Alpha.6 ExecSurface PASS is not the target command's native exit status.
+
+The generated workflow also requires two externally trusted GitHub variables:
+
+- `EXECSURFACE_BASELINE_DIGEST` — the `baseline_digest` from the baseline you just learned;
+- `EXECSURFACE_POLICY_SHA256` — `sha256:<SHA-256 of the exact execsurface-policy.json bytes>`.
+
+After `execsurface init --command "cargo test --locked" --github-actions`, the CLI prints copy-paste `gh variable set` commands for both values, including the command that computes the policy SHA-256. Store these values in trusted GitHub repository/environment variables rather than checkout files.
+
+Review the generated workflow, baseline, and policy before committing them.
+
 ## Wrapper consistency
 
 The GitHub Action executes `/bin/bash -lc <command>`. Learn the baseline with the same wrapper. Wrapper mismatch is not silently ignored.
