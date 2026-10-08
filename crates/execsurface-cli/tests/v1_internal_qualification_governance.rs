@@ -37,7 +37,9 @@ fn external_evidence_is_waived_not_falsely_marked_pass() {
 fn strengthened_internal_chain_and_role_separation_are_mandatory() {
     let governance = read("docs/development/V1_INTERNAL_QUALIFICATION_GOVERNANCE.md");
 
-    for gate in ["IQ0", "IQ1", "IQ2", "IQ3", "IQ4", "IQ5", "IQ6", "IQ7", "IQ8", "IQ9"] {
+    for gate in [
+        "IQ0", "IQ1", "IQ2", "IQ3", "IQ4", "IQ5", "IQ6", "IQ7", "IQ8", "IQ9",
+    ] {
         assert!(
             governance.contains(gate),
             "strengthened internal gate {gate} must remain present"
