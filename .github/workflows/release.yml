@@ -100,11 +100,12 @@ jobs:
         with:
           subject-path: ${{ steps.bundle.outputs.archive }}
 
-      - name: Publish GitHub prerelease
+      - name: Publish GitHub release with classified maturity
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.identity.outputs.tag }}
           ASSET: ${{ steps.bundle.outputs.asset }}
+          IS_PRERELEASE: ${{ steps.identity.outputs.is-prerelease }}
         run: |
           set -euo pipefail
           notes="$RUNNER_TEMP/release-notes.md"
@@ -115,11 +116,20 @@ jobs:
             echo
             echo "Build workflow: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } >> "$notes"
+
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --clobber --repo "$GITHUB_REPOSITORY"
-            gh release edit "$TAG" --prerelease --title "ExecSurface $TAG" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              gh release edit "$TAG" --prerelease --latest=false --title "ExecSurface $TAG" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
+            else
+              gh release edit "$TAG" --prerelease=false --latest --title "ExecSurface $TAG" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
+            fi
           else
-            gh release create "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --verify-tag --prerelease --title "ExecSurface $TAG" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              gh release create "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --verify-tag --prerelease --latest=false --title "ExecSurface $TAG" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
+            else
+              gh release create "$TAG" "dist/$ASSET" "dist/$ASSET.sha256" --verify-tag --latest --title "ExecSurface $TAG" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
+            fi
           fi
 
   binary-consumer:
