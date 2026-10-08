@@ -200,7 +200,8 @@ fn merge_auth_distinct_report_path_remains_available_after_workload_rename() {
     assert_eq!(
         output.status.code(),
         Some(10),
-        "ordinary drift should remain REVIEW when the report is disjoint"
+        "ordinary drift should remain REVIEW when the report is disjoint; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
         fs::read(&final_workload).expect("final workload object"),
