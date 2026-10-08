@@ -24,7 +24,7 @@ ExecSurface learns an accepted runtime execution surface for a command and later
 
 It is designed for software repositories, CI pipelines, dependency updates, developer tools, and AI tooling where source review alone does not show every runtime effect.
 
-The public alpha supports Linux x86_64 and uses the native ptrace observer as its correctness-reference backend.
+Stable `v1.0.0` supports Linux x86_64 and uses the native `ptrace` observer as its correctness-reference backend.
 
 Typical workflow:
 
