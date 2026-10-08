@@ -106,13 +106,15 @@ fn r4_action_missing_both_pins_fails_closed_before_target() {
         None,
     );
 
-    assert!(output.status.success(), "runner script should emit an ERROR result");
+    assert!(
+        output.status.success(),
+        "runner script should emit an ERROR result"
+    );
     assert!(!marker.exists(), "missing pins must block target execution");
     assert!(github_output.contains("verdict=error"));
     assert!(github_output.contains("exit-code=2"));
     assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("require-custody=true requires both"),
+        String::from_utf8_lossy(&output.stderr).contains("require-custody=true requires both"),
         "preflight reason must remain explicit"
     );
 
@@ -137,7 +139,10 @@ fn r4_action_partial_pin_fails_closed_before_target() {
     );
 
     assert!(output.status.success());
-    assert!(!marker.exists(), "partial custody must block target execution");
+    assert!(
+        !marker.exists(),
+        "partial custody must block target execution"
+    );
     assert!(github_output.contains("verdict=error"));
     assert!(github_output.contains("exit-code=2"));
 
@@ -161,7 +166,10 @@ fn r4_action_invalid_require_custody_value_fails_closed() {
     );
 
     assert!(output.status.success());
-    assert!(!marker.exists(), "invalid custody mode must not execute target");
+    assert!(
+        !marker.exists(),
+        "invalid custody mode must not execute target"
+    );
     assert!(github_output.contains("verdict=error"));
     assert!(github_output.contains("exit-code=2"));
     assert!(
