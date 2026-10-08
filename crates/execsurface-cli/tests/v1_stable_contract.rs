@@ -138,7 +138,6 @@ fn stable_contract_uses_alpha6_as_upgrade_source_and_preserves_alpha5_boundary()
     );
 }
 
-
 #[test]
 fn stable_contract_preserves_install_route_specific_environment_boundary() {
     let compatibility = read("docs/COMPATIBILITY.md");
@@ -148,8 +147,7 @@ fn stable_contract_preserves_install_route_specific_environment_boundary() {
         "v1 contract must retain the qualified public-binary environment"
     );
     assert!(
-        compatibility.contains("FAIL on Ubuntu 22.04")
-            && compatibility.contains("GLIBC_2.39"),
+        compatibility.contains("FAIL on Ubuntu 22.04") && compatibility.contains("GLIBC_2.39"),
         "v1 contract must retain the current Alpha.6 prebuilt incompatibility as negative evidence"
     );
     assert!(
