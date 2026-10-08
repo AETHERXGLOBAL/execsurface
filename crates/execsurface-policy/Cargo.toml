@@ -12,3 +12,6 @@ readme.workspace = true
 execsurface-diff = { path = "../execsurface-diff", version = "=0.1.0-alpha.5" }
 execsurface-model = { path = "../execsurface-model", version = "=0.1.0-alpha.5" }
 serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
