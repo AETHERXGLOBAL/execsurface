@@ -2,7 +2,7 @@
 
 ## Public channel
 
-The Final Supported Alpha Action channel is:
+The current supported Alpha Action channel is:
 
 ```text
 AETHERXGLOBAL/execsurface@v0.1
@@ -114,4 +114,4 @@ ExecSurface does not require PR-comment write permission.
 
 A PASS means the recorded comparison and policy did not identify review/block execution-surface drift. It does not prove the target command succeeded, and it does not prove the program is safe.
 
-See [Current Status](STATUS.md) for the Final Supported Alpha scope and declared limitations.
+See [Current Status](STATUS.md) for the current Alpha scope and declared limitations.
