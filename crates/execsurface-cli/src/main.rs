@@ -670,7 +670,11 @@ fn workload_written_paths_after_renames(observation: &Observation) -> Result<Vec
                 let mut next = Vec::with_capacity(written.len());
                 for path in written.drain(..) {
                     if let Ok(suffix) = path.strip_prefix(&from) {
-                        next.push(to.join(suffix));
+                        if suffix.as_os_str().is_empty() {
+                            next.push(to.clone());
+                        } else {
+                            next.push(to.join(suffix));
+                        }
                     } else if path.strip_prefix(&to).is_ok() {
                         // A successful rename replaces the destination object/tree.
                         // Any earlier write lineage that belonged only to the replaced
