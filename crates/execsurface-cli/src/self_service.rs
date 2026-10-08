@@ -208,15 +208,11 @@ pub fn run_init(args: &[OsString]) -> Result<(), String> {
         println!(
             "  baseline_digest=\"$(python3 -c 'import json; print(json.load(open(\"execsurface.lock.json\"))[\"baseline_digest\"])')\""
         );
-        println!(
-            "  gh variable set EXECSURFACE_BASELINE_DIGEST --body \"$baseline_digest\""
-        );
+        println!("  gh variable set EXECSURFACE_BASELINE_DIGEST --body \"$baseline_digest\"");
         println!(
             "  policy_sha256=\"sha256:$(sha256sum execsurface-policy.json | awk '{{print $1}}')\""
         );
-        println!(
-            "  gh variable set EXECSURFACE_POLICY_SHA256 --body \"$policy_sha256\""
-        );
+        println!("  gh variable set EXECSURFACE_POLICY_SHA256 --body \"$policy_sha256\"");
     }
     Ok(())
 }
