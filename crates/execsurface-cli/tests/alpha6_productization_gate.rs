@@ -29,6 +29,8 @@ fn landing_and_current_docs_present_alpha6_as_current_not_final() {
     let readme = fs::read_to_string(root.join("README.md")).expect("README");
     let action = fs::read_to_string(root.join("docs/GITHUB_ACTION.md")).expect("Action guide");
     let status = fs::read_to_string(root.join("docs/STATUS.md")).expect("status");
+    let quickstart =
+        fs::read_to_string(root.join("docs/QUICKSTART_5_MIN.md")).expect("quickstart");
 
     assert!(
         readme.contains("status-Current%20Supported%20Alpha"),
@@ -49,6 +51,15 @@ fn landing_and_current_docs_present_alpha6_as_current_not_final() {
     assert!(
         status.contains("Previous release `v0.1.0-alpha.5` remains immutable"),
         "status must preserve Alpha.5 explicitly as historical/rollback evidence"
+    );
+    assert!(
+        quickstart.contains("EXECSURFACE_BASELINE_DIGEST")
+            && quickstart.contains("EXECSURFACE_POLICY_SHA256"),
+        "Five-Minute Start must name the custody variables required by the generated Action"
+    );
+    assert!(
+        quickstart.contains("execsurface init") && quickstart.contains("copy-paste"),
+        "Five-Minute Start must tell users that init prints the custody setup commands"
     );
 }
 
