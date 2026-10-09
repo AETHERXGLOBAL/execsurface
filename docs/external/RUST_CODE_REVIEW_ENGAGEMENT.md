@@ -2,7 +2,7 @@
 
 Status: **PREPARED — FORUM POSTING PENDING AUTHENTICATED ACCOUNT**  
 Date opened: **2026-09-29**  
-Last aligned to public release: **2026-10-01**  
+Last aligned to public release: **2026-10-08**  
 External referral: Rust Foundation → official Rust Users Forum `code review` category
 
 ## 1. Source event
@@ -18,16 +18,16 @@ The original outreach named an earlier alpha; that reference is historical only.
 Current public review target:
 
 - repository: `AETHERXGLOBAL/execsurface`
-- public release: `v0.1.0-alpha.5`
-- release source commit: `9e73b925d55557e33de1b0813995609aaefdc037`
-- immutable Action: `AETHERXGLOBAL/execsurface@v0.1.0-alpha.5`
-- stable Action: `AETHERXGLOBAL/execsurface@v0.1`
-- registry package: `execsurface = 0.1.0-alpha.5`
+- public release: `v1.0.0`
+- release source commit: `e70169b959f2163715090c371335fa6c5591e3e4`
+- immutable Action: `AETHERXGLOBAL/execsurface@v1.0.0`
+- stable Action: `AETHERXGLOBAL/execsurface@v1`
+- registry package: `execsurface = 1.0.0`
 - platform boundary: Linux x86_64
 - public reference observer: native `ptrace`
 - product boundary: runtime behavioral-integrity and verification for observed execution-surface drift; not antivirus, EDR, malware detection, sandboxing, or proof of software safety.
 
-Alpha.5 keeps incomplete or ambiguous observation non-PASS-eligible, preserves conservative shared-FD incompleteness where exact attribution is not established, and keeps BPF-LSM/kernel-hook work research/managed and non-default.
+Stable v1.0.0 keeps incomplete or ambiguous observation non-PASS-eligible, preserves conservative shared-FD incompleteness where exact attribution is not established, and keeps BPF-LSM/kernel-hook work research/managed and non-default.
 
 ## 3. Why ask the Rust community
 
@@ -55,9 +55,9 @@ Architecture questions such as ptrace vs LSM/BPF are tracked separately in `docs
 - `docs/STATUS.md` — current public state
 - `docs/TECHNICAL_EVALUATION.md` — independent technical evaluation path
 - `docs/architecture/PTRACE_VS_LSM_ARCHITECTURE_REVIEW.md` — observer-authority review
-- `docs/releases/v0.1.0-alpha.5.md` — current release record
+- `docs/releases/v1.0.0.md` — current release record
 - public CI/adversarial fixtures under `.github/workflows/` and `.github/m12-fixtures/`
-- issue #118 — public Alpha.5 post-release review hub
+- issue #118 — stable-v1 external evaluation and post-release review hub
 
 Failures, REVIEWs, incomplete observations, usability friction, and code defects are useful evidence and must be retained rather than tuned away.
 
@@ -73,7 +73,7 @@ Hello,
 
 The Rust Foundation pointed me to this category as the appropriate place to ask for community code review.
 
-I maintain **ExecSurface**, an Apache-2.0 Rust CLI/GitHub Action for runtime behavioral-integrity verification on Linux x86_64. The current public release is **v0.1.0-alpha.5**.
+I maintain **ExecSurface**, an Apache-2.0 Rust CLI/GitHub Action for runtime behavioral-integrity verification on Linux x86_64. The current public release is **v1.0.0**.
 
 I am **not** looking for endorsement or a broad security claim. I would specifically value criticism of the Rust/Linux implementation boundary, especially the native ptrace observer:
 
@@ -95,7 +95,7 @@ Known limitations are intentionally public. Pathname data copied at syscall entr
 
 Repository: `https://github.com/AETHERXGLOBAL/execsurface`
 
-Current release: `https://github.com/AETHERXGLOBAL/execsurface/releases/tag/v0.1.0-alpha.5`
+Current release: `https://github.com/AETHERXGLOBAL/execsurface/releases/tag/v1.0.0`
 
 Observer implementation: `https://github.com/AETHERXGLOBAL/execsurface/blob/main/crates/execsurface-observe/src/linux_ptrace.rs`
 

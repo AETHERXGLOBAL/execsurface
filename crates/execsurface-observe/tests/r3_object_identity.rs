@@ -1,0 +1,352 @@
+#![cfg(all(target_os = "linux", target_arch = "x86_64"))]
+
+use std::fs;
+use std::os::unix::fs::{symlink, MetadataExt};
+use std::process;
+
+use execsurface_model::{FileOperation, RawEventKind};
+use execsurface_observe::{observe_command, CommandSpec};
+
+fn fixture() -> &'static str {
+    env!("CARGO_BIN_EXE_execsurface-fixture")
+}
+
+fn divergence_warning(observation: &execsurface_model::Observation) -> bool {
+    observation
+        .warnings
+        .iter()
+        .any(|warning| warning.code == "side_effectful_open_identity_divergence")
+}
+
+#[test]
+fn r3_symlink_truncate_fails_closed_when_open_time_object_identity_diverges() {
+    let root =
+        std::env::temp_dir().join(format!("execsurface-stage2-r3-symlink-{}", process::id()));
+    let workspace = root.join("workspace");
+    let target = root.join("target");
+    let link = workspace.join("link");
+
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(&target, b"secret").expect("seed target");
+    symlink("../target", &link).expect("create relative symlink");
+
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("stage2-symlink-truncate")
+            .arg(link.as_os_str()),
+    )
+    .expect("observe symlink truncate");
+
+    let lexical = link.to_string_lossy().into_owned();
+    let target_len = fs::metadata(&target).expect("target metadata").len();
+    let lexical_attempt_retained = observation.events.iter().any(|event| {
+        matches!(
+            &event.kind,
+            RawEventKind::FilePathAccess {
+                operation: FileOperation::Open,
+                path,
+                ..
+            } if path == &lexical
+        )
+    });
+
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(
+        target_len, 0,
+        "kernel-resolved target must actually be truncated"
+    );
+    assert!(
+        lexical_attempt_retained,
+        "lexical open intent must remain visible"
+    );
+    assert!(
+        divergence_warning(&observation),
+        "side-effectful lexical/kernel identity divergence must be explicit"
+    );
+    assert!(
+        !observation.complete,
+        "raw v2 cannot claim complete authority for an open-time side effect whose resolved object identity is not serialized"
+    );
+}
+
+#[test]
+fn r3_direct_truncate_stays_complete_when_lexical_and_kernel_identity_agree() {
+    let path = std::env::temp_dir().join(format!(
+        "execsurface-stage2-r3-direct-{}.txt",
+        process::id()
+    ));
+    fs::write(&path, b"secret").expect("seed direct target");
+
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("stage2-symlink-truncate")
+            .arg(path.as_os_str()),
+    )
+    .expect("observe direct truncate");
+
+    let target_len = fs::metadata(&path).expect("direct target metadata").len();
+    let _ = fs::remove_file(&path);
+
+    assert_eq!(target_len, 0, "direct target must be truncated");
+    assert!(
+        !divergence_warning(&observation),
+        "matching lexical/kernel identity must not invent a divergence warning"
+    );
+    assert!(
+        observation.complete,
+        "direct side-effectful open with matching object identity must remain complete: {:?}",
+        observation.warnings
+    );
+}
+
+#[test]
+fn r3_curdir_spelling_does_not_invent_object_identity_divergence() {
+    let root = std::env::temp_dir().join(format!("execsurface-stage2-r3-curdir-{}", process::id()));
+    let workspace = root.join("workspace");
+    let target = workspace.join("target");
+
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(&target, b"secret").expect("seed target");
+
+    let lexical = format!("{}/./target", workspace.to_string_lossy());
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("stage2-symlink-truncate")
+            .arg(lexical),
+    )
+    .expect("observe curdir-spelled truncate");
+
+    let target_len = fs::metadata(&target).expect("target metadata").len();
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(target_len, 0, "target must actually be truncated");
+    assert!(
+        !divergence_warning(&observation),
+        "a redundant '.' path component must not be treated as kernel-object divergence"
+    );
+    assert!(
+        observation.complete,
+        "single-task direct side-effectful open with only '.' spelling variance must remain complete: {:?}",
+        observation.warnings
+    );
+}
+
+#[test]
+fn r3_hardlink_truncate_must_not_be_complete_with_path_only_identity() {
+    let root =
+        std::env::temp_dir().join(format!("execsurface-stage2-r3-hardlink-{}", process::id()));
+    let workspace = root.join("workspace");
+    let target = root.join("credential");
+    let alias = workspace.join("alias");
+
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(&target, b"secret").expect("seed hardlink target");
+    fs::hard_link(&target, &alias).expect("create hardlink alias");
+
+    let target_before = fs::metadata(&target).expect("target metadata before");
+    let alias_before = fs::metadata(&alias).expect("alias metadata before");
+    assert_eq!(target_before.dev(), alias_before.dev());
+    assert_eq!(target_before.ino(), alias_before.ino());
+
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("stage2-symlink-truncate")
+            .arg(alias.as_os_str()),
+    )
+    .expect("observe hardlink truncate");
+
+    let target_after = fs::metadata(&target).expect("target metadata after");
+    let alias_after = fs::metadata(&alias).expect("alias metadata after");
+    let lexical = alias.to_string_lossy().into_owned();
+    let lexical_attempt_retained = observation.events.iter().any(|event| {
+        matches!(
+            &event.kind,
+            RawEventKind::FilePathAccess {
+                operation: FileOperation::Open,
+                path,
+                ..
+            } if path == &lexical
+        )
+    });
+
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(
+        target_after.len(),
+        0,
+        "target inode must actually be truncated"
+    );
+    assert_eq!(
+        alias_after.len(),
+        0,
+        "alias must expose the same truncated inode"
+    );
+    assert_eq!(target_after.dev(), alias_after.dev());
+    assert_eq!(target_after.ino(), alias_after.ino());
+    assert!(
+        lexical_attempt_retained,
+        "lexical open intent must remain visible"
+    );
+    assert!(
+        !observation.complete,
+        "path-string agreement alone cannot certify the identity of a side-effected kernel object when a hard-link alias exists: {:?}",
+        observation.warnings
+    );
+}
+
+#[test]
+fn r3_hardlink_fd_write_must_not_be_complete_with_path_only_identity() {
+    let root = std::env::temp_dir().join(format!(
+        "execsurface-stage2-r3-hardlink-write-{}",
+        process::id()
+    ));
+    let workspace = root.join("workspace");
+    let target = root.join("credential");
+    let alias = workspace.join("alias");
+
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(&target, b"secret").expect("seed hardlink target");
+    fs::hard_link(&target, &alias).expect("create hardlink alias");
+
+    let target_before = fs::metadata(&target).expect("target metadata before");
+    let alias_before = fs::metadata(&alias).expect("alias metadata before");
+    assert_eq!(target_before.dev(), alias_before.dev());
+    assert_eq!(target_before.ino(), alias_before.ino());
+
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("file-rw")
+            .arg(alias.as_os_str()),
+    )
+    .expect("observe hardlink fd write");
+
+    let target_after = fs::metadata(&target).expect("target metadata after");
+    let alias_after = fs::metadata(&alias).expect("alias metadata after");
+    let target_bytes = fs::read(&target).expect("read mutated target");
+    let lexical = alias.to_string_lossy().into_owned();
+    let fd_write_retained = observation.events.iter().any(|event| {
+        matches!(
+            &event.kind,
+            RawEventKind::FileDescriptorAccess {
+                operation: FileOperation::Write,
+                path,
+                ..
+            } if path == &lexical
+        )
+    });
+
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(target_bytes, b"secretx");
+    assert_eq!(target_after.dev(), alias_after.dev());
+    assert_eq!(target_after.ino(), alias_after.ino());
+    assert!(
+        fd_write_retained,
+        "successful fd write must remain visible on the lexical alias"
+    );
+    assert!(
+        !observation.complete,
+        "a successful mutating fd write to a multiply-linked kernel object must not remain authoritative under path-only raw-v2 evidence: {:?}",
+        observation.warnings
+    );
+}
+
+#[test]
+fn r3_link_created_after_open_is_caught_at_write_time() {
+    let root = std::env::temp_dir().join(format!(
+        "execsurface-stage2-r3-link-after-open-{}",
+        process::id()
+    ));
+    let workspace = root.join("workspace");
+    let target = root.join("credential");
+    let alias = workspace.join("late-alias");
+
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(&target, b"secret").expect("seed target");
+
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("stage2-hardlink-after-open-write")
+            .arg(target.as_os_str())
+            .arg(alias.as_os_str()),
+    )
+    .expect("observe post-open hardlink creation and write");
+
+    let target_after = fs::metadata(&target).expect("target metadata after");
+    let alias_after = fs::metadata(&alias).expect("alias metadata after");
+    let bytes = fs::read(&target).expect("read target after write");
+    let alias_warning = observation
+        .warnings
+        .iter()
+        .any(|warning| warning.code == "fd_write_object_alias_ambiguity");
+
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(bytes, b"secretx");
+    assert_eq!(target_after.dev(), alias_after.dev());
+    assert_eq!(target_after.ino(), alias_after.ino());
+    assert!(
+        alias_warning,
+        "write-time kernel metadata must detect a hardlink created after the original open"
+    );
+    assert!(
+        !observation.complete,
+        "a post-open alias that exists at mutation time must make raw-v2 write authority incomplete"
+    );
+}
+
+#[test]
+fn r3_removed_alias_before_write_does_not_invent_alias_ambiguity() {
+    let root = std::env::temp_dir().join(format!(
+        "execsurface-stage2-r3-link-removed-before-write-{}",
+        process::id()
+    ));
+    let workspace = root.join("workspace");
+    let target = root.join("credential");
+    let alias = workspace.join("temporary-alias");
+
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&workspace).expect("create workspace");
+    fs::write(&target, b"secret").expect("seed target");
+    fs::hard_link(&target, &alias).expect("create alias before open");
+
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("stage2-hardlink-remove-before-write")
+            .arg(target.as_os_str())
+            .arg(alias.as_os_str()),
+    )
+    .expect("observe hardlink removal before write");
+
+    let target_after = fs::metadata(&target).expect("target metadata after");
+    let bytes = fs::read(&target).expect("read target after write");
+    let alias_exists = alias.exists();
+    let alias_warning = observation
+        .warnings
+        .iter()
+        .any(|warning| warning.code == "fd_write_object_alias_ambiguity");
+
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(bytes, b"secretx");
+    assert_eq!(target_after.nlink(), 1);
+    assert!(
+        !alias_exists,
+        "temporary alias must be removed before write"
+    );
+    assert!(
+        !alias_warning,
+        "an alias removed before the mutating write must not produce a stale alias warning"
+    );
+    assert!(
+        observation.complete,
+        "single-task write after the final alias is removed should remain complete: {:?}",
+        observation.warnings
+    );
+}

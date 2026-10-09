@@ -10,11 +10,13 @@ checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
 ]
+
 [[package]]
 name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
+
 [[package]]
 name = "cpufeatures"
 version = "0.2.17"
@@ -23,6 +25,7 @@ checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
 dependencies = [
  "libc",
 ]
+
 [[package]]
 name = "crypto-common"
 version = "0.1.7"
@@ -32,6 +35,7 @@ dependencies = [
  "generic-array",
  "typenum",
 ]
+
 [[package]]
 name = "digest"
 version = "0.10.7"
@@ -41,9 +45,10 @@ dependencies = [
  "block-buffer",
  "crypto-common",
 ]
+
 [[package]]
 name = "execsurface"
-version = "0.1.0-alpha.5"
+version = "1.0.0"
 dependencies = [
  "execsurface-baseline",
  "execsurface-diff",
@@ -52,73 +57,85 @@ dependencies = [
  "execsurface-observe",
  "execsurface-policy",
  "execsurface-report",
+ "libc",
  "serde_json",
+ "sha2",
 ]
+
 [[package]]
 name = "execsurface-baseline"
-version = "0.1.0-alpha.5"
+version = "1.0.0"
 dependencies = [
  "execsurface-model",
  "serde",
  "serde_json",
  "sha2",
 ]
+
 [[package]]
 name = "execsurface-bench"
-version = "0.1.0-alpha.5"
+version = "1.0.0"
 dependencies = [
  "execsurface-normalize",
  "execsurface-observe",
  "serde",
  "serde_json",
 ]
+
 [[package]]
 name = "execsurface-diff"
-version = "0.1.0-alpha.5"
+version = "1.0.0"
 dependencies = [
  "execsurface-baseline",
  "execsurface-model",
  "serde",
 ]
+
 [[package]]
 name = "execsurface-model"
-version = "0.1.0-alpha.5"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
 ]
+
 [[package]]
 name = "execsurface-normalize"
-version = "0.1.0-alpha.5"
+version = "1.0.0"
 dependencies = [
  "execsurface-model",
  "execsurface-observe",
  "libc",
  "serde_json",
 ]
+
 [[package]]
 name = "execsurface-observe"
-version = "0.1.0-alpha.5"
+version = "1.0.0"
 dependencies = [
  "execsurface-model",
  "libc",
  "serde",
  "serde_json",
 ]
+
 [[package]]
 name = "execsurface-policy"
-version = "0.1.0-alpha.5"
+version = "1.0.0"
 dependencies = [
  "execsurface-diff",
  "execsurface-model",
  "serde",
+ "serde_json",
 ]
+
 [[package]]
 name = "execsurface-report"
-version = "0.1.0-alpha.5"
+version = "1.0.0"
 dependencies = [
  "execsurface-policy",
 ]
+
 [[package]]
 name = "generic-array"
 version = "0.14.7"
@@ -128,21 +145,25 @@ dependencies = [
  "typenum",
  "version_check",
 ]
+
 [[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
 [[package]]
 name = "libc"
-version = "0.2.189"
+version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+
 [[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
 [[package]]
 name = "proc-macro2"
 version = "1.0.107"
@@ -151,6 +172,7 @@ checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
 ]
+
 [[package]]
 name = "quote"
 version = "1.0.47"
@@ -159,6 +181,7 @@ checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
 dependencies = [
  "proc-macro2",
 ]
+
 [[package]]
 name = "serde"
 version = "1.0.229"
@@ -168,6 +191,7 @@ dependencies = [
  "serde_core",
  "serde_derive",
 ]
+
 [[package]]
 name = "serde_core"
 version = "1.0.229"
@@ -176,6 +200,7 @@ checksum = "67dca2c9c51e58a4791a4b1ed58308b39c64224d349a935ab5039aa360942a48"
 dependencies = [
  "serde_derive",
 ]
+
 [[package]]
 name = "serde_derive"
 version = "1.0.229"
@@ -186,6 +211,7 @@ dependencies = [
  "quote",
  "syn",
 ]
+
 [[package]]
 name = "serde_json"
 version = "1.0.151"
@@ -198,6 +224,7 @@ dependencies = [
  "serde_core",
  "zmij",
 ]
+
 [[package]]
 name = "sha2"
 version = "0.10.9"
@@ -208,6 +235,7 @@ dependencies = [
  "cpufeatures",
  "digest",
 ]
+
 [[package]]
 name = "syn"
 version = "3.0.6"
@@ -218,21 +246,25 @@ dependencies = [
  "quote",
  "unicode-ident",
 ]
+
 [[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
 [[package]]
 name = "unicode-ident"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
+
 [[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
 [[package]]
 name = "zmij"
 version = "1.0.23"

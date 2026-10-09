@@ -4,6 +4,7 @@ use std::fs;
 use std::io;
 use std::mem::{size_of, MaybeUninit};
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::ptr;
 
@@ -61,10 +62,20 @@ struct FdEntry {
     cloexec: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct KernelFileMetadata {
+    dev: u64,
+    ino: u64,
+    file_type: u32,
+    nlink: u64,
+}
+
 #[derive(Debug, Clone)]
 enum PendingSyscall {
     Open {
         cloexec: bool,
+        lexical_path: String,
+        flags: u64,
     },
     Io {
         operation: FileOperation,
@@ -95,6 +106,10 @@ enum PendingSyscall {
         flags: i32,
     },
     Rename {
+        from: String,
+        to: String,
+    },
+    HardLink {
         from: String,
         to: String,
     },
@@ -200,12 +215,23 @@ impl FdTables {
         self.tables.get(&table_id)?.get(&fd)
     }
 
-    fn duplicate(&mut self, table_id: u64, old_fd: i32, new_fd: i32, cloexec: bool) {
-        let Some(mut entry) = self.fd(table_id, old_fd).cloned() else {
-            return;
+    fn duplicate(&mut self, table_id: u64, old_fd: i32, new_fd: i32, cloexec: bool) -> bool {
+        let entry = self.fd(table_id, old_fd).cloned();
+
+        // A successful dup2/dup3 atomically replaces new_fd. Snapshot the source
+        // first, then retire any distinct destination identity before deciding
+        // whether the source was tracked. This prevents an unknown source from
+        // leaving a stale path authoritative at the destination.
+        if old_fd != new_fd {
+            self.remove_fd(table_id, new_fd);
+        }
+
+        let Some(mut entry) = entry else {
+            return false;
         };
         entry.cloexec = cloexec;
         self.insert_fd(table_id, new_fd, entry);
+        true
     }
 
     fn set_cloexec(&mut self, table_id: u64, fd: i32, cloexec: bool) {
@@ -1040,6 +1066,31 @@ fn handle_syscall_entry(
         return;
     }
 
+    if nr == libc::SYS_link {
+        record_hardlink_entry(
+            tid,
+            libc::AT_FDCWD,
+            args[0],
+            libc::AT_FDCWD,
+            args[1],
+            tracees,
+            collector,
+        );
+        return;
+    }
+    if nr == libc::SYS_linkat {
+        record_hardlink_entry(
+            tid,
+            args[0] as i32,
+            args[1],
+            args[2] as i32,
+            args[3],
+            tracees,
+            collector,
+        );
+        return;
+    }
+
     if nr == libc::SYS_rename {
         record_rename_entry(
             tid,
@@ -1222,10 +1273,45 @@ fn handle_syscall_exit(
     };
 
     match pending {
-        PendingSyscall::Open { cloexec } if result >= 0 => {
+        PendingSyscall::Open {
+            cloexec,
+            lexical_path,
+            flags,
+        } if result >= 0 => {
             let fd = result as i32;
             match proc_fd_path(tid, fd) {
-                Ok(path) => fd_tables.insert_fd(table_id, fd, FdEntry { path, cloexec }),
+                Ok(path) => {
+                    if open_has_immediate_filesystem_effect(flags) {
+                        if !same_path_ignoring_curdir_components(&path, &lexical_path) {
+                            collector.warning(
+                                tid,
+                                "side_effectful_open_identity_divergence",
+                                format!(
+                                    "successful side-effectful open used lexical path {lexical_path:?}, but the returned fd resolves to kernel object path {path:?}; raw observation v2 cannot serialize a dedicated successful-open object identity, so this observation is incomplete"
+                                ),
+                            );
+                        }
+                        match proc_fd_object_metadata(tid, fd) {
+                            Ok(object) if object.nlink > 1 => collector.warning(
+                                tid,
+                                "side_effectful_open_object_alias_ambiguity",
+                                format!(
+                                    "successful side-effectful open returned fd {fd} bound to kernel object dev={} ino={} type={} with link count {}; raw observation v2 carries only path identity and cannot represent the additional hard-link aliases affected by this object mutation",
+                                    object.dev, object.ino, object.file_type, object.nlink
+                                ),
+                            ),
+                            Ok(_) => {}
+                            Err(error) => collector.warning(
+                                tid,
+                                "side_effectful_open_object_metadata_unreadable",
+                                format!(
+                                    "successful side-effectful open returned fd {fd}, but kernel object metadata could not be read at the syscall-exit binding point: {error}"
+                                ),
+                            ),
+                        }
+                    }
+                    fd_tables.insert_fd(table_id, fd, FdEntry { path, cloexec });
+                }
                 Err(error) => collector.warning(
                     tid,
                     "opened_fd_path_unreadable",
@@ -1261,7 +1347,10 @@ fn handle_syscall_exit(
             fd_tables.close_range(table_id, first, last);
         }
         PendingSyscall::Dup { old_fd, cloexec } if result >= 0 => {
-            fd_tables.duplicate(table_id, old_fd, result as i32, cloexec);
+            let new_fd = result as i32;
+            if !fd_tables.duplicate(table_id, old_fd, new_fd, cloexec) {
+                recover_fd_after_unknown_dup(tid, table_id, new_fd, cloexec, fd_tables, collector);
+            }
         }
         PendingSyscall::DupTo {
             old_fd,
@@ -1269,7 +1358,17 @@ fn handle_syscall_exit(
             cloexec,
         } if result >= 0 => {
             if old_fd != new_fd {
-                fd_tables.duplicate(table_id, old_fd, result as i32, cloexec);
+                let duplicated_fd = result as i32;
+                if !fd_tables.duplicate(table_id, old_fd, duplicated_fd, cloexec) {
+                    recover_fd_after_unknown_dup(
+                        tid,
+                        table_id,
+                        duplicated_fd,
+                        cloexec,
+                        fd_tables,
+                        collector,
+                    );
+                }
             }
         }
         PendingSyscall::SetFdFlags { fd, flags } if result == 0 => {
@@ -1277,6 +1376,15 @@ fn handle_syscall_exit(
         }
         PendingSyscall::Rename { from, to } if result == 0 => {
             fd_tables.rename_paths(&from, &to);
+        }
+        PendingSyscall::HardLink { from, to } if result == 0 => {
+            collector.warning(
+                tid,
+                "hardlink_namespace_transition_unmodeled",
+                format!(
+                    "successful hard-link creation from {from:?} to {to:?} changes filesystem object aliases, but raw observation v2 cannot represent that namespace transition authoritatively"
+                ),
+            );
         }
         PendingSyscall::Clone { .. }
         | PendingSyscall::Open { .. }
@@ -1287,7 +1395,53 @@ fn handle_syscall_exit(
         | PendingSyscall::Dup { .. }
         | PendingSyscall::DupTo { .. }
         | PendingSyscall::SetFdFlags { .. }
-        | PendingSyscall::Rename { .. } => {}
+        | PendingSyscall::Rename { .. }
+        | PendingSyscall::HardLink { .. } => {}
+    }
+}
+
+fn open_has_immediate_filesystem_effect(flags: u64) -> bool {
+    let flags = flags as i32;
+    flags & libc::O_TRUNC != 0
+        || flags & libc::O_CREAT != 0
+        || flags & libc::O_TMPFILE == libc::O_TMPFILE
+}
+
+fn same_path_ignoring_curdir_components(left: &str, right: &str) -> bool {
+    fn normalize(path: &str) -> String {
+        let absolute = path.starts_with('/');
+        let components = path
+            .split('/')
+            .filter(|component| !component.is_empty() && *component != ".")
+            .collect::<Vec<_>>();
+        let joined = components.join("/");
+        if absolute {
+            format!("/{joined}")
+        } else {
+            joined
+        }
+    }
+
+    left == right || normalize(left) == normalize(right)
+}
+
+fn recover_fd_after_unknown_dup(
+    tid: libc::pid_t,
+    table_id: u64,
+    fd: i32,
+    cloexec: bool,
+    fd_tables: &mut FdTables,
+    collector: &mut Collector,
+) {
+    match proc_fd_path(tid, fd) {
+        Ok(path) => fd_tables.insert_fd(table_id, fd, FdEntry { path, cloexec }),
+        Err(error) => collector.warning(
+            tid,
+            "duplicated_fd_path_unreadable",
+            format!(
+                "successful fd duplication produced fd {fd}, but the source was untracked and the duplicated kernel fd path was unreadable: {error}"
+            ),
+        ),
     }
 }
 
@@ -1299,17 +1453,57 @@ fn emit_fd_access(
     fd_tables: &FdTables,
     collector: &mut Collector,
 ) {
-    let Some(entry) = fd_tables.fd(table_id, fd) else {
-        return;
+    let path = if let Some(entry) = fd_tables.fd(table_id, fd) {
+        entry.path.clone()
+    } else {
+        match proc_fd_path(tid, fd) {
+            Ok(path) => path,
+            Err(error) => {
+                collector.warning(
+                    tid,
+                    "fd_access_path_unreadable",
+                    format!(
+                        "successful {operation:?} on untracked fd {fd} could not be attributed because its kernel fd path was unreadable: {error}"
+                    ),
+                );
+                return;
+            }
+        }
     };
+
+    if operation == FileOperation::Write {
+        check_mutating_fd_object_authority(tid, fd, collector);
+    }
+
     collector.event(
         tid,
         RawEventKind::FileDescriptorAccess {
             operation,
             fd,
-            path: entry.path.clone(),
+            path,
         },
     );
+}
+
+fn check_mutating_fd_object_authority(tid: libc::pid_t, fd: i32, collector: &mut Collector) {
+    match proc_fd_object_metadata(tid, fd) {
+        Ok(object) if object.file_type == libc::S_IFREG && object.nlink > 1 => collector.warning(
+            tid,
+            "fd_write_object_alias_ambiguity",
+            format!(
+                "successful write on fd {fd} mutated regular kernel object dev={} ino={} with link count {}; raw observation v2 carries only one fd path and cannot represent the additional hard-link aliases affected by this mutation",
+                object.dev, object.ino, object.nlink
+            ),
+        ),
+        Ok(_) => {}
+        Err(error) => collector.warning(
+            tid,
+            "fd_write_object_metadata_unreadable",
+            format!(
+                "successful write on fd {fd} could not bind the mutating effect to kernel object metadata at syscall exit: {error}"
+            ),
+        ),
+    }
 }
 
 fn set_pending(
@@ -1358,6 +1552,7 @@ fn record_open_entry(
         .and_then(|path| resolve_user_path(tid, dirfd, path))
     {
         Ok(path) => {
+            let lexical_path = path.clone();
             if openat2 {
                 collector.event(
                     tid,
@@ -1382,6 +1577,8 @@ fn record_open_entry(
                 tid,
                 PendingSyscall::Open {
                     cloexec: flags as i32 & libc::O_CLOEXEC != 0,
+                    lexical_path,
+                    flags,
                 },
             );
         }
@@ -1409,6 +1606,30 @@ fn record_file_attempt(
             },
         ),
         Err(error) => collector.warning(tid, "file_path_unreadable", error.to_string()),
+    }
+}
+
+fn record_hardlink_entry(
+    tid: libc::pid_t,
+    from_dirfd: i32,
+    from_address: u64,
+    to_dirfd: i32,
+    to_address: u64,
+    tracees: &mut HashMap<libc::pid_t, TraceeState>,
+    collector: &mut Collector,
+) {
+    let from = read_c_string(tid, from_address, MAX_PATH_BYTES)
+        .and_then(|path| resolve_user_path(tid, from_dirfd, path));
+    let to = read_c_string(tid, to_address, MAX_PATH_BYTES)
+        .and_then(|path| resolve_user_path(tid, to_dirfd, path));
+
+    match (from, to) {
+        (Ok(from), Ok(to)) => {
+            set_pending(tracees, tid, PendingSyscall::HardLink { from, to });
+        }
+        (Err(error), _) | (_, Err(error)) => {
+            collector.warning(tid, "hardlink_path_unreadable", error.to_string())
+        }
     }
 }
 
@@ -1475,6 +1696,16 @@ fn proc_fd_path(tid: libc::pid_t, fd: i32) -> Result<String, ObserveError> {
     let path = read_proc_link(PathBuf::from(format!("/proc/{tid}/fd/{fd}")))?;
     let tgid = tracee_tgid(tid).unwrap_or(tid);
     Ok(normalize_own_proc_path(&path, tid, tgid))
+}
+
+fn proc_fd_object_metadata(tid: libc::pid_t, fd: i32) -> Result<KernelFileMetadata, ObserveError> {
+    let metadata = fs::metadata(format!("/proc/{tid}/fd/{fd}"))?;
+    Ok(KernelFileMetadata {
+        dev: metadata.dev(),
+        ino: metadata.ino(),
+        file_type: metadata.mode() & libc::S_IFMT,
+        nlink: metadata.nlink(),
+    })
 }
 
 fn tracee_tgid(tid: libc::pid_t) -> Result<libc::pid_t, ObserveError> {
@@ -1899,6 +2130,53 @@ mod tests {
         tables.close_range(shared_id, 9, 10);
         assert!(tables.fd(shared_id, 9).is_none());
         assert!(tables.fd(shared_id, 10).is_none());
+    }
+
+    #[test]
+    fn r2_unknown_dup_source_retires_stale_destination_identity() {
+        let mut tables = FdTables::new();
+        let table_id = tables.root_id();
+        tables.insert_fd(
+            table_id,
+            10,
+            FdEntry {
+                path: "/tmp/r2-stale-destination".to_owned(),
+                cloexec: false,
+            },
+        );
+
+        assert!(!tables.duplicate(table_id, 99, 10, false));
+        assert!(
+            tables.fd(table_id, 10).is_none(),
+            "unknown successful dup source must never leave the replaced destination identity tracked"
+        );
+    }
+
+    #[test]
+    fn r2_known_dup_source_replaces_destination_and_preserves_cloexec_semantics() {
+        let mut tables = FdTables::new();
+        let table_id = tables.root_id();
+        tables.insert_fd(
+            table_id,
+            9,
+            FdEntry {
+                path: "/tmp/r2-source".to_owned(),
+                cloexec: false,
+            },
+        );
+        tables.insert_fd(
+            table_id,
+            10,
+            FdEntry {
+                path: "/tmp/r2-old-destination".to_owned(),
+                cloexec: false,
+            },
+        );
+
+        assert!(tables.duplicate(table_id, 9, 10, true));
+        let duplicated = tables.fd(table_id, 10).expect("duplicated destination");
+        assert_eq!(duplicated.path, "/tmp/r2-source");
+        assert!(duplicated.cloexec);
     }
 
     #[test]

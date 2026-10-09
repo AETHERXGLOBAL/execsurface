@@ -1,0 +1,39 @@
+{
+  "packet_id": "P8-A3.5-EXTERNAL-TYPED-EVIDENCE-TRIAL-v1",
+  "status": "experimental-trial-preparation",
+  "product_target": {
+    "repository": "AETHERXGLOBAL/execsurface",
+    "source_sha": "cea214244d7efe05fea2108a5f5d8ed6287d9a3f",
+    "surface": "execsurface observe --evidence-output PATH -- COMMAND [ARGS...]",
+    "release_status": "unreleased-experimental",
+    "platform": "linux",
+    "architecture": "x86_64"
+  },
+  "consumer_contract": {
+    "schema": "schemas/execsurface-typed-evidence-experimental-v1.schema.json",
+    "reference_consumer": "scripts/p8_a3_typed_evidence_reference_consumer.py"
+  },
+  "trial": {
+    "capture_harness": "scripts/p8_a3_external_trial_capture.py",
+    "evaluator_selects_workload": true,
+    "zero_assistance_initial_result_preferred": true,
+    "preserve_initial_result_before_assisted_retry": true,
+    "raw_evidence_public_submission_required": false,
+    "qualification_automatic": false
+  },
+  "privacy": {
+    "harness_records_command": false,
+    "harness_records_target_stdout": false,
+    "harness_records_target_stderr": false,
+    "harness_records_environment_values": false,
+    "harness_records_file_contents": false,
+    "typed_evidence_may_contain_paths": true
+  },
+  "claims": {
+    "external_validation_claimed": false,
+    "adoption_claimed": false,
+    "p8_a1_satisfied": false,
+    "p8_a4_satisfied": false,
+    "p9_5_satisfied": false
+  }
+}

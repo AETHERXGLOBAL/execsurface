@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{FileOperation, SpawnMechanism};
 
 pub const CANONICAL_SURFACE_SCHEMA_VERSION: u32 = 2;
-pub const NORMALIZATION_PROFILE_VERSION: u32 = 3;
+pub const NORMALIZATION_PROFILE_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CanonicalSurface {

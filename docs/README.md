@@ -5,6 +5,8 @@ This directory separates **current public guidance** from **engineering evidence
 ## Current public product
 
 - [Current Status](STATUS.md) — authoritative public support, distribution and validation state.
+- [Production Readiness](PRODUCTION_READINESS.md) — P9 evidence contract and v1.0 qualification gates; not a claim that v1.0 is already authorized.
+- [Compatibility & Stability Contract](COMPATIBILITY.md) — P9.3 candidate v1 compatibility boundary and the executable evidence required before it may become stable.
 - [Five-Minute Start](QUICKSTART_5_MIN.md) — shortest controlled PASS → REVIEW walkthrough.
 - [Self-Service Start](SELF_SERVICE_START.md) — installation and first-use path for independent users.
 - [GitHub Action](GITHUB_ACTION.md) — CI integration and stable Action usage.
@@ -19,8 +21,10 @@ This directory separates **current public guidance** from **engineering evidence
 - [Technical Evaluation](TECHNICAL_EVALUATION.md) — repeatable technical evaluation pack.
 - [Team & Evidence Governance](TEAM_AND_EVIDENCE_GOVERNANCE.md) — evidence discipline, role separation and anti-drift rules.
 - [`external/`](external/) — external engagement protocols, baselines and evidence ledgers.
-- GitHub issue `#118` — public Alpha.5 post-release review hub.
+- GitHub issue `#118` — stable-v1 independent external evaluation and post-release review hub.
 - GitHub issue `#114` — P8 evidence qualification and tracking.
+- GitHub issue `#129` — P9 production-readiness and v1.0 qualification program.
+- GitHub issue `#134` — P9.3 compatibility and stability contract gate.
 
 Negative, partial, unsupported, reproduction-failure and no-fit findings are retained as first-class evidence. A contact, referral, invitation, internal test or self-evaluation PASS is not independent validation by itself.
 

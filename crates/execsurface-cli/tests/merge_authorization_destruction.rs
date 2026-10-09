@@ -1,0 +1,754 @@
+#![cfg(all(target_os = "linux", target_arch = "x86_64"))]
+
+use std::fs;
+use std::os::unix::fs::symlink;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+fn cli() -> &'static str {
+    env!("CARGO_BIN_EXE_execsurface")
+}
+
+fn temp_dir(name: &str) -> PathBuf {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+        "execsurface-merge-auth-{name}-{}-{id}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&path).expect("create merge-authorization temp dir");
+    path
+}
+
+fn learn(dir: &Path, baseline: &Path) {
+    let output = Command::new(cli())
+        .current_dir(dir)
+        .args(["learn", "--output"])
+        .arg(baseline)
+        .args(["--", "/bin/sh", "-c", "true"])
+        .output()
+        .expect("learn baseline");
+    assert!(
+        output.status.success(),
+        "learn failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn baseline_digest(path: &Path) -> String {
+    let value: serde_json::Value =
+        serde_json::from_slice(&fs::read(path).expect("read baseline")).expect("baseline JSON");
+    value["baseline_digest"]
+        .as_str()
+        .expect("baseline digest")
+        .to_owned()
+}
+
+#[test]
+fn merge_auth_written_object_renamed_onto_report_must_not_be_overwritten() {
+    let dir = temp_dir("written-rename-output");
+    let baseline = dir.join("baseline.lock.json");
+    let source = dir.join("workload-owned.bin");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "printf 'WORKLOAD-STATE' > '{}' && mv '{}' '{}'",
+        source.display(),
+        source.display(),
+        report.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run merge-authorization destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a report path rebound to an object already written by the workload must fail report materialization; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&report).expect("workload object at report path"),
+        b"WORKLOAD-STATE",
+        "ExecSurface must not overwrite a workload-written object merely because the workload renamed it after the write"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_written_object_chained_renames_onto_report_must_not_be_overwritten() {
+    let dir = temp_dir("written-chained-rename-output");
+    let baseline = dir.join("baseline.lock.json");
+    let source = dir.join("workload-owned.bin");
+    let middle = dir.join("middle.bin");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "printf 'WORKLOAD-STATE' > '{}' && mv '{}' '{}' && mv '{}' '{}'",
+        source.display(),
+        source.display(),
+        middle.display(),
+        middle.display(),
+        report.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run chained-rename destruction case");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        fs::read(&report).expect("workload object after chained rename"),
+        b"WORKLOAD-STATE"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_written_child_survives_parent_directory_rename_lineage() {
+    let dir = temp_dir("written-parent-rename-output");
+    let baseline = dir.join("baseline.lock.json");
+    let old_dir = dir.join("old");
+    let new_dir = dir.join("new");
+    let source = old_dir.join("owned.bin");
+    let report = new_dir.join("owned.bin");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "mkdir -p '{}' && printf 'WORKLOAD-STATE' > '{}' && mv '{}' '{}'",
+        old_dir.display(),
+        source.display(),
+        old_dir.display(),
+        new_dir.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run directory-rename destruction case");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        fs::read(&report).expect("workload child after parent rename"),
+        b"WORKLOAD-STATE"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_distinct_report_path_remains_available_after_workload_rename() {
+    let dir = temp_dir("distinct-report-control");
+    let baseline = dir.join("baseline.lock.json");
+    let source = dir.join("workload-owned.bin");
+    let final_workload = dir.join("workload-final.bin");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "printf 'WORKLOAD-STATE' > '{}' && mv '{}' '{}'",
+        source.display(),
+        source.display(),
+        final_workload.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run distinct-report control");
+
+    assert_eq!(
+        output.status.code(),
+        Some(10),
+        "ordinary drift should remain REVIEW when the report is disjoint; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&final_workload).expect("final workload object"),
+        b"WORKLOAD-STATE"
+    );
+    let report_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&report).expect("report bytes")).expect("report JSON");
+    assert_eq!(report_json["verdict"], "review");
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_written_object_hardlinked_to_report_then_source_removed_is_protected() {
+    let dir = temp_dir("written-hardlink-unlink-output");
+    let baseline = dir.join("baseline.lock.json");
+    let source = dir.join("workload-owned.bin");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "printf 'WORKLOAD-STATE' > '{}' && ln '{}' '{}' && rm '{}'",
+        source.display(),
+        source.display(),
+        report.display(),
+        source.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run hardlink-unlink destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a report path rebound to a hardlink of a workload-written object must fail closed"
+    );
+    assert_eq!(
+        fs::read(&report).expect("hardlinked workload object at report path"),
+        b"WORKLOAD-STATE",
+        "ExecSurface must not overwrite a workload-written inode after its original pathname is removed"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_truncate_only_report_path_must_not_be_overwritten() {
+    let dir = temp_dir("truncate-only-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::write(&report, b"PREEXISTING").expect("seed report target");
+
+    let target = format!(": > '{}'", report.display());
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run truncate-only destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a report path truncated by the workload must be treated as workload-mutated even without a later write syscall; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&report).expect("truncated workload-owned report path"),
+        b"",
+        "ExecSurface must not overwrite the empty state produced by workload O_TRUNC"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_ftruncate_only_report_object_must_not_be_overwritten() {
+    let dir = temp_dir("ftruncate-only-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::write(&report, b"PREEXISTING").expect("seed report target");
+
+    let target = format!(
+        "python3 -c \"import os; p=r'{}'; fd=os.open(p, os.O_WRONLY); os.ftruncate(fd, 0); os.close(fd)\"",
+        report.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run ftruncate-only destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a report object truncated through ftruncate must remain workload-owned; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&report).expect("ftruncated report object"),
+        b"",
+        "ExecSurface must not overwrite the empty state produced by workload ftruncate"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_deleted_report_path_must_not_be_recreated() {
+    let dir = temp_dir("deleted-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::write(&report, b"PREEXISTING").expect("seed report target");
+
+    let target = format!("rm '{}'", report.display());
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run deleted-output destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a report path deleted by the workload must not be silently recreated; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !report.exists(),
+        "ExecSurface must preserve the workload's final deleted state"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_created_report_path_without_write_must_not_be_overwritten() {
+    let dir = temp_dir("created-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "python3 -c \"import os; p=r'{}'; fd=os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600); os.close(fd)\"",
+        report.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run created-output destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a report path created by the workload must remain workload-owned even without a write syscall; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&report).expect("workload-created report path"),
+        b"",
+        "ExecSurface must not overwrite the empty object created by the workload"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_untouched_preexisting_report_remains_usable() {
+    let dir = temp_dir("untouched-preexisting-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::write(&report, b"STALE-REPORT").expect("seed old report");
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", "echo controlled-drift >/dev/null"])
+        .output()
+        .expect("run untouched-output control");
+
+    assert_eq!(
+        output.status.code(),
+        Some(10),
+        "an untouched preexisting report path must remain available for ordinary report replacement; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&report).expect("report bytes")).expect("report JSON");
+    assert_eq!(report_json["verdict"], "review");
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_preexisting_broken_symlink_report_is_rejected_without_following_target() {
+    let dir = temp_dir("preexisting-broken-symlink-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+    let indirect_target = dir.join("indirect-target.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    symlink(&indirect_target, &report).expect("create broken report symlink");
+    assert!(!indirect_target.exists());
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", "echo controlled-drift >/dev/null"])
+        .output()
+        .expect("run preexisting broken-symlink destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "verdict materialization must not follow a preexisting broken symlink output; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        report.is_symlink(),
+        "the selected output pathname must remain the original symlink"
+    );
+    assert!(
+        !indirect_target.exists(),
+        "ExecSurface must not create the symlink target while materializing its report"
+    );
+
+    let _ = fs::remove_file(&report);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_target_created_broken_symlink_report_is_rejected_postflight() {
+    let dir = temp_dir("target-created-broken-symlink-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+    let indirect_target = dir.join("indirect-target.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    let target = format!(
+        "ln -s '{}' '{}'",
+        indirect_target.display(),
+        report.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run target-created broken-symlink destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a broken symlink created at the selected report path during workload execution must fail closed; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        report.is_symlink(),
+        "target must actually create the broken symlink"
+    );
+    assert!(
+        !indirect_target.exists(),
+        "ExecSurface must not follow the target-created symlink and create its target"
+    );
+
+    let _ = fs::remove_file(&report);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_preexisting_live_symlink_report_is_rejected_without_overwriting_target() {
+    let dir = temp_dir("preexisting-live-symlink-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+    let indirect_target = dir.join("indirect-target.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::write(&indirect_target, b"WORKLOAD-ADJACENT").expect("seed indirect target");
+    symlink(&indirect_target, &report).expect("create live report symlink");
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", "echo controlled-drift >/dev/null"])
+        .output()
+        .expect("run preexisting live-symlink destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "verdict materialization must not follow a preexisting live symlink output; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(report.is_symlink());
+    assert_eq!(
+        fs::read(&indirect_target).expect("indirect target bytes"),
+        b"WORKLOAD-ADJACENT",
+        "ExecSurface must not overwrite a symlink target while materializing its report"
+    );
+
+    let _ = fs::remove_file(&report);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_preexisting_hardlinked_report_is_rejected_without_overwriting_peer() {
+    let dir = temp_dir("preexisting-hardlink-output");
+    let baseline = dir.join("baseline.lock.json");
+    let peer = dir.join("peer.bin");
+    let report = dir.join("report.json");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::write(&peer, b"PEER-STATE").expect("seed peer");
+    fs::hard_link(&peer, &report).expect("hardlink report to peer");
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", "echo controlled-drift >/dev/null"])
+        .output()
+        .expect("run preexisting hardlink destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "verdict materialization must reject a multiply-linked output object; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&peer).expect("peer bytes"),
+        b"PEER-STATE",
+        "ExecSurface must not overwrite a collateral hardlink peer"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_preexisting_directory_report_is_rejected_before_target_execution() {
+    let dir = temp_dir("preexisting-directory-output");
+    let baseline = dir.join("baseline.lock.json");
+    let report = dir.join("report.json");
+    let marker = dir.join("TARGET_RAN");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+    fs::create_dir(&report).expect("create directory at report path");
+    let target = format!("touch '{}'", marker.display());
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run directory-output destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a non-regular verdict output must fail preflight; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !marker.exists(),
+        "invalid verdict output type must be rejected before target execution"
+    );
+    assert!(report.is_dir());
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_parent_directory_rebinding_cannot_redirect_absent_report() {
+    let dir = temp_dir("parent-directory-rebind");
+    let baseline = dir.join("baseline.lock.json");
+    let parent = dir.join("route");
+    let moved_parent = dir.join("route-old");
+    let report = parent.join("report.json");
+
+    fs::create_dir(&parent).expect("create original report parent");
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "mv '{}' '{}' && mkdir '{}' && echo controlled-drift >/dev/null",
+        parent.display(),
+        moved_parent.display(),
+        parent.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run parent-directory rebind destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "an absent verdict output must not be materialized through a parent directory identity that changed after preflight; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !report.exists(),
+        "ExecSurface must not create a report after the selected output parent was rebound"
+    );
+    assert!(
+        moved_parent.is_dir() && parent.is_dir(),
+        "target must actually replace the selected output parent directory"
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn merge_auth_parent_symlink_rebinding_cannot_redirect_absent_report() {
+    let dir = temp_dir("parent-symlink-rebind");
+    let baseline = dir.join("baseline.lock.json");
+    let left = dir.join("left");
+    let right = dir.join("right");
+    let parent = dir.join("route");
+    let report = parent.join("report.json");
+    let redirected_report = right.join("report.json");
+
+    fs::create_dir(&left).expect("create original symlink target");
+    fs::create_dir(&right).expect("create replacement symlink target");
+    symlink(&left, &parent).expect("create original report-parent symlink");
+
+    learn(&dir, &baseline);
+    let expected_baseline = baseline_digest(&baseline);
+
+    let target = format!(
+        "rm '{}' && ln -s '{}' '{}' && echo controlled-drift >/dev/null",
+        parent.display(),
+        right.display(),
+        parent.display()
+    );
+
+    let output = Command::new(cli())
+        .current_dir(&dir)
+        .args(["check", "--baseline"])
+        .arg(&baseline)
+        .args(["--expect-baseline-digest", &expected_baseline])
+        .args(["--json-output"])
+        .arg(&report)
+        .args(["--", "/bin/sh", "-c", &target])
+        .output()
+        .expect("run parent-symlink rebind destruction case");
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "an absent verdict output must not follow a parent symlink whose resolution changed after preflight; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !redirected_report.exists(),
+        "ExecSurface must not materialize the report through the rebound parent symlink"
+    );
+    assert!(
+        parent.is_symlink(),
+        "target must leave the rebound parent symlink in place"
+    );
+
+    let _ = fs::remove_file(&parent);
+    let _ = fs::remove_dir_all(dir);
+}

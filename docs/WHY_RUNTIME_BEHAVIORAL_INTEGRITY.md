@@ -134,19 +134,19 @@ We want reports such as:
 - evidence that an adjacent system already solves the same problem more directly;
 - a counterexample to the claimed product boundary.
 
-Current public release: `v0.1.0-alpha.5`
+Current public release: `v1.0.0`
 
 Install:
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.5" --locked
+cargo install execsurface --version "=1.0.0" --locked
 execsurface --version
 execsurface doctor
 ```
 
 Repository: https://github.com/AETHERXGLOBAL/execsurface
 
-Public Alpha.5 review hub: https://github.com/AETHERXGLOBAL/execsurface/issues/118
+Public Alpha review hub (opened during Alpha.5 and retained for continuity): https://github.com/AETHERXGLOBAL/execsurface/issues/118
 
 Negative, partial and no-fit findings are explicitly welcome.
 

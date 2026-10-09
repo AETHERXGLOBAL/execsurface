@@ -1,0 +1,36 @@
+name: P8 A3 typed bridge red team
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/execsurface-model/tests/p8_a3_typed_bridge_redteam.rs"
+      - ".github/workflows/p8-a3-typed-bridge-redteam.yml"
+      - "docs/development/P8_A3_PROBITY_INTEROP_G1_G2_RESULT.md"
+
+permissions:
+  contents: read
+
+jobs:
+  g3-red-team:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Toolchain evidence
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Format gate
+        run: cargo fmt --check
+
+      - name: Clippy gate
+        run: cargo clippy -p execsurface-model --test p8_a3_typed_bridge_redteam -- -D warnings
+
+      - name: G3 failure-first typed-bridge matrix
+        run: |
+          cargo test -p execsurface-model --test p8_a3_typed_bridge_redteam -- --nocapture

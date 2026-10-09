@@ -2,7 +2,7 @@
 
 This guide is for developers, maintainers, security engineers, CI owners, and researchers who want to evaluate ExecSurface independently, without contacting AETHER X first.
 
-Current public version: `v0.1.0-alpha.5`
+Current public version: `v1.0.0`
 
 Supported public environment: Linux x86_64
 
@@ -19,7 +19,7 @@ It does not prove software safety and it is not antivirus, EDR, malware detectio
 ### Recommended exact public-release path
 
 ```bash
-VERSION=v0.1.0-alpha.5
+VERSION=v1.0.0
 TARGET=x86_64-unknown-linux-gnu
 ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
 
@@ -36,7 +36,7 @@ execsurface --version
 ### crates.io alternative
 
 ```bash
-cargo install execsurface --version "=0.1.0-alpha.5" --locked
+cargo install execsurface --version "=1.0.0" --locked
 execsurface --version
 ```
 
@@ -114,14 +114,14 @@ steps:
   - uses: actions/checkout@v4
 
   - name: ExecSurface
-    uses: AETHERXGLOBAL/execsurface@v0.1
+    uses: AETHERXGLOBAL/execsurface@v1
     with:
       command: cargo test --locked
       baseline: execsurface.lock.json
       policy: execsurface-policy.json
 ```
 
-For immutable evaluation of this release, pin `AETHERXGLOBAL/execsurface@v0.1.0-alpha.5`.
+For immutable evaluation of this release, pin `AETHERXGLOBAL/execsurface@v1.0.0`.
 
 Pin other third-party Actions to immutable SHAs in security-sensitive repositories according to your own supply-chain policy.
 

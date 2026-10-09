@@ -1,0 +1,255 @@
+name: P9.3 Compatibility Contract
+
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "action/**"
+      - "action.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/p9_3_compatibility_gate.sh"
+      - "docs/COMPATIBILITY.md"
+      - ".github/workflows/p9-compatibility.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cli-compatibility:
+    name: Alpha.5 baseline / CLI compatibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ALPHA5_TAG: v0.1.0-alpha.5
+      ALPHA5_ASSET: execsurface-v0.1.0-alpha.5-x86_64-unknown-linux-gnu.tar.gz
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build candidate CLI
+        run: cargo build --locked --release -p execsurface --bin execsurface
+
+      - name: Materialize exact public Alpha.5 binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/alpha5"
+          mkdir -p "$root"
+          cd "$root"
+          gh release download "$ALPHA5_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ALPHA5_ASSET" \
+            --pattern "$ALPHA5_ASSET.sha256"
+          sha256sum -c "$ALPHA5_ASSET.sha256"
+          gh attestation verify "$ALPHA5_ASSET" -R "$GITHUB_REPOSITORY"
+          tar -xzf "$ALPHA5_ASSET"
+          alpha5_bin="$root/execsurface-${ALPHA5_TAG}-x86_64-unknown-linux-gnu/execsurface"
+          test -x "$alpha5_bin"
+          echo "ALPHA5_BIN=$alpha5_bin" >> "$GITHUB_ENV"
+
+      - name: Execute P9.3 CLI compatibility harness
+        run: bash scripts/p9_3_compatibility_gate.sh "$GITHUB_WORKSPACE/target/release/execsurface" "$ALPHA5_BIN"
+
+  action-contract:
+    name: Candidate GitHub Action contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      ALPHA5_TAG: v0.1.0-alpha.5
+      ALPHA5_ASSET: execsurface-v0.1.0-alpha.5-x86_64-unknown-linux-gnu.tar.gz
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build candidate CLI for profile-4 Action baseline
+        run: cargo build --locked --release -p execsurface --bin execsurface
+
+      - name: Materialize exact public Alpha.5 binary and baselines
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/alpha5-action"
+          mkdir -p "$root"
+          cd "$root"
+          gh release download "$ALPHA5_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ALPHA5_ASSET" \
+            --pattern "$ALPHA5_ASSET.sha256"
+          sha256sum -c "$ALPHA5_ASSET.sha256"
+          gh attestation verify "$ALPHA5_ASSET" -R "$GITHUB_REPOSITORY"
+          tar -xzf "$ALPHA5_ASSET"
+          alpha5_bin="$root/execsurface-${ALPHA5_TAG}-x86_64-unknown-linux-gnu/execsurface"
+          "$alpha5_bin" learn --output "$GITHUB_WORKSPACE/p9-alpha5.lock.json" -- /bin/bash -lc true
+          "$GITHUB_WORKSPACE/target/release/execsurface" learn --output "$GITHUB_WORKSPACE/p9-candidate.lock.json" -- /bin/bash -lc true
+          sha256sum "$GITHUB_WORKSPACE/p9-alpha5.lock.json" > "$RUNNER_TEMP/p9-alpha5.lock.sha256"
+          sha256sum "$GITHUB_WORKSPACE/p9-candidate.lock.json" > "$RUNNER_TEMP/p9-candidate.lock.sha256"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          workspace = Path(os.environ["GITHUB_WORKSPACE"])
+          alpha = json.loads((workspace / "p9-alpha5.lock.json").read_text())
+          candidate = json.loads((workspace / "p9-candidate.lock.json").read_text())
+          assert alpha["payload"]["canonical_surface"]["normalization"]["profile_version"] == 3
+          assert candidate["payload"]["canonical_surface"]["normalization"]["profile_version"] == 4
+          PY
+
+          cat > "$GITHUB_WORKSPACE/p9-block-policy.json" <<'JSON'
+          {
+            "schema_version": 2,
+            "default_action": "review",
+            "rules": [
+              {
+                "id": "block-added-exec",
+                "action": "block",
+                "match": {
+                  "change": "added",
+                  "effect": "process_exec"
+                }
+              }
+            ]
+          }
+          JSON
+
+      - name: Candidate Action rejects incompatible Alpha.5 profile-3 baseline
+        id: alpha5_incompatible
+        continue-on-error: true
+        uses: ./
+        with:
+          command: "true"
+          baseline: p9-alpha5.lock.json
+          upload-artifact: "false"
+
+      - name: Assert Alpha.5 profile boundary is explicit
+        env:
+          OUTCOME: ${{ steps.alpha5_incompatible.outcome }}
+          VERDICT: ${{ steps.alpha5_incompatible.outputs.verdict }}
+          EXIT_CODE: ${{ steps.alpha5_incompatible.outputs.exit-code }}
+        run: |
+          set -euo pipefail
+          test "$OUTCOME" = "failure"
+          test "$VERDICT" = "error"
+          test "$EXIT_CODE" = "2"
+          (cd "$GITHUB_WORKSPACE" && sha256sum -c "$RUNNER_TEMP/p9-alpha5.lock.sha256")
+
+      - name: Candidate Action PASS with evidence upload
+        id: pass
+        uses: ./
+        with:
+          command: "true"
+          baseline: p9-candidate.lock.json
+          upload-artifact: "true"
+          artifact-name: p9-compatibility-pass-evidence
+
+      - name: Assert PASS Action outputs and baseline immutability
+        env:
+          VERDICT: ${{ steps.pass.outputs.verdict }}
+          EXIT_CODE: ${{ steps.pass.outputs.exit-code }}
+          REPORT_JSON: ${{ steps.pass.outputs.report-json }}
+          SUMMARY_MARKDOWN: ${{ steps.pass.outputs.summary-markdown }}
+          SARIF_STATUS: ${{ steps.pass.outputs.sarif-status }}
+          ARTIFACT_URL: ${{ steps.pass.outputs.artifact-url }}
+          ARTIFACT_DIGEST: ${{ steps.pass.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          test "$VERDICT" = "pass"
+          test "$EXIT_CODE" = "0"
+          test -s "$REPORT_JSON"
+          test -s "$SUMMARY_MARKDOWN"
+          test "$SARIF_STATUS" = "not-generated:no-source-provenance"
+          test -n "$ARTIFACT_URL"
+          test -n "$ARTIFACT_DIGEST"
+          (cd "$GITHUB_WORKSPACE" && sha256sum -c "$RUNNER_TEMP/p9-candidate.lock.sha256")
+          python - "$REPORT_JSON" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1]))
+          assert report["schema_version"] == 2
+          assert report["verdict"] == "pass"
+          PY
+
+      - name: Candidate Action REVIEW succeeds by default
+        id: review
+        uses: ./
+        with:
+          command: "true; /bin/echo p9-review >/dev/null"
+          baseline: p9-candidate.lock.json
+          upload-artifact: "false"
+
+      - name: Assert REVIEW default contract
+        env:
+          VERDICT: ${{ steps.review.outputs.verdict }}
+          EXIT_CODE: ${{ steps.review.outputs.exit-code }}
+        run: |
+          set -euo pipefail
+          test "$VERDICT" = "review"
+          test "$EXIT_CODE" = "10"
+
+      - name: Candidate Action REVIEW fails when requested
+        id: review_fail
+        continue-on-error: true
+        uses: ./
+        with:
+          command: "true; /bin/echo p9-review-fail >/dev/null"
+          baseline: p9-candidate.lock.json
+          fail-on-review: "true"
+          upload-artifact: "false"
+
+      - name: Assert fail-on-review contract
+        env:
+          OUTCOME: ${{ steps.review_fail.outcome }}
+          VERDICT: ${{ steps.review_fail.outputs.verdict }}
+          EXIT_CODE: ${{ steps.review_fail.outputs.exit-code }}
+        run: |
+          set -euo pipefail
+          test "$OUTCOME" = "failure"
+          test "$VERDICT" = "review"
+          test "$EXIT_CODE" = "10"
+
+      - name: Candidate Action BLOCK fails closed
+        id: block
+        continue-on-error: true
+        uses: ./
+        with:
+          command: "true; /bin/echo p9-block >/dev/null"
+          baseline: p9-candidate.lock.json
+          policy: p9-block-policy.json
+          upload-artifact: "false"
+
+      - name: Assert BLOCK Action contract
+        env:
+          OUTCOME: ${{ steps.block.outcome }}
+          VERDICT: ${{ steps.block.outputs.verdict }}
+          EXIT_CODE: ${{ steps.block.outputs.exit-code }}
+        run: |
+          set -euo pipefail
+          test "$OUTCOME" = "failure"
+          test "$VERDICT" = "block"
+          test "$EXIT_CODE" = "20"
+
+      - name: Candidate Action ERROR fails closed
+        id: error
+        continue-on-error: true
+        uses: ./
+        with:
+          command: "true"
+          baseline: missing-p9-baseline.json
+          upload-artifact: "false"
+
+      - name: Assert ERROR Action contract and final baseline immutability
+        env:
+          OUTCOME: ${{ steps.error.outcome }}
+          VERDICT: ${{ steps.error.outputs.verdict }}
+          EXIT_CODE: ${{ steps.error.outputs.exit-code }}
+        run: |
+          set -euo pipefail
+          test "$OUTCOME" = "failure"
+          test "$VERDICT" = "error"
+          test "$EXIT_CODE" = "2"
+          (cd "$GITHUB_WORKSPACE" && sha256sum -c "$RUNNER_TEMP/p9-alpha5.lock.sha256")
+          (cd "$GITHUB_WORKSPACE" && sha256sum -c "$RUNNER_TEMP/p9-candidate.lock.sha256")

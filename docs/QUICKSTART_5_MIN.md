@@ -2,14 +2,14 @@
 
 This path is designed to prove the product workflow without requiring a real project or changing system security settings.
 
-Support: **Linux x86_64 public alpha**.
+Support: **Stable `v1.0.0` — Linux x86_64**.
 
 ## 1. Install
 
 No Rust toolchain is required for this path.
 
 ```bash
-VERSION=v0.1.0-alpha.5
+VERSION=v1.0.0
 TARGET=x86_64-unknown-linux-gnu
 ASSET="execsurface-${VERSION}-${TARGET}.tar.gz"
 
@@ -74,6 +74,19 @@ execsurface init --command "cargo test --locked" --github-actions
 execsurface learn -- /bin/bash -lc 'cargo test --locked'
 execsurface check --policy execsurface-policy.json -- /bin/bash -lc 'cargo test --locked'
 ```
+
+### Before pushing the generated GitHub workflow
+
+The generated workflow runs the target command as its own correctness gate **and** runs ExecSurface against the same command. This is intentional because a stable-v1 ExecSurface PASS is not the target command's native exit status.
+
+The generated workflow also requires two externally trusted GitHub variables:
+
+- `EXECSURFACE_BASELINE_DIGEST` — the `baseline_digest` from the baseline you just learned;
+- `EXECSURFACE_POLICY_SHA256` — `sha256:<SHA-256 of the exact execsurface-policy.json bytes>`.
+
+After `execsurface init --command "cargo test --locked" --github-actions`, the CLI prints copy-paste `gh variable set` commands for both values, including the command that computes the policy SHA-256. Store these values in trusted GitHub repository/environment variables rather than checkout files.
+
+Review the generated workflow, baseline, and policy before committing them.
 
 ## Wrapper consistency
 

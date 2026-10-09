@@ -1,0 +1,110 @@
+name: V1-R1 Release Control Plane
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/v1-r1-release-control-plane.yml'
+      - '.github/workflows/promote-release.yml'
+      - '.github/workflows/release.yml'
+      - '.github/scripts/release_contract.py'
+      - 'crates/execsurface-cli/tests/v1_release_control_plane.rs'
+      - 'docs/development/V1_R1_RELEASE_CONTROL_PLANE_PROTOCOL.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  classifier-contract:
+    name: Release classifier and workflow contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Execute V1-R1 contract tests
+        run: cargo test --locked -p execsurface --test v1_release_control_plane -- --test-threads=1 --nocapture
+
+  synthetic-v1-dry-contract:
+    name: Published stable-v1 contract / classifier regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Active request and records identify the published stable v1 state
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data=json.load(open(".release/release-request.json"))
+          assert data == {
+              "version":"1.0.0",
+              "tag":"v1.0.0",
+              "stable_channel":"v1",
+              "request_revision":2,
+          }
+
+          decision=Path("docs/release/V1_0_0_RELEASE_DECISION.md").read_text()
+          notes=Path("docs/releases/v1.0.0.md").read_text()
+          assert "RELEASE_V1_0_AUTHORIZED_BOUNDED" in decision
+          assert "PUBLISHED STABLE RELEASE — INTERNALLY QUALIFIED BOUNDED" in notes
+          assert "Independent external validation is not claimed" in notes
+          PY
+
+      - name: Classify current Alpha line
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$(python .github/scripts/release_contract.py classify --version 0.1.0-alpha.6 --tag v0.1.0-alpha.6)"
+          python -c 'import json,sys; d=json.load(sys.stdin); assert d["stable_channel"]=="v0.1"; assert d["release_kind"]=="prerelease"; assert d["is_prerelease"] is True' <<<"$out"
+
+      - name: Classify synthetic stable v1 line
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$(python .github/scripts/release_contract.py classify --version 1.0.0 --tag v1.0.0)"
+          python -c 'import json,sys; d=json.load(sys.stdin); assert d["stable_channel"]=="v1"; assert d["release_kind"]=="stable"; assert d["is_prerelease"] is False' <<<"$out"
+
+      - name: Reject synthetic wrong-channel stable request
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$RUNNER_TEMP/v1-wrong-channel.json"
+          cat > "$tmp" <<'JSON'
+          {"version":"1.0.0","tag":"v1.0.0","stable_channel":"v0.1","request_revision":1}
+          JSON
+          if python .github/scripts/release_contract.py validate-request \
+            --request "$tmp" \
+            --package-version 1.0.0 \
+            --release-tag-file v1.0.0; then
+            echo "wrong-channel stable v1 request was accepted" >&2
+            exit 1
+          fi
+
+  no-v1-side-effects:
+    name: Published v1 tag/channel source identity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prove published moving and immutable refs resolve to one source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          stable_sha="$(git rev-parse 'v1^{commit}')"
+          immutable_sha="$(git rev-parse 'v1.0.0^{commit}')"
+          test "$stable_sha" = "$immutable_sha"
+          git merge-base --is-ancestor "$immutable_sha" HEAD
+          test "$(git show v1.0.0:action/release-tag.txt | tr -d '[:space:]')" = "v1.0.0"
