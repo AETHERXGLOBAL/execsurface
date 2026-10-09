@@ -1,13 +1,14 @@
 # Python/pytest: unchanged PASS and deliberate-write REVIEW
 
-This recipe learns and checks the **same real pytest command** against a tiny
-public fixture using ExecSurface **v0.1.0-alpha.5**. The current public support
+Historical example, archived at ExecSurface **v0.1.0-alpha.5**; it has not been
+re-run against v1.0.0. This recipe learns and checks the **same real pytest
+command** against a tiny public fixture using that pinned Alpha.5 release. The current public support
 scope is Linux x86_64 with native `ptrace`; `doctor` must succeed on the host.
 This is a reproducible integration example, not independent external validation.
 Independent Alpha.5 findings belong in [issue #118](https://github.com/AETHERXGLOBAL/execsurface/issues/118).
 
 From the repository root, first obtain the checksum-verified Alpha.5 binary using
-the [documented installation](../../README.md#start-here). Keep its reviewed
+the installation notes of the [immutable Alpha.5 release](https://github.com/AETHERXGLOBAL/execsurface/releases/tag/v0.1.0-alpha.5). Keep its reviewed
 path in `EXEC_SURFACE_BIN`; this recipe records its digest and checks its version.
 Then create a Python 3.12 or 3.13 environment and install the hash-pinned test
 selection. Installation may download packages; the observed test uses no network
