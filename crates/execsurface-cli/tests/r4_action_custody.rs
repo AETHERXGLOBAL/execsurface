@@ -64,6 +64,8 @@ fn run_action(
     expected_policy: Option<&str>,
 ) -> (std::process::Output, String) {
     let output_file = dir.join("github-output.txt");
+    // Keep child Action summaries in the test fixture, not the parent CI job summary.
+    let step_summary_file = dir.join("github-step-summary.md");
     let runner_temp = dir.join("runner-temp");
     fs::create_dir_all(&runner_temp).expect("runner temp");
 
@@ -76,6 +78,7 @@ fn run_action(
         .env("EXECSURFACE_POLICY", policy)
         .env("EXECSURFACE_REQUIRE_CUSTODY", require_custody)
         .env("GITHUB_OUTPUT", &output_file)
+        .env("GITHUB_STEP_SUMMARY", &step_summary_file)
         .env("RUNNER_TEMP", &runner_temp);
 
     if let Some(value) = expected_baseline {
@@ -87,6 +90,11 @@ fn run_action(
 
     let output = cmd.output().expect("run action script");
     let github_output = fs::read_to_string(&output_file).expect("github output");
+    let step_summary = fs::read_to_string(&step_summary_file).expect("isolated action summary");
+    assert!(
+        step_summary.starts_with("# ExecSurface — "),
+        "Action summary should be emitted only to the test-local summary path"
+    );
     (output, github_output)
 }
 
