@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | [Stable v1 GitHub Action consumer](github-action-consumer-v1.yml) | **Current v1** (`AETHERXGLOBAL/execsurface@v1`) | Copy-ready Rust CI integration after explicit baseline and policy custody setup |
 | [Five-Minute Start](../docs/QUICKSTART_5_MIN.md) | **Current v1** | Test the published v1 binary against controlled PASS/REVIEW scenarios |
+| [Node.js/npm PASS→REVIEW](node-npm/README.md) | **Current v1** | Deterministic Node.js fixture showing an unchanged PASS and one controlled-drift REVIEW on stable v1.0.0 |
 | [Python/pytest PASS→REVIEW](python-pytest/README.md) | **Historical Alpha.5** | Replay preserved third-party contributed evidence only; not v1 onboarding |
 | [Minimal controlled drift](hello-drift.sh) | Check selected release/CLI contract | Small local demonstration |
 

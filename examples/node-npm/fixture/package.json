@@ -1,0 +1,10 @@
+{
+  "name": "execsurface-node-npm-fixture",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Deterministic Node.js fixture for the ExecSurface stable-v1 node-npm integration recipe",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "license": "Apache-2.0"
+}
