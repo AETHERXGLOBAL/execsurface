@@ -48,6 +48,14 @@ These records arrived after P8-A0 and are retained even where they do **not** sa
 
 | P8-EXT-0004 | `INTEROPERABILITY_GUIDANCE` | `probityai/agent-evidence-observer` PR #41, merged 2026-10-02: native Alpha.5 integration under `interop/execsurface-state-2026-10-02/` | `EXTERNAL_PROJECT_CONTRIBUTOR; ALSO EXECSURFACE CONTRIBUTOR` | `UNKNOWN / NO A1 ZERO-ASSISTANCE CLAIM` | `QUALIFYING_EXTERNAL_EVIDENCE` for A3 interoperability processing | `REPRODUCED` | External code consumes the published Alpha.5 binary, preserves the raw trace, and builds a separate state/commitment layer. It identifies concrete expressivity gaps: raw schema-v2 does not carry write byte-count/result semantics and exposes global complete/warnings rather than the typed collection-health envelope the consumer needs. The integration explicitly reports `unknown-no-typed-envelope`, incomplete scope and same-operator custody. Synthetic single-write workload means this is **not** A4 real-workload evidence or production adoption. Gap reproduced and bounded path selected in #145 / PR #147. |
 
+## Current external real-workload evidence — A4 intake
+
+A negative/partial external attempt is useful scientific evidence; it does not become a product defect, an adopted installation, or an independently validated stable release by being recorded.
+
+| ID | Evidence class | Source | Relationship | Assistance | Qualification | Scientific state | Boundary / action |
+|---|---|---|---|---|---|---|---|
+| P8-EXT-0005 | `EXTERNAL_REAL_WORKLOAD_REPORT` | [hippoley/Residual-Necessity](https://github.com/hippoley/Residual-Necessity) independent workload, [original report](https://github.com/AETHERXGLOBAL/execsurface/issues/140#issuecomment-6056218704), [follow-up](https://github.com/AETHERXGLOBAL/execsurface/issues/140#issuecomment-6072350289); full [intake and review](P8_EXT_0005_HIPPOLEY_REAL_WORKLOAD.md) | `USER_OR_EVALUATOR` (external workload, no AETHER X authorship reported) | Evaluator-controlled original run preserved before AETHER X diagnosis; exact A1 zero-assistance/affiliation qualification remains open | `QUALIFYING_EXTERNAL_EVIDENCE` as a **proposed A4 external real-workload partial/incomplete record**, subject to critical review | `INCONCLUSIVE` — expected fail-closed source behavior established; end-to-end case-specific cause and avoidability not proven | Immutable Alpha.6 original: 15 target tests PASS, doctor PASS, learn exit 2 with no baseline. Follow-up: `incomplete_capability`, `side_effectful_open_identity_divergence`, `complete=false`, lexical `/tmp` vs deleted FD object. Do not call a later successful **diagnostic workflow** an ExecSurface PASS. O_TMPFILE regression proposed; CI and independent scientific acceptance pending. No v1 independent validation or endorsement. |
+
 ### Qualification note
 
 `EXTERNAL_CONTRIBUTION` is a qualifying P8 evidence class under A0, but it is not interchangeable with the specific current evidence classes required by A5 closeout.
@@ -61,13 +69,11 @@ The records above therefore establish genuine current external engineering parti
 
 ## Current-state rule
 
-Current external contributions and one current qualifying A3 interoperability record now exist and are recorded above.
+The evidence ledger now distinguishes a current A3 challenge/interoperability record (P8-EXT-0004) from the proposed A4 execution/use record (P8-EXT-0005). The latter is a genuine externally controlled *negative/partial* workload report whose initial result is preserved; it is **not** an ExecSurface PASS or a claim of external adoption, endorsement, or stable-v1 independent validation.
 
-P8-EXT-0004 supplies a concrete **challenge/interoperability** record. The external gap was reproduced under #145 and the bounded response selected in PR #147 as a report-layer typed-health/evidence bridge; that does not establish production adoption, independent custody, or a real-workload result.
+P8-EXT-0005 is subject to explicit A4 qualification and critical review, including assistance/affiliation boundaries, source/run fidelity, and whether the unlinked-open failure is a known capability limit versus an avoidable false-incompleteness. The separate internal O_TMPFILE mechanism and future observer regression tests do not create external independence or close this scientific question.
 
-The A5 closeout minimum is still **not** satisfied because the ledger does not yet contain a current qualifying **execution/use** record from A1 zero-assistance reproduction/failure/independent partial attempt or A4 external real workload.
-
-Do not infer failure, rejection, validation or adoption from the absence of that execution/use class.
+**P8 A5 remains OPEN.** Do not mark the execution/use gate, full external validation, or Issue #114 closed solely from the presence of this draft record; acceptance must be deliberate and evidence-linked under the preregistered P8 rules.
 
 ## New-record rule
 
