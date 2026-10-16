@@ -385,7 +385,10 @@ fn r3_otmpfile_side_effect_fails_closed_with_unrepresentable_object_identity() {
 
     let _ = fs::remove_dir_all(&root);
 
-    assert!(lexical_attempt_retained, "retain the O_TMPFILE lexical intent");
+    assert!(
+        lexical_attempt_retained,
+        "retain the O_TMPFILE lexical intent"
+    );
     assert!(
         warning.is_some(),
         "unlinked kernel object identity must trigger the explicit warning: {:?}",
@@ -405,8 +408,7 @@ fn r3_otmpfile_side_effect_fails_closed_with_unrepresentable_object_identity() {
 fn r3_regular_create_remains_complete_with_matching_open_identity() {
     // Negative control: ordinary file creation must not inherit O_TMPFILE's
     // incompleteness when lexical and kernel-resolved paths agree.
-    let root =
-        std::env::temp_dir().join(format!("execsurface-stage2-r3-create-{}", process::id()));
+    let root = std::env::temp_dir().join(format!("execsurface-stage2-r3-create-{}", process::id()));
     let path = root.join("ordinary.txt");
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).expect("create ordinary-file directory");
