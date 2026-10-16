@@ -388,6 +388,36 @@ fn main() {
                 .expect("open symlink target with truncate");
             drop(file);
         }
+        Some("stage2-otmpfile-write") => {
+            // Exercise the real Linux O_TMPFILE syscall path under the ptrace observer.
+            let directory = args.next().expect("O_TMPFILE directory");
+            let directory = CString::new(directory).expect("O_TMPFILE CString");
+            let fd = unsafe {
+                libc::open(
+                    directory.as_ptr(),
+                    libc::O_TMPFILE | libc::O_RDWR | libc::O_CLOEXEC,
+                    0o600,
+                )
+            };
+            assert!(
+                fd >= 0,
+                "O_TMPFILE unsupported or failed: {}",
+                std::io::Error::last_os_error()
+            );
+            let mut file = unsafe { File::from_raw_fd(fd) };
+            file.write_all(b"x").expect("write anonymous O_TMPFILE");
+            file.flush().expect("flush anonymous O_TMPFILE");
+        }
+        Some("stage2-regular-create") => {
+            let path = args.next().expect("regular file path");
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .expect("create ordinary file");
+            file.write_all(b"x").expect("write ordinary file");
+            file.flush().expect("flush ordinary file");
+        }
         Some("burst") => {
             let dir = args.next().expect("directory");
             let count: usize = args.next().expect("count").parse().expect("count");
