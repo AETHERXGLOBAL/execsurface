@@ -581,12 +581,7 @@ mod tests {
             executable: executable(),
         };
         let before = baseline(vec![access.clone(), execution.clone()]);
-        let after = candidate(vec![
-            execution.clone(),
-            access.clone(),
-            execution,
-            access,
-        ]);
+        let after = candidate(vec![execution.clone(), access.clone(), execution, access]);
         let report = diff(&before, &after).unwrap();
 
         assert!(report.added.is_empty());
