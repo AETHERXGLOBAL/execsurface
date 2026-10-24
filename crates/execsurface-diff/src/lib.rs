@@ -572,6 +572,76 @@ mod tests {
         ));
     }
 
+    // A rearranged or duplicated observer event must not manufacture drift.
+    #[test]
+    fn event_order_and_duplicate_observations_do_not_create_false_drift() {
+        let access = file_open(false);
+        let execution = CanonicalEffect::ProcessExec {
+            from: None,
+            executable: executable(),
+        };
+        let before = baseline(vec![access.clone(), execution.clone()]);
+        let after = candidate(vec![execution.clone(), access.clone(), execution, access]);
+        let report = diff(&before, &after).unwrap();
+
+        assert!(report.added.is_empty());
+        assert!(report.removed.is_empty());
+        assert!(report.changed.is_empty());
+        assert!(!has_drift(&report));
+    }
+
+    // A unique same-subject mutation must remain visible even when
+    // an unrelated effect is added in the same candidate.
+    #[test]
+    fn changed_file_intent_and_unrelated_process_effect_are_both_reported() {
+        let original_access = file_open(false);
+        let changed_access = file_open(true);
+        let unrelated_exec = CanonicalEffect::ProcessExec {
+            from: None,
+            executable: executable(),
+        };
+        let report = diff(
+            &baseline(vec![original_access.clone()]),
+            &candidate(vec![unrelated_exec.clone(), changed_access.clone()]),
+        )
+        .unwrap();
+
+        assert_eq!(report.changed.len(), 1);
+        assert_eq!(report.changed[0].before, original_access);
+        assert_eq!(report.changed[0].after, changed_access);
+        assert_eq!(report.added, vec![unrelated_exec]);
+        assert!(report.removed.is_empty());
+        assert!(has_drift(&report));
+    }
+
+    // With two old effects having the same subject, a new effect must
+    // not be arbitrarily paired with one of them as a trustworthy change.
+    #[test]
+    fn ambiguous_file_subjects_remain_added_and_removed() {
+        let read = file_open(false);
+        let write = file_open(true);
+        let mut replacement = file_open(true);
+        if let CanonicalEffect::FilePathAccess {
+            open_intent: Some(intent),
+            ..
+        } = &mut replacement
+        {
+            intent.create = true;
+        }
+        let report = diff(
+            &baseline(vec![read.clone(), write.clone()]),
+            &candidate(vec![replacement.clone()]),
+        )
+        .unwrap();
+
+        assert!(report.changed.is_empty());
+        assert_eq!(report.removed.len(), 2);
+        assert!(report.removed.contains(&read));
+        assert!(report.removed.contains(&write));
+        assert_eq!(report.added, vec![replacement]);
+        assert!(has_drift(&report));
+    }
+
     #[test]
     fn corrupted_baseline_is_rejected() {
         let mut baseline = baseline(vec![]);
