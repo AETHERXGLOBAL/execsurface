@@ -350,3 +350,87 @@ fn r3_removed_alias_before_write_does_not_invent_alias_ambiguity() {
         observation.warnings
     );
 }
+
+#[test]
+fn r3_otmpfile_side_effect_fails_closed_with_unrepresentable_object_identity() {
+    // Regression for external P8-EXT-0005 (hippoley).  This is an actual
+    // syscall/ptrace test, not a string-level mock of a kernel fd path.
+    let root =
+        std::env::temp_dir().join(format!("execsurface-stage2-r3-otmpfile-{}", process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create O_TMPFILE directory");
+
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("stage2-otmpfile-write")
+            .arg(root.as_os_str()),
+    )
+    .expect("observe anonymous side-effectful open");
+
+    let lexical = root.to_string_lossy().into_owned();
+    let lexical_attempt_retained = observation.events.iter().any(|event| {
+        matches!(
+            &event.kind,
+            RawEventKind::FilePathAccess {
+                operation: FileOperation::Open,
+                path,
+                ..
+            } if path == &lexical
+        )
+    });
+    let warning = observation
+        .warnings
+        .iter()
+        .find(|warning| warning.code == "side_effectful_open_identity_divergence");
+
+    let _ = fs::remove_dir_all(&root);
+
+    assert!(
+        lexical_attempt_retained,
+        "retain the O_TMPFILE lexical intent"
+    );
+    assert!(
+        warning.is_some(),
+        "unlinked kernel object identity must trigger the explicit warning: {:?}",
+        observation.warnings
+    );
+    assert!(
+        warning.unwrap().message.contains("(deleted)"),
+        "the test must exercise a genuinely unlinked kernel file object"
+    );
+    assert!(
+        !observation.complete,
+        "raw-v2 must not authorize a complete observation without a serialized open-time object identity"
+    );
+}
+
+#[test]
+fn r3_regular_create_remains_complete_with_matching_open_identity() {
+    // Negative control: ordinary file creation must not inherit O_TMPFILE's
+    // incompleteness when lexical and kernel-resolved paths agree.
+    let root = std::env::temp_dir().join(format!("execsurface-stage2-r3-create-{}", process::id()));
+    let path = root.join("ordinary.txt");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create ordinary-file directory");
+
+    let observation = observe_command(
+        &CommandSpec::new(fixture())
+            .arg("stage2-regular-create")
+            .arg(path.as_os_str()),
+    )
+    .expect("observe ordinary file creation");
+    let bytes = fs::read(&path).expect("ordinary file must exist");
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(bytes, b"x", "ordinary file must contain its written byte");
+    assert!(
+        !divergence_warning(&observation),
+        "matching regular file identity must not produce false divergence: {:?}",
+        observation.warnings
+    );
+    assert!(
+        observation.complete,
+        "ordinary creation must remain fully observable: {:?}",
+        observation.warnings
+    );
+}
